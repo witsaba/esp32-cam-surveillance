@@ -1,7 +1,7 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 2 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016` — see amendment blockquote at the end of § FW-02).
-> **Next SDD to start**: FW-03 (`firmware-boot-orchestrator`).
+> **Status**: 4 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 PR #7 open for review — see amendment blockquote at the end of § FW-05).
+> **Next SDD to start**: FW-06 (`firmware-status-led`) — after FW-05 merges.
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
 > **Date**: 2026-08-21.
@@ -505,6 +505,32 @@ SDD change: `firmware-softap-provisioning` · Closes: R-10, R-11, R-12, R-26.
   - **Scenario: JSON missing required keys is rejected.** Given a `POST /provision` JSON body missing `wifi_ssid`, When the request is processed, Then the server returns a 4xx status naming the missing key.
   - **Scenario: well-formed request passes.** Given a well-formed `POST /provision` body, When the request is processed, Then the server returns a 2xx status and persists the fields.
 - **Depends on:** FW-05.2.
+
+> **Amendment 2026-08-21 (FW-05 PR #7 open for review).** The HTTP-server milestone closes R-10, R-11, R-12, and the inbound-validation half of R-26 across 4 work-unit commits on `feat/fw-05-softap-provisioning`:
+>
+> | SHA | Subject | Closes |
+> |---|---|---|
+> | `01b4cca` | feat(softap): bring up softAP + GET /whoami + POST /provision handlers (FW-05.1, FW-05.2) | FW-05.1 + FW-05.2 (initial commit landed all 8 FW-05.1 + FW-05.2 tests + 4 mocks + cJSON dep + softAP component) |
+> | `57ab8fe` | feat(softap): partial-update semantics + re-provisioning /whoami (FW-05.3) | FW-05.3 |
+> | `afb90ec` | test(softap): malformed-JSON guard with bite-proof (FW-05.4) | FW-05.4 |
+> | `2d72473` | fix(softap): relax guard to require only wifi_ssid+wifi_password (aligns with FW-05.3 partial update) | (reconciliation; no new node, fixes the spec ambiguity surfaced in batch 2) |
+>
+> **PR**: #7 (`feat/fw-05-softap-provisioning` → `main`, draft, awaiting user review and merge).
+> **Test results**: `idf.py test --target esp32` → 38/38 production tests PASS (16 FW-05 + 15 FW-03 + 7 FW-02). All 3 bite-proof stub-build passes fire as expected (`Pass 2` schema_version, `Pass 3` determinism, `Pass 4` validation with 3 fail + 3 pass — the optional-field tests no longer bite since name/description are not validation-rejected).
+> **Build**: `idf.py build` succeeds; `firmware.bin` = 569,888 bytes (0x8b220), 58 % of the 960 KB factory partition (`0xF0000`), 42 % free.
+> **Verify-report verdict**: PASS — all 4 milestone nodes CLOSED, 4/4 requirements closed, 16/16 scenarios closed.
+>
+> **5 documented design deviations** (verify-report #3623):
+>
+> 1. `esp_wifi_ap_start()` → `esp_wifi_start()` — IDF v5.5.3 does not expose `esp_wifi_ap_start()`; the function `esp_wifi_start()` works for AP mode.
+> 2. `esp_netif_destroy_default_netif()` → `esp_netif_destroy()` — IDF v5.5.3 takes an `esp_netif_t*` argument.
+> 3. cJSON include path: `<cjson/cJSON.h>` in docs but `<cJSON/cJSON.h>` in source — matches IDF examples.
+> 4. 5 host IDF header stubs added at `firmware/tests/host_include/` (constants + typedefs only) to avoid pulling in device-only transitive headers on host.
+> 5. **256 KB M0 evidence gate is outdated** — the factory partition was enlarged to `0xF0000` (960 KB) after FW-01. Current firmware.bin (569 KB) fits the 960 KB partition with 42 % free. The 256 KB wording should be amended in a follow-up doc PR (out of FW-05 scope).
+>
+> **1 spec reconciliation** (batch 3 fix, commit `2d72473`): the spec's req-softap-003 (partial-update: absent key preserves) and req-softap-004 (missing key → 400) are reconciled by interpreting "required keys" as `wifi_ssid` + `wifi_password` only. Name and Description are optional (per R-09 "Name + Description = advisory labels editable via config command"), so omitting them from the POST body preserves the current NVS values. This aligns the implementation with PRD § FR-1a L122-131 + FW-05.3 S2 ("user POSTs only `wifi_password`").
+>
+> **1 SUGGESTION** (verify-report #3623): `firmware/scripts/smoke.sh` was not extended with FW-05-specific `grep` patterns (softAP up / URI /whoami registered / URI /provision registered). Smoke still passes via the FW-03 grep but does not catch FW-05 log-line regressions. Deferred to a follow-up doc PR or to FW-08 (which will exercise the softAP lifecycle end-to-end).
 
 ### FW-06 — Status LED reflects every boot and runtime state
 
