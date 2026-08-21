@@ -228,3 +228,80 @@ TEST_CASE(
     cJSON_Delete(root);
     mock_httpd_req_free(req);
 }
+
+/* FW-05.3 S1 (R-12): pre-provisioned device — /whoami reflects the
+ * existing in-memory cfg.identity.{name,description}. Proves the
+ * /whoami handler reads from the cfg pointer passed via user_ctx on
+ * every invocation (not from a stale local copy).
+ *
+ * boot_run() loads cfg from NVS at boot, so a previously-saved config
+ * is what the handler should surface. We model that here by seeding
+ * cfg.identity directly before invoking the handler. */
+TEST_CASE(
+    "whoami_round_trips_existing_name_and_description [fw-05.3]",
+    "[softap][fw-05.3][reprovision]")
+{
+    mock_nvs_reset();
+    mock_esp_system_reset();
+    mock_httpd_reset();
+    mock_log_reset();
+    seed_whoami_mocks();
+
+    config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.schema_version = CONFIG_SCHEMA_VERSION;
+    /* Seed name + description as if a prior /provision had succeeded
+     * (or as if boot_run() had loaded them from NVS). */
+    strncpy(cfg.identity.name,
+            "front-door",
+            sizeof(cfg.identity.name) - 1);
+    cfg.identity.name[sizeof(cfg.identity.name) - 1] = '\0';
+    strncpy(cfg.identity.description,
+            "covers main entrance",
+            sizeof(cfg.identity.description) - 1);
+    cfg.identity.description[sizeof(cfg.identity.description) - 1] = '\0';
+
+    boot_status_t s = softap_run_provisioning(&cfg);
+    (void)s;
+
+    mock_httpd_req_t *req = mock_httpd_req_new();
+    TEST_ASSERT_NOT_NULL(req);
+
+    esp_err_t rc = mock_httpd_invoke_registered_handler("/whoami",
+                                                        0 /*HTTP_GET*/,
+                                                        req);
+    TEST_ASSERT_EQUAL_INT(ESP_OK, rc);
+
+    TEST_ASSERT_NOT_NULL(req->captured_response_buffer);
+    cJSON *root = cJSON_Parse(req->captured_response_buffer);
+    TEST_ASSERT_NOT_NULL(root);
+    TEST_ASSERT_TRUE(cJSON_IsObject(root));
+
+    cJSON *name_item = cJSON_GetObjectItemCaseSensitive(root, "name");
+    cJSON *desc_item = cJSON_GetObjectItemCaseSensitive(root, "description");
+    TEST_ASSERT_NOT_NULL(name_item);
+    TEST_ASSERT_NOT_NULL(desc_item);
+    TEST_ASSERT_TRUE(cJSON_IsString(name_item));
+    TEST_ASSERT_TRUE(cJSON_IsString(desc_item));
+
+    /* The crucial assertion: the seeded values are surfaced (not
+     * empty strings, which would indicate the handler was reading
+     * a fresh cfg instead of the user_ctx). */
+    TEST_ASSERT_EQUAL_STRING("front-door", name_item->valuestring);
+    TEST_ASSERT_EQUAL_STRING("covers main entrance", desc_item->valuestring);
+
+    /* mac/fw/chip still populated — verify no regression on the
+     * FW-05.1 fields. */
+    cJSON *mac_item = cJSON_GetObjectItemCaseSensitive(root, "mac");
+    cJSON *fw_item  = cJSON_GetObjectItemCaseSensitive(root, "fw");
+    cJSON *chip_item = cJSON_GetObjectItemCaseSensitive(root, "chip");
+    TEST_ASSERT_NOT_NULL(mac_item);
+    TEST_ASSERT_NOT_NULL(fw_item);
+    TEST_ASSERT_NOT_NULL(chip_item);
+    TEST_ASSERT_EQUAL_STRING("c8f09e9d5008", mac_item->valuestring);
+    TEST_ASSERT_EQUAL_STRING("v5.5.3", fw_item->valuestring);
+    TEST_ASSERT_EQUAL_STRING("ESP32-D0WDQ6", chip_item->valuestring);
+
+    cJSON_Delete(root);
+    mock_httpd_req_free(req);
+}

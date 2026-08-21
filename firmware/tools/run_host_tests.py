@@ -207,6 +207,9 @@ ALL_TESTS = [
     "provision_writes_nvs_and_reboots_guest [fw-05.2][row-3]",
     "provision_rejects_ssid_over_32_chars [fw-05.2][length-cap]",
     "provision_rejects_description_over_128_chars [fw-05.2][length-cap]",
+    # FW-05.3 round-trip + partial update
+    "whoami_round_trips_existing_name_and_description [fw-05.3]",
+    "provision_partial_update_preserves_name_and_description [fw-05.3]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3

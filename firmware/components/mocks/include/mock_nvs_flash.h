@@ -82,6 +82,13 @@ esp_err_t mock_nvs_read_u8(const char *namespace_name,
                            const char *key,
                            uint8_t *out_value);
 
+/* Recorded count of nvs_set_str + nvs_set_u8 invocations since the
+ * last mock_nvs_reset(). The FW-05.4 guard tests assert
+ * `mock_nvs_write_count() == 0` to prove config_save() was NOT called
+ * on a rejected /provision POST. nvs_commit and nvs_erase_* are
+ * deliberately excluded — only payload writes count. */
+int mock_nvs_write_count(void);
+
 /* Mock implementations of the NVS API. These are the targets of the
  * `#define nvs_open mock_nvs_open` macros in
  * `mock_nvs_flash_link.h`. Their signatures mirror the real NVS API

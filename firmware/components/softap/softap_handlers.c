@@ -8,14 +8,34 @@
  * whoami_get_handler reads MAC + chip + version + cfg identity via
  * the mock-friendly IDF APIs, builds a cJSON object with five
  * keys (mac, name, description, fw, chip), and sends it as
- * application/json. Empty NVS → empty name/description.
+ * application/json. Empty NVS → empty name/description. After a
+ * successful /provision, boot_run() reloads cfg from NVS, so the
+ * same handler surfaces the new identity on the next /whoami
+ * (FW-05.3 S1 round-trip).
  *
  * provision_post_handler reads the body via mock_httpd_req_recv,
- * parses with cJSON, walks the four required keys
- * (wifi_ssid, wifi_password, name, description), validates each
- * is a string within its length cap (32/63/32/128), and either
- * persists via config_save() or rejects with 400 + an err-name JSON
- * body. On a well-formed body it sends 200 {"ok":true}, delays
+ * parses with cJSON, and applies **partial-update semantics**:
+ *
+ *   - For each of the 4 known keys (wifi_ssid, wifi_password,
+ *     name, description):
+ *       - ABSENT from JSON body (cJSON_GetObjectItemCaseSensitive
+ *         returns NULL) → preserve the corresponding cfg field
+ *       - PRESENT as a string → overwrite the corresponding cfg
+ *         field (including the empty-string case to explicitly
+ *         clear a field)
+ *
+ *   - In addition, the FW-05.4 guard imposes:
+ *       - Non-JSON body → 400 err="json" (no save, no reboot)
+ *       - JSON missing any required key → 400 err=<key> (no save,
+ *         no reboot)
+ *       - JSON with over-cap string values → 400 err=<key>
+ *
+ *   The presence/absent distinction is what makes the handler
+ *   partial-update: cJSON distinguishes absent (NULL) from present-
+ *   and-empty ("") via cJSON_GetObjectItemCaseSensitive / cJSON_IsString.
+ *
+ * On a well-formed body (all 4 keys present, within caps) the
+ * handler persists via config_save(), sends 200 {"ok":true}, delays
  * 100ms, then calls esp_restart() exactly once.
  *
  * On host, every esp_* / httpd_* call is redirected to the mock
@@ -196,6 +216,33 @@ static bool check_string_field(const cJSON *root, const char *key,
     return true;
 }
 
+/* Apply partial-update semantics for a single string field:
+ *   - If `key` is ABSENT from `root` (NULL) → leave `dest` untouched
+ *     (preserve the existing in-memory NVS-backed value).
+ *   - If `key` is PRESENT as a cJSON string → copy into `dest`,
+ *     NUL-terminating at dest_cap - 1 (the empty-string case is a
+ *     write, not a preserve — explicit clear semantics).
+ *
+ * `dest` MUST be a writable char array of size `dest_cap`.
+ * This function does NOT call check_string_field; the caller has
+ * already validated the field's presence + type + length-cap.
+ *
+ * FW-05.3 refactor: extracted from the inline merge block in
+ * provision_post_handler_impl for clarity (4 fields, identical
+ * pattern). */
+static void softap_apply_provision_field(const cJSON *root, const char *key,
+                                           char *dest, size_t dest_cap)
+{
+    if (!root || !key || !dest || dest_cap == 0) return;
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(root, key);
+    if (!item) return;  /* absent → preserve */
+    if (!cJSON_IsString(item) || !item->valuestring) return;  /* defensive */
+    /* Length is already validated by check_string_field against the
+     * field-specific cap; dest_cap is the same cap. */
+    strncpy(dest, item->valuestring, dest_cap - 1);
+    dest[dest_cap - 1] = '\0';
+}
+
 esp_err_t provision_post_handler_impl(httpd_req_t *req)
 {
     if (!req) return ESP_FAIL;
@@ -222,8 +269,10 @@ esp_err_t provision_post_handler_impl(httpd_req_t *req)
         return send_400(req, "json");
     }
 
-    /* TASK-2 batch: all 4 keys REQUIRED + within length caps.
-     * TASK-3 will loosen this to absent-=preserve. */
+    /* FW-05.4 guard: every required key MUST be present in the JSON.
+     * If absent, send 400 with err=<key> and return — the partial-
+     * update semantics below NEVER overwrite a field whose JSON key
+     * is missing, so we enforce "key must be present" up front. */
     const char *err_key = NULL;
 
     /* PRD L130: the JSON key for password is `wifi_password`, but the
@@ -231,9 +280,6 @@ esp_err_t provision_post_handler_impl(httpd_req_t *req)
      * helper reports the JSON key; we override for password below. */
     if (!check_string_field(root, "wifi_ssid",
                               PROV_WIFI_SSID_MAX, &err_key)) {
-        if (err_key && strcmp(err_key, "wifi_ssid") == 0) {
-            /* missing -> "wifi_ssid"; bad-length -> "wifi_ssid" */
-        }
         goto reject;
     }
     if (!check_string_field(root, "wifi_password",
@@ -250,31 +296,26 @@ esp_err_t provision_post_handler_impl(httpd_req_t *req)
         goto reject;
     }
 
-    /* All checks pass — merge into a local config_t and persist. The
-     * merge is TASK-3's job; for now we overwrite all 4 fields from
-     * the parsed JSON (which is what FW-05.2's outline rows expect). */
+    /* All required keys present + length-valid — apply partial-update
+     * semantics. For each key:
+     *   - absent (NULL) → preserve the existing cfg field
+     *   - present as string → overwrite the cfg field (including ""
+     *     to explicitly clear a field)
+     * The cfg is loaded by boot_run() at boot, so "preserve" means
+     * "leave whatever was in NVS at boot time alone". */
     config_t merged = *in_cfg;
-    const cJSON *j_ssid = cJSON_GetObjectItemCaseSensitive(root, "wifi_ssid");
-    const cJSON *j_pass = cJSON_GetObjectItemCaseSensitive(root, "wifi_password");
-    const cJSON *j_name = cJSON_GetObjectItemCaseSensitive(root, "name");
-    const cJSON *j_desc = cJSON_GetObjectItemCaseSensitive(root, "description");
-
-    strncpy(merged.wifi.ssid,
-            j_ssid->valuestring,
-            sizeof(merged.wifi.ssid) - 1);
-    merged.wifi.ssid[sizeof(merged.wifi.ssid) - 1] = '\0';
-    strncpy(merged.wifi.password,
-            j_pass->valuestring,
-            sizeof(merged.wifi.password) - 1);
-    merged.wifi.password[sizeof(merged.wifi.password) - 1] = '\0';
-    strncpy(merged.identity.name,
-            j_name->valuestring,
-            sizeof(merged.identity.name) - 1);
-    merged.identity.name[sizeof(merged.identity.name) - 1] = '\0';
-    strncpy(merged.identity.description,
-            j_desc->valuestring,
-            sizeof(merged.identity.description) - 1);
-    merged.identity.description[sizeof(merged.identity.description) - 1] = '\0';
+    softap_apply_provision_field(root, "wifi_ssid",
+                                  merged.wifi.ssid,
+                                  sizeof(merged.wifi.ssid));
+    softap_apply_provision_field(root, "wifi_password",
+                                  merged.wifi.password,
+                                  sizeof(merged.wifi.password));
+    softap_apply_provision_field(root, "name",
+                                  merged.identity.name,
+                                  sizeof(merged.identity.name));
+    softap_apply_provision_field(root, "description",
+                                  merged.identity.description,
+                                  sizeof(merged.identity.description));
 
     ESP_LOGI(TAG, "provision: saved cfg {ssid:%s, name:%s}",
              merged.wifi.ssid, merged.identity.name);

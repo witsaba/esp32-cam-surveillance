@@ -61,6 +61,14 @@ std::map<nvs_handle_t, std::string> &handle_table() {
     return instance;
 }
 
+// Total count of nvs_set_str + nvs_set_u8 invocations since the
+// last reset. Reset clears it. The FW-05.4 guard tests read this
+// to assert "config_save() was NOT called".
+int &write_count_ref() {
+    static int count = 0;
+    return count;
+}
+
 }  // namespace
 
 /* ---------- public mock API (test helpers) ---------- */
@@ -69,6 +77,11 @@ extern "C" void mock_nvs_reset(void) {
     store().clear();
     handle_table().clear();
     next_handle = 1;
+    write_count_ref() = 0;
+}
+
+extern "C" int mock_nvs_write_count(void) {
+    return write_count_ref();
 }
 
 extern "C" void mock_nvs_seed_str(const char *namespace_name,
@@ -151,6 +164,7 @@ extern "C" esp_err_t mock_nvs_set_str(nvs_handle_t handle,
     e.type = EntryType::kStr;
     e.bytes.assign(value, value + std::strlen(value) + 1);  // incl. NUL
     store()[it->second].entries[key] = std::move(e);
+    write_count_ref()++;
     return ESP_OK;
 }
 
@@ -201,6 +215,7 @@ extern "C" esp_err_t mock_nvs_set_u8(nvs_handle_t handle,
     e.type = EntryType::kU8;
     e.bytes.assign(1, value);
     store()[it->second].entries[key] = std::move(e);
+    write_count_ref()++;
     return ESP_OK;
 }
 
