@@ -105,11 +105,11 @@ if ! grep -q 'fw:' "$LOG_FILE"; then
   exit 1
 fi
 
-if grep -q 'boot: provisioning branch entered' "$LOG_FILE"; then
+if grep -q 'fw: provisioning branch entered' "$LOG_FILE"; then
   # Provisioning branch is the correct outcome for an empty-NVS cold boot.
   printf '[smoke] PASS: FW-02 + FW-03 provisioning-branch log line observed (FW-03.3 R-02)\n'
   printf '[smoke] --- captured lines ---\n'
-  grep -E '(fw:|boot:)' "$LOG_FILE" | sed 's/^/    /'
+  grep -E 'fw:' "$LOG_FILE" | sed 's/^/    /'
   exit 0
 fi
 
