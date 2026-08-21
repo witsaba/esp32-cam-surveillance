@@ -45,8 +45,20 @@ static const char *TAG = "boot";
 __attribute__((noinline))
 bool boot_decide_provisioning(const config_t *cfg, bool button_pressed)
 {
+#ifdef BOOT_TEST_STUB_FLIP_DECISION
+    /* FW-03.4 bite-proof: the function alternates between true /
+     * false on each call so the determinism invariant fails. The
+     * counter is a process-local static so its state survives
+     * across the two calls in `test_boot_stability_guard.c`. */
+    static int flip_state = 0;
+    (void)cfg;
+    (void)button_pressed;
+    flip_state ^= 1;
+    return flip_state != 0;
+#else
     if (button_pressed) return true;
     return cfg->wifi.ssid[0] == '\0';
+#endif
 }
 
 /* Provisioning branch. FW-05 owns the body (softAP + HTTP server).

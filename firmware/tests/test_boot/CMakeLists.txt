@@ -9,6 +9,7 @@ idf_component_register(
     SRCS "test_boot_order.c"
          "test_boot_fail_loud.c"
          "test_boot_decide.c"
+         "test_boot_stability_guard.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES boot config mocks unity
 )
