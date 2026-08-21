@@ -15,7 +15,7 @@ A low-energy, self-recovering ESP32-CAM firmware that holds one persistent WebSo
 1. Read § Goals, § Hardware target, and § FR-1 (boot sequence).
 2. Read § Architecture (module map + state machine).
 3. Pick up the next milestone in § Milestones. Each milestone is a self-contained PR-sized slice.
-4. When starting M1, copy the files from **§ Build prerequisites** into `firmware/`. Run `idf.py set-target esp32 && idf.py build`. The first build fetches the managed components.
+4. When starting M1, follow **§ Build prerequisites** — every step is an `idf.py` command, the only manual file is `firmware/main/Kconfig.projbuild`.
 
 ---
 
@@ -367,40 +367,50 @@ Each milestone ends with a `idf.py build` that fits in flash and a manual smoke 
 
 ## Build prerequisites
 
-This PR is docs-only. The implementation PR that opens M1 should reproduce the following files inside `firmware/` before writing any application code. File contents are listed here so the implementer does not need to dig through old branches.
+This PR is docs-only. The M1 implementer recreates the ESP-IDF project using **`idf.py` commands** — no hand-written `CMakeLists.txt`, `idf_component.yml`, `sdkconfig.defaults`, or `.gitignore`. The only file that must be authored by hand is `firmware/main/Kconfig.projbuild`, because `idf.py` has no command for project-level Kconfig symbols.
 
-### `firmware/CMakeLists.txt`
+> If any step below emits `unknown kconfig symbol 'FIRMWARE_*'`, the `Kconfig.projbuild` file is misplaced — confirm it lives at `firmware/main/Kconfig.projbuild`, **not** at `firmware/`.
 
-```cmake
-cmake_minimum_required(VERSION 3.16)
+### Step 1 — Bootstrap the project from the camera example
 
-set(EXTRA_COMPONENT_DIRS "")
+The camera example ships with the AI-Thinker pin map already correct, so we start there instead of `idf.py create-project` from a blank template.
 
-include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(firmware)
+```bash
+# From the repo root
+cd firmware
+idf.py create-project-from-example "espressif/esp32-camera:camera_example"
+# This drops camera_example/ inside firmware/. Move its contents up one level:
+mv camera_example/* camera_example/.* . 2>/dev/null
+rmdir camera_example
 ```
 
-### `firmware/main/CMakeLists.txt`
+### Step 2 — Add the WebSocket client
 
-```cmake
-idf_component_register(
-    SRCS "main.c"
-    INCLUDE_DIRS "."
-    REQUIRES nvs_flash esp_event esp_wifi esp_websocket_client
-)
+`idf.py add-dependency` updates `idf_component.yml` automatically — do NOT hand-edit it.
+
+```bash
+idf.py add-dependency "espressif/esp_websocket_client"
+idf.py add-dependency "espressif/esp32-camera"
 ```
 
-### `firmware/main/idf_component.yml`
+Pinning to a specific version (recommended for reproducibility):
 
-```yaml
-dependencies:
-  espressif/esp32-camera: "==2.1.7"
-  espressif/esp_websocket_client: "==1.8.0"
+```bash
+idf.py add-dependency "espressif/esp_websocket_client==1.8.0"
+idf.py add-dependency "espressif/esp32-camera==2.1.7"
 ```
 
-### `firmware/main/Kconfig.projbuild`
+### Step 3 — Set the chip target
 
-Place this inside the project component (where `main.c` lives) — NOT at the `firmware/` root. Placing it at the root triggers silent `unknown kconfig symbol` warnings on every overridden default.
+```bash
+idf.py set-target esp32
+```
+
+This populates `sdkconfig` from `sdkconfig.defaults`. If the example doesn't ship a `sdkconfig.defaults`, create one with `idf.py save-defconfig` after the menuconfig session in Step 5.
+
+### Step 4 — Author the project Kconfig (manual file)
+
+Create **`firmware/main/Kconfig.projbuild`** with the project tunables referenced throughout this PRD. `idf.py` does not generate this — it has to be hand-written. It must live in the project component (where `main.c` is), not at the project root.
 
 ```kconfig
 menu "ESP32-CAM Surveillance Firmware"
@@ -457,69 +467,51 @@ menu "ESP32-CAM Surveillance Firmware"
 endmenu
 ```
 
-### `firmware/sdkconfig.defaults`
+### Step 5 — Configure PSRAM and project tunables via menuconfig
 
-```ini
-# Flash
-CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
-CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
-
-# CPU at 240 MHz
-CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
-CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
-
-# PSRAM — required for any frame buffer above QVGA
-CONFIG_SPIRAM=y
-CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
-CONFIG_SPIRAM_SPEED_80M=y
-CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=16384
-
-# Wi-Fi
-CONFIG_ESP_WIFI_ENABLED=y
-
-# WebSocket client — dynamic buffer keeps the WS task from reserving
-# 64 KB of static RAM for the rx/tx ring
-CONFIG_ESP_WS_CLIENT_ENABLE_DYNAMIC_BUFFER=y
-
-# Project tunables (defined in firmware/main/Kconfig.projbuild)
-CONFIG_FIRMWARE_CAMERA_JPEG_QUALITY=18
-# 5 = FRAMESIZE_QVGA (default). 8 = VGA, 9 = SVGA.
-CONFIG_FIRMWARE_CAMERA_FRAME_SIZE=5
-CONFIG_FIRMWARE_STREAM_FPS=5
-CONFIG_FIRMWARE_STREAM_FPS_MIN=1
-CONFIG_FIRMWARE_WS_RECONNECT_INITIAL_MS=2000
-CONFIG_FIRMWARE_WS_RECONNECT_CAP_MS=30000
-CONFIG_FIRMWARE_SOFT_RECOVERY_FAILS=30
-CONFIG_FIRMWARE_SOFT_RECOVERY_WINDOW_MIN=10
-CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=y
-```
-
-### `firmware/.gitignore`
-
-```gitignore
-build/
-sdkconfig
-sdkconfig.old
-dependencies.lock
-managed_components/
-.cache/
-
-.vscode/
-.idea/
-.DS_Store
-*.swp
-```
-
-### First build commands
+Use `idf.py menuconfig` to set the values referenced throughout this PRD. Then capture the result with `idf.py save-defconfig` — that command writes **only the non-default options** into `sdkconfig.defaults`. Do NOT hand-author the file; always let `idf.py save-defconfig` generate it.
 
 ```bash
-cd firmware
-idf.py set-target esp32          # one-time, populates sdkconfig from sdkconfig.defaults
-idf.py build                     # fetches esp32-camera 2.1.7 + esp_websocket_client 1.8.0
-idf.py -p /dev/cu.usbserial-XXXX flash monitor
+idf.py menuconfig
+# In the TUI:
+#   Serial flasher config → Flash size → 4 MB
+#   Serial flasher config → Flash frequency → 80 MHz
+#   Component config → ESP PSRAM → Enable PSRAM
+#   Component config → ESP PSRAM → Speed → 80 MHz
+#   Component config → ESP PSRAM → Try to allocate Wi-Fi/LWIP in PSRAM
+#   Component config → ESP WebSocket Client → Enable dynamic buffer
+#   ESP32-CAM Surveillance Firmware → set CONFIG_FIRMWARE_* values
+#   <Save> and <Exit>
+
+idf.py save-defconfig
+# Generates/updates sdkconfig.defaults from the non-default options.
 ```
 
-If `idf.py set-target esp32` warns `unknown kconfig symbol 'FIRMWARE_*'`, `Kconfig.projbuild` is misplaced — confirm it lives at `firmware/main/Kconfig.projbuild`, not at `firmware/`.
+### Step 6 — Build, flash, monitor
+
+```bash
+idf.py build                      # compiles; first build fetches managed_components
+idf.py -p /dev/cu.usbserial-XXXX flash
+idf.py -p /dev/cu.usbserial-XXXX monitor
+```
+
+Repeat as needed during development:
+
+| Need | Command |
+|---|---|
+| Pull a newer version of a managed component | `idf.py update-dependencies` |
+| Re-fetch components without changing versions | delete `managed_components/` + `dependencies.lock`, then `idf.py build` |
+| Re-run CMake after editing `CMakeLists.txt` / `Kconfig.projbuild` | `idf.py reconfigure` |
+| Delete build output but keep `sdkconfig` | `idf.py clean` |
+| Delete build output AND `sdkconfig` | `idf.py fullclean` |
+| Inspect binary size | `idf.py size` / `idf.py size-components` / `idf.py size-files` |
+| Interactive Kconfig editor | `idf.py menuconfig` |
+| Regenerate `sdkconfig.defaults` from current `sdkconfig` | `idf.py save-defconfig` |
+| Erase flash before re-flashing | `idf.py erase-flash` |
+
+### Why this matters
+
+The first cut of this PRD shipped hand-written `CMakeLists.txt`, `idf_component.yml`, `sdkconfig.defaults`, and `.gitignore` files. That is brittle — these are scaffolding artefacts that `idf.py` generates and maintains for you. The only thing `idf.py` cannot generate is the project-level Kconfig, which is why `Kconfig.projbuild` is the sole manual file. Hand-authoring the others invites drift between the file and what `idf.py` would have produced.
 
 ---
 
