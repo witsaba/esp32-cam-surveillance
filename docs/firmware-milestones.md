@@ -1,12 +1,23 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 2 of 23 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by merge commit on the `feat/fw-02-nvs-config-schema` branch — see amendment blockquote at the end of § FW-02).
-> **First SDD to start**: FW-02 (`firmware-nvs-config-schema`) — closed in this same push window.
+> **Status**: 2 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016` — see amendment blockquote at the end of § FW-02).
+> **Next SDD to start**: FW-03 (`firmware-boot-orchestrator`).
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
 > **Date**: 2026-08-21.
 > **Append-only rule**: once the first milestone merges, ids are never renumbered; new work
 > appends the next free number; amendments are dated blockquotes with struck-through text.
+
+> **Amended 2026-08-21 (proportionality rescope).** A re-review against the skill's decomposition
+> discipline (merge-back rule, proportionality, sibling-disjointness) retired four milestones by
+> merging them into siblings — 23 milestones → 19, 81 nodes → 79. Retired ids are never reused.
+> ~~FW-04 (provisioning trigger)~~ duplicated FW-03.3 and FW-07.2 scenario-for-scenario; its only
+> non-duplicated node (the stability guard) moved to FW-03.4. ~~FW-09 (softAP teardown)~~ was a
+> single event handler below the one-SDD-flow lower bound; its nodes moved to FW-08.4 – FW-08.6.
+> ~~FW-12 (QVGA loopback)~~ restated FW-11.1's behavior as a longer soak; its nodes moved to
+> FW-11.4 – FW-11.5. ~~FW-17 (status frames)~~ shared FW-13's module contract (outbound text
+> frames per the PRD module map); its nodes moved to FW-13.5 – FW-13.6. Every edge, checklist
+> item, and traceability-spine row that referenced a retired id was rewired to the absorbing node.
 
 > **Authoring constraint.** This document states behaviors as Gherkin scenarios and what evidence
 > closes each node. It never states type names, field names, or signatures — each milestone's SDD
@@ -95,7 +106,7 @@ R-01 through R-28. Every R-id is closed by at least one leaf node in this docume
 | Reference firmware uses a binary semaphore around the frame-buffer acquisition API because its HTTP server has multiple concurrent handlers | `rural_home_assistant/backend/iot-camera/components/http_server/http_server.c:24-82` (PRD References) | Confirmed R-16 and the single-capture-task architecture: the only frame-buffer owner in this plan is FW-11 (capture task), with no semaphore and a queue-as-mutex pattern. FW-11.3 is the guard that bites if a second caller regresses. |
 | Reference firmware removes base64 wrapping from JPEG payloads for ~33 % bandwidth | `rural_home_assistant/backend/iot-camera/components/http_server/http_server.c:69-70`; commit `4a2b626` (PRD References) | Confirmed R-27: binary frames carry raw JPEG bytes; the protocol contract is encoded into the WebSocket frame's binary opcode, not a JSON envelope. No plan change. |
 | Reference firmware's `camera_settings.c:159` calls the framesize setter with no bounds check; out-of-range values would dereference a corrupt function-pointer table | `rural_home_assistant/backend/iot-camera/components/camera_settings/camera_settings.c:159` (PRD References) | Confirmed R-15: every integer is validated against the OV2640 enum range before any runtime setter call. FW-20.4 is the guard that bites if validation regresses. |
-| Reference firmware's `wifi.c:140-144` blocks on `portMAX_DELAY` for the first Wi-Fi connect, which wedges the device on a misconfigured SSID | `rural_home_assistant/backend/iot-camera/components/wifi/wifi.c:140-144` (PRD References) | Confirmed R-04 and FW-04.1: empty SSID triggers provisioning rather than wedging. FW-08.3 is the guard against the wedge regression. |
+| Reference firmware's `wifi.c:140-144` blocks on `portMAX_DELAY` for the first Wi-Fi connect, which wedges the device on a misconfigured SSID | `rural_home_assistant/backend/iot-camera/components/wifi/wifi.c:140-144` (PRD References) | Confirmed R-04 and FW-03.3: empty SSID triggers provisioning rather than wedging. FW-08.3 is the guard against the wedge regression. |
 | Reference firmware caps Wi-Fi retries at 5 then dies; PRD instead specifies infinite exponential backoff (2 s → 30 s cap) plus soft-recovery after the failure threshold | `rural_home_assistant/backend/iot-camera/components/wifi/wifi.c:78-84` (PRD References; FR-4; FR-5) | Confirmed R-19 + R-20: reconnect loop never gives up; the health task owns a 30-fails-in-10-min counter that triggers the documented reboot path. |
 | Reference firmware uses `sscanf("%d", &value)` for JSON parsing with no enum bounds checks | `rural_home_assistant/backend/iot-camera/components/camera_settings/camera_settings.c:284-300` (PRD References) | Confirmed R-15 + R-21 + R-22: incoming JSON commands must be parsed by a strict parser against an allow-list. FW-18.1 and FW-18.4 enforce this. |
 | Reference firmware spawns one FreeRTOS task per WS connection, exhausting memory under connection storms | `rural_home_assistant/backend/iot-camera/main/camera_server.c:151` (PRD References; deleted WS variant) | Confirmed R-08 + R-16: a single shared stream task is fed by a queue; no per-connection tasks. No plan change. |
@@ -110,7 +121,7 @@ is recorded even when items reconcile.
 | --- | --- | --- | --- |
 | 1 | Project Bindings for esp32-cam-surveillance (DAG-convention ADR + founding method document) are not yet ratified | The skill's `SKILL.md` § Project Bindings assumes a project's DAG-convention ADR and founding method document exist; this repo has neither — there is no `docs/adr/` folder and the only sibling doc is the PRD. | **Flagged to user.** This document declares its own bindings inline in its [Method](#method--sdd-milestone-rules) section, citing neither a separate ADR nor a founding document. A follow-up PR should author both, ratify the convention, and unblock future milestone documents. |
 | 2 | `docs/adr/` folder does not exist in this worktree | Skill's `SKILL.md` `Project Bindings (cachicamas)` references `docs/adr/0007-adopt-dag-convention-for-task-graphs.md`; `ls docs/` returns only `firmware-prd.md` and `.gitkeep` | **Deferred.** Out of scope for this PR; lives in a future ADR PR that closes item #1. |
-| 3 | FR-1 step 2 says "provisioning mode: bring up a softAP + captive portal (covered in a follow-up task; out of scope for the first cut)" while the PRD's milestone table M1 lists softAP provisioning + `/whoami` + `POST /provision` as in-scope | PRD § FR-1 step 2 vs PRD § Milestones table M1 | **Reconciled.** The "out of scope for the first cut" sentence is a vestige from the earliest draft; the authoritative scope is the Milestones table. Provisioning is in-scope for M1, decomposing into FW-04 and FW-05. |
+| 3 | FR-1 step 2 says "provisioning mode: bring up a softAP + captive portal (covered in a follow-up task; out of scope for the first cut)" while the PRD's milestone table M1 lists softAP provisioning + `/whoami` + `POST /provision` as in-scope | PRD § FR-1 step 2 vs PRD § Milestones table M1 | **Reconciled.** The "out of scope for the first cut" sentence is a vestige from the earliest draft; the authoritative scope is the Milestones table. Provisioning is in-scope for M1, decomposing into FW-03.3 + FW-07.2 (trigger) and FW-05 (softAP HTTP surface). (Rescoped 2026-08-21: originally FW-04 + FW-05; FW-04 merged into FW-03/FW-07.) |
 | 4 | `ping_interval_sec=10` vs `pingpong_timeout_sec=30` | PRD § FR-3 | **Reconciled.** The 30 s pong-deadline must exceed the 10 s ping cadence (otherwise the watchdog fires before the next ping); 30 ≥ 3 × 10 is the intended margin. FW-15.3 + FW-15.4 encode both halves. |
 | 5 | `fps` clamp range `[FIRMWARE_STREAM_FPS_MIN=1, ceiling ~15]` vs `CONFIG_FIRMWARE_STREAM_FPS=5` default | PRD § FR-6 `stream` command vs PRD § FR-3 pipeline defaults | **Reconciled.** `CONFIG_FIRMWARE_STREAM_FPS` is the default applied when the backend sends `stream.on` without an explicit `fps` field; runtime requests are clamped to `[FIRMWARE_STREAM_FPS_MIN, camera_ceiling]`. FW-19.1, FW-19.3, FW-19.4 encode both halves. |
 | 6 | PRD § Goals claims "recovery time from transient drop ≤ 10 s" while § FR-3 says `reconnect_timeout_ms` starts at 2 s — so the first retry is well within budget but a transient that misses the first retry can take up to 4 s | PRD § Goals table vs PRD § FR-3 / FR-4 | **Reconciled.** The 10 s budget covers the time from `WEBSOCKET_EVENT_DISCONNECTED` to `WEBSOCKET_EVENT_CONNECTED`, not "must reconnect on the first attempt". The initial 2 s retry covers most cases; later retries may push the wall-clock higher but the health task's soft-recovery threshold bounds the worst case. No plan change. |
@@ -157,7 +168,8 @@ This document inherits the node grammar, leaf anatomy, split triggers, and livin
 the skill's `references/method.md` (v2). Bindings for this project:
 
 - **Id prefix used in this document:** `FW` (Firmware). No other prefix may appear in headings or
-  `Depends on:` / `Blocks:` fields. Milestones are `FW-01` … `FW-23`; nodes are `FW-NN.p`,
+  `Depends on:` / `Blocks:` fields. Milestones are `FW-01` … `FW-23` (ids FW-04, FW-09, FW-12,
+  FW-17 retired by the 2026-08-21 rescope amendment and never reused); nodes are `FW-NN.p`,
   `FW-NN.p.q`, and at most `FW-NN.p.q.r` (three levels below the milestone; depth 2–3 only when a
   node is genuinely a sub-DAG).
 - **Evidence-gate command:** `idf.py build` for build-related leaves (must succeed; `firmware.bin`
@@ -209,10 +221,10 @@ flowchart TB
 | Wave | Milestones | Gate | Exit condition (the wave's value) |
 | --- | --- | --- | --- |
 | 0 — Foundations | FW-01 (closed) | none | `idf.py build` succeeds; `firmware.bin` < 256 KB; managed components fetched; project Kconfig loaded — proven by merge commit `1ab5705` |
-| 1 — Provisioning & NVS | FW-02 … FW-07 | Wave 0 complete | A cold-boot device reaches `NOLINK` with NVS round-trip working; LED reflects boot / wifi / ws states; the boot button handles tap, boot-time long-press, and runtime long-press |
-| 2 — Wi-Fi | FW-08 … FW-09 | Wave 1 complete | Station mode connects with exponential backoff and recovers within 30 s after AP reboot; the softAP tears down the instant STA gets an IP, closing the captive-portal attack window |
-| 3 — Camera | FW-10 … FW-12 | Wave 2 complete | The camera driver initialises with PRD-mandated sensor parameters; PSRAM presence is asserted (or `PSRAM_REQUIRED` + stop); a capture-and-drop loop sustains 5 fps with frame-queue overflow dropping + returning the buffer |
-| 4 — WebSocket + Recovery | FW-13 … FW-17 | Wave 3 complete | The device opens its single persistent WS to `ws://<host>:<port>/cams`, sends a hello frame on connect, emits status frames every 30 s, streams fragmented or non-fragmented binary JPEG frames, reconnects with exponential backoff, and triggers a reboot after the soft-recovery failure threshold with the reason NVS-logged |
+| 1 — Provisioning & NVS | FW-02, FW-03, FW-05, FW-06, FW-07 | Wave 0 complete | A cold-boot device reaches `NOLINK` with NVS round-trip working; LED reflects boot / wifi / ws states; the boot button handles tap, boot-time long-press, and runtime long-press |
+| 2 — Wi-Fi | FW-08 | Wave 1 complete | Station mode connects with exponential backoff and recovers within 30 s after AP reboot; the softAP tears down the instant STA gets an IP, closing the captive-portal attack window |
+| 3 — Camera | FW-10 … FW-11 | Wave 2 complete | The camera driver initialises with PRD-mandated sensor parameters; PSRAM presence is asserted (or `PSRAM_REQUIRED` + stop); a capture-and-drop loop sustains 5 fps with frame-queue overflow dropping + returning the buffer |
+| 4 — WebSocket + Recovery | FW-13 … FW-16 | Wave 3 complete | The device opens its single persistent WS to `ws://<host>:<port>/cams`, sends a hello frame on connect, emits status frames every 30 s, streams fragmented or non-fragmented binary JPEG frames, reconnects with exponential backoff, and triggers a reboot after the soft-recovery failure threshold with the reason NVS-logged |
 | 5 — Control plane | FW-18 … FW-21 | Wave 4 complete | The backend can drive `stream on/off` (with fps clamping), `config` (frame_size + quality + identity via runtime setters with strict validation), `reset_cam` (camera-only reset), `sleep` (clean CLOSE + no auto-reconnect), `reboot` (persists dirty config), `identify` (text reply); unknown commands return `error` with the original id |
 | 6 — Energy + Integration | FW-22 … FW-23 | Wave 5 complete | Camera is powered down between streams and Wi-Fi modem-sleep engages when no client is connected, achieving < 5 mA idle; full end-to-end smoke on hardware confirms cold-boot → provisioning → wifi → WS → stream → sleep → reboot flow |
 
@@ -244,7 +256,7 @@ SDD change: `firmware-validation-scaffold` · Closes: R-28.
 - **Goal:** Prove the project compiles with both managed components and the project Kconfig loaded, before any behavior work begins.
 - **Deliverable:** the validated baseline: project bootstrapped from the camera example, WebSocket client added as a managed dependency, project Kconfig under `firmware/main/Kconfig.projbuild`, `sdkconfig.defaults` capturing PSRAM + project tunables, and a successful `idf.py build`.
 - **Acceptance:** the merge commit that closes this milestone recorded every checklist item below as green.
-- **Depends on:** nothing. **Blocks:** FW-02, FW-03, FW-04, FW-05, FW-06, FW-07, FW-08, FW-09, FW-10, FW-11, FW-12, FW-13, FW-14, FW-15, FW-16, FW-17, FW-18, FW-19, FW-20, FW-21, FW-22, FW-23 (every later milestone compiles against this baseline).
+- **Depends on:** nothing. **Blocks:** FW-02, FW-03, FW-05, FW-06, FW-07, FW-08, FW-10, FW-11, FW-13, FW-14, FW-15, FW-16, FW-18, FW-19, FW-20, FW-21, FW-22, FW-23 (every later milestone compiles against this baseline).
 - **Out of scope:** application behavior — owner: subsequent milestones (FW-02 onward).
 - **Notes:** the implementer of FW-01 followed PRD § Build prerequisites § Steps 1–6. The artifacts (`managed_components/`, `build/firmware.bin`) are not in version control; they are reproduced by `idf.py build` after pulling the merged files.
 
@@ -282,19 +294,14 @@ flowchart TB
     FW02_1 --> FW02_2
     FW02_2 --> FW02_3
   end
-  subgraph FW03 ["FW-03 — Boot orchestrator"]
+  subgraph FW03 ["FW-03 — Boot orchestrator + provisioning decision"]
     FW03_1["FW-03.1<br/>[leaf]"]
     FW03_2["FW-03.2<br/>[guard]"]
     FW03_3["FW-03.3<br/>[leaf]"]
+    FW03_4["FW-03.4<br/>[guard]"]
     FW03_1 --> FW03_2
     FW03_1 --> FW03_3
-  end
-  subgraph FW04 ["FW-04 — Provisioning trigger"]
-    FW04_1["FW-04.1<br/>[leaf]"]
-    FW04_2["FW-04.2<br/>[leaf]"]
-    FW04_3["FW-04.3<br/>[guard]"]
-    FW04_1 --> FW04_3
-    FW04_2 --> FW04_3
+    FW03_3 --> FW03_4
   end
   subgraph FW05 ["FW-05 — softAP provisioning"]
     FW05_1["FW-05.1<br/>[leaf]"]
@@ -322,10 +329,9 @@ flowchart TB
     FW07_1 --> FW07_4
   end
   FW02 --> FW03
-  FW02 --> FW04
   FW02 --> FW05
   FW02 --> FW07
-  FW04 --> FW05
+  FW03 --> FW05
   FW01 --> FW02
   classDef leaf fill:#e2e8f0,stroke:#94a3b8,color:#1f2937
   classDef guard fill:#fef3c7,stroke:#d97706,color:#1f2937
@@ -339,9 +345,7 @@ flowchart TB
   class FW03_1 leaf
   class FW03_2 guard
   class FW03_3 leaf
-  class FW04_1 leaf
-  class FW04_2 leaf
-  class FW04_3 guard
+  class FW03_4 guard
   class FW05_1 leaf
   class FW05_2 leaf
   class FW05_3 leaf
@@ -365,7 +369,7 @@ SDD change: `firmware-nvs-config-schema` · Closes: R-01.
 - **Goal:** Persist `config_t` (wifi credentials + identity Name/Description + schema version) in NVS with a schema-version check that survives a single-bit error.
 - **Deliverable:** a `config` module exporting `config_load`, `config_save`, and `config_factory_reset`, backed by an NVS namespace carrying `ssid`, `password`, `name`, `description`, and `schema_version` keys.
 - **Acceptance:** given a fresh NVS partition, `config_load` returns `CONFIG_OK` with defaults; given a stored blob with a stale schema version, `config_load` logs a warning, falls back to defaults, marks the in-memory config as dirty, and persists the new schema on the next `config_save`.
-- **Depends on:** FW-01. **Blocks:** FW-03, FW-04, FW-05, FW-07, FW-08.
+- **Depends on:** FW-01. **Blocks:** FW-03, FW-05, FW-07, FW-08.
 - **Out of scope:** wifi connect logic — owner: FW-08. softAP HTTP server — owner: FW-05. Camera-settings NVS namespace — owner: FW-20.
 - **Notes:** MAC is NOT stored in `config_t`; it is read live from eFuse by the identity module (FW-13.3). Read `rural_home_assistant/backend/iot-humidity-sensor/components/wifi_manager/` for reference patterns of NVS-backed wifi config before authoring, even though the new code lands in the firmware modules area.
 
@@ -399,15 +403,23 @@ SDD change: `firmware-nvs-config-schema` · Closes: R-01.
 
 ### FW-03 — Boot orchestrator runs the FR-1 sequence
 
-SDD change: `firmware-boot-orchestrator` · Closes: R-06, R-07, R-08.
+SDD change: `firmware-boot-orchestrator` · Closes: R-02, R-03 (decision-integration half; the press-duration measurement is FW-07's), R-06, R-07, R-08.
+
+> **Amended 2026-08-21 (rescope).** ~~FW-04 — Provisioning trigger fires on empty SSID or
+> boot-button long-press~~ merged here: FW-04.1 duplicated FW-03.3 scenario-for-scenario and
+> FW-04.2 duplicated FW-07.2 (sibling-disjointness violation). The only non-duplicated node, the
+> decision-stability guard FW-04.3, is appended below as FW-03.4. R-02 is now closed by FW-03.3;
+> R-03 jointly by FW-07.2 (press-duration measurement) and FW-03.3 (decision integration).
+> FW-04's `Blocks: FW-05` edge moved to this milestone. FW-03.4 stubs the button signal, so this
+> milestone's SDD flow stays closable before FW-07 lands.
 
 **Charter**
 
 - **Goal:** Drive the FR-1 boot sequence (NVS init → load config → provisioning decision → camera init → WS init → start supervision tasks → event-loop handoff) in the documented order, with a loud failure if any required init returns non-OK.
 - **Deliverable:** the boot orchestrator that runs the boot sequence in the documented order, calls each module's init function at the right step, and exits cleanly into the event loop.
 - **Acceptance:** given a configured device, after the boot orchestrator returns, the supervision tasks are running and the device is ready to handle events; given a misconfigured device, the provisioning branch is taken (FR-1 step 2); given a failing init, the boot fails loud with a typed error (not a silent wedge).
-- **Depends on:** FW-02, FW-01. **Blocks:** FW-08, FW-10, FW-13.
-- **Out of scope:** the actual init implementations — owners: FW-02 (config), FW-08 (wifi), FW-09 (softAP teardown), FW-10 (camera), FW-13 (WS).
+- **Depends on:** FW-02, FW-01. **Blocks:** FW-05, FW-08, FW-10, FW-13.
+- **Out of scope:** the actual init implementations — owners: FW-02 (config), FW-08 (wifi + softAP teardown), FW-10 (camera), FW-13 (WS). Boot-button press-duration measurement — owner: FW-07.
 - **Notes:** this milestone stitches existing module inits into the documented order; it does not own the implementations themselves.
 
 #### FW-03.1 — walking skeleton — the boot orchestrator runs the boot sequence in order `[leaf]`
@@ -437,39 +449,15 @@ SDD change: `firmware-boot-orchestrator` · Closes: R-06, R-07, R-08.
 - **Scenarios:**
   - **Scenario: empty SSID takes the provisioning branch.** Given a `config_t.wifi.ssid` empty string and the boot button not pressed, When the boot orchestrator reaches the provisioning decision step, Then the provisioning path is taken.
   - **Scenario: configured SSID skips provisioning.** Given a `config_t.wifi.ssid` non-empty and the boot button not pressed, When the boot orchestrator reaches the provisioning decision step, Then the normal-boot path is taken.
+  - **Scenario: boot-time long-press selects provisioning regardless of SSID.** Given the boot-button boot-time long-press signal asserted (the press-duration measurement is owned by FW-07.2 and stubbed here) and a non-empty `wifi.ssid`, When the boot orchestrator reaches the provisioning decision step, Then the provisioning path is taken.
 - **Depends on:** FW-02.1.
 
-### FW-04 — Provisioning trigger fires on empty SSID or boot-button long-press
-
-SDD change: `firmware-provisioning-trigger` · Closes: R-02, R-03.
-
-**Charter**
-
-- **Goal:** Decide deterministically at boot whether to enter provisioning mode, based on the SSID being empty or the boot button being held ≥ 3 s.
-- **Deliverable:** the boot-time provisioning-decision logic (a pure function from inputs to a yes/no answer) and the boot-button press-duration measurement.
-- **Acceptance:** the decision is taken once at boot, is stable (no flapping after the decision is made), and matches the FR-1 step 2 rule.
-- **Depends on:** FW-02, FW-01. **Blocks:** FW-05.
-- **Out of scope:** the softAP bring-up and HTTP server — owner: FW-05. Runtime button long-press factory reset — owner: FW-07.3.
-
-#### FW-04.1 — provisioning triggers when `wifi.ssid` is empty `[leaf]`
-
-- **Scenarios:**
-  - **Scenario: empty SSID selects provisioning at boot.** Given a `config_t` with empty `wifi.ssid` and the boot button not pressed, When the boot-time provisioning decision runs, Then provisioning is selected.
-  - **Scenario: non-empty SSID skips provisioning at boot.** Given a `config_t` with non-empty `wifi.ssid` and the boot button not pressed, When the boot-time provisioning decision runs, Then the normal-boot path is selected.
-- **Depends on:** FW-02.1.
-
-#### FW-04.2 — provisioning triggers when boot button is held ≥ 3 s at boot `[leaf]`
-
-- **Scenarios:**
-  - **Scenario: 3-second boot-time press selects provisioning.** Given the boot button GPIO held low continuously for ≥ 3 s after reset, When the boot-time provisioning decision runs, Then provisioning is selected regardless of `wifi.ssid`.
-  - **Scenario: short boot-time press does not select provisioning.** Given the boot button released before 3 s elapses, When the boot-time provisioning decision runs, Then the decision falls through to the empty-SSID rule.
-- **Depends on:** FW-01.
-
-#### FW-04.3 — provisioning decision is stable after the first decision `[guard]`
+#### FW-03.4 — provisioning decision is stable after the first decision `[guard]`
 
 - **Bite proof:**
   - **Scenario: flapping is rejected.** Given the provisioning decision logic stubbed to flip its return value on each call (scratch violation), When the boot-time provisioning decision runs twice during the same boot, Then the guard fails naming the determinism invariant.
-- **Depends on:** FW-04.1, FW-04.2.
+  - **Scenario: green path is stable.** Given the provisioning decision logic intact (button signal stubbed to a fixed value), When the boot-time provisioning decision runs twice during the same boot, Then both runs return the same answer.
+- **Depends on:** FW-03.3.
 
 ### FW-05 — softAP HTTP server exposes `/whoami` and `POST /provision`
 
@@ -480,16 +468,16 @@ SDD change: `firmware-softap-provisioning` · Closes: R-10, R-11, R-12, R-26.
 - **Goal:** While the device is in provisioning mode, the softAP runs an HTTP server that lets the onboarding app read the device's identity (`/whoami`) and write wifi + identity (`POST /provision`), then reboot into normal boot.
 - **Deliverable:** the HTTP server endpoints on the softAP interface, with strict request validation.
 - **Acceptance:** a fresh-provisioning device answers `GET /whoami` with MAC + Name + Description + fw + chip; `POST /provision` writes the four-field body to NVS and triggers a reboot; re-provisioning devices see their existing Name/Description in `/whoami`, not an empty placeholder.
-- **Depends on:** FW-04, FW-02, FW-01. **Blocks:** FW-09.
+- **Depends on:** FW-03, FW-02, FW-01. **Blocks:** FW-08 (the softAP-teardown nodes FW-08.4 – FW-08.6 need a softAP to tear down).
 - **Out of scope:** the provisioning mobile app — owner: provisioning tooling PRD. Captive-portal DNS rebinding for automatic browser redirect — deferred (not in PRD scope).
-- **Notes:** the softAP tear-down at STA IP is wired here as a soft dependency on FW-09.1; this milestone closes the HTTP surface only. Read `rural_home_assistant/backend/iot-humidity-sensor/components/whoami.c` as reference before authoring.
+- **Notes:** the softAP tear-down at STA IP is wired here as a soft dependency on FW-08.4; this milestone closes the HTTP surface only. Read `rural_home_assistant/backend/iot-humidity-sensor/components/whoami.c` as reference before authoring.
 
 #### FW-05.1 — `GET /whoami` returns the device identity `[leaf]`
 
 - **Scenarios:**
   - **Scenario: whoami returns MAC + identity + fw + chip on a fresh device.** Given a device in provisioning mode with an empty Name and Description, When `GET /whoami` is invoked, Then the response body contains the MAC read from eFuse, empty `name`, empty `description`, the firmware version string, and the chip identifier.
   - **Scenario: whoami returns content-type JSON.** Given a `GET /whoami` request, When the response is observed, Then the content type is JSON and the body parses without error.
-- **Depends on:** FW-04.1.
+- **Depends on:** FW-03.3.
 
 #### FW-05.2 — `POST /provision` writes NVS and reboots into normal boot `[leaf]`
 
@@ -570,7 +558,12 @@ SDD change: `firmware-status-led` · Closes: R-23.
 
 ### FW-07 — Boot button handles tap, boot-time long-press, and runtime long-press
 
-SDD change: `firmware-boot-button` · Closes: R-24.
+SDD change: `firmware-boot-button` · Closes: R-03 (press-duration-measurement half; the decision integration is FW-03's), R-24.
+
+> **Amended 2026-08-21 (rescope).** With ~~FW-04~~ merged away, FW-07.2 is now the sole owner of
+> the boot-time long-press *measurement* (R-03's measurement half); its scenarios assert the
+> measured signal only. The decision integration lives in FW-03.3 and the stability guard in
+> FW-03.4 (both stub the button signal, so the two SDD flows stay decoupled).
 
 **Charter**
 
@@ -587,12 +580,13 @@ SDD change: `firmware-boot-button` · Closes: R-24.
   - **Scenario: 99 ms tap is still ignored.** Given normal-boot runtime, When the boot button is pressed for 99 ms then released, Then no state change occurs.
 - **Depends on:** FW-01.
 
-#### FW-07.2 — long press ≥ 3 s at boot enters provisioning `[leaf]`
+#### FW-07.2 — long press ≥ 3 s at boot asserts the boot-time long-press signal `[leaf]`
 
 - **Scenarios:**
-  - **Scenario: 3 s boot-time press selects provisioning.** Given the boot button GPIO held low continuously for ≥ 3 s starting from reset, When the boot-time provisioning decision runs, Then provisioning is selected.
-  - **Scenario: 10 s boot-time press also selects provisioning (and is not the runtime-reset path).** Given a 10 s boot-time press, When the boot finishes, Then the device enters provisioning mode (not factory reset — factory reset is a runtime-only behavior).
-- **Depends on:** FW-01, FW-04.2.
+  - **Scenario: 3 s boot-time press asserts the signal.** Given the boot button GPIO held low continuously for ≥ 3 s starting from reset, When the press-duration measurement completes, Then the boot-time long-press signal is asserted.
+  - **Scenario: 10 s boot-time press asserts the same signal (not the runtime-reset path).** Given a 10 s boot-time press, When the press-duration measurement completes, Then the boot-time long-press signal is asserted and the runtime factory-reset path is NOT triggered (factory reset is a runtime-only behavior).
+  - **Scenario: short boot-time press leaves the signal deasserted.** Given the boot button released before 3 s elapses, When the press-duration measurement completes, Then the boot-time long-press signal is not asserted (the provisioning decision — owned by FW-03.3 — then falls through to the empty-SSID rule).
+- **Depends on:** FW-01.
 
 #### FW-07.3 — long press ≥ 10 s at runtime triggers factory reset `[leaf]`
 
@@ -616,24 +610,25 @@ The network path is now stable enough for everything else.
 
 ```mermaid
 flowchart TB
-  subgraph FW08 ["FW-08 — Wi-Fi station with backoff"]
+  subgraph FW08 ["FW-08 — Wi-Fi station with backoff + softAP teardown"]
     FW08_1["FW-08.1<br/>[leaf]"]
     FW08_2["FW-08.2<br/>[leaf]"]
     FW08_3["FW-08.3<br/>[guard]"]
+    FW08_4["FW-08.4<br/>[leaf]"]
+    FW08_5["FW-08.5<br/>[leaf]"]
+    FW08_6["FW-08.6<br/>[guard]"]
     FW08_1 --> FW08_2
     FW08_1 --> FW08_3
-  end
-  subgraph FW09 ["FW-09 — softAP teardown on STA IP"]
-    FW09_1["FW-09.1<br/>[leaf]"]
-    FW09_2["FW-09.2<br/>[leaf]"]
-    FW09_3["FW-09.3<br/>[guard]"]
-    FW09_1 --> FW09_3
-    FW09_2 --> FW09_3
+    FW08_1 --> FW08_4
+    FW08_4 --> FW08_5
+    FW08_4 --> FW08_6
+    FW08_5 --> FW08_6
   end
   FW02 --> FW08
-  FW04 --> FW08
-  FW08 --> FW09
-  FW05 --> FW09
+  FW03 --> FW08
+  FW05 --> FW08
+  FW06 --> FW08
+  FW07 --> FW08
   FW01 --> FW08
   classDef leaf fill:#e2e8f0,stroke:#94a3b8,color:#1f2937
   classDef guard fill:#fef3c7,stroke:#d97706,color:#1f2937
@@ -643,22 +638,29 @@ flowchart TB
   class FW08_1 leaf
   class FW08_2 leaf
   class FW08_3 guard
-  class FW09_1 leaf
-  class FW09_2 leaf
-  class FW09_3 guard
+  class FW08_4 leaf
+  class FW08_5 leaf
+  class FW08_6 guard
 ```
 
 ### FW-08 — Wi-Fi station connects with exponential backoff and recovers from AP reboot
 
-SDD change: `firmware-wifi-station-backoff` · Closes: R-04.
+SDD change: `firmware-wifi-station-backoff` · Closes: R-04, R-05, R-26 (softAP-teardown half).
+
+> **Amended 2026-08-21 (rescope).** ~~FW-09 — softAP tears down the instant STA gets an IP~~
+> merged here: its deliverable was a single station-mode IP-up event handler — below the
+> one-SDD-flow lower bound — and that handler lives in the same event subscription this milestone
+> already owns. FW-09.1 → FW-08.4, FW-09.2 → FW-08.5, FW-09.3 → FW-08.6. R-05 and the
+> softAP-teardown half of R-26 are now closed here.
 
 **Charter**
 
-- **Goal:** Connect the station interface to the configured SSID with exponential backoff on failure, recover within 30 s after an AP reboot, and never wedge on a misconfigured SSID.
-- **Deliverable:** the wifi connect driver (initiate, observe result, retry with growing delay) plus an event subscription for connection / disconnection / IP acquisition.
-- **Acceptance:** a configured device connects within the backoff schedule; an AP reboot is followed by reconnect within 30 s; a misconfigured SSID triggers provisioning instead of a hang.
-- **Depends on:** FW-02, FW-04, FW-01. **Blocks:** FW-09, FW-13.
-- **Out of scope:** the softAP bring-up — owner: FW-05. The softAP teardown — owner: FW-09. The NVS-backed credentials — owner: FW-02.
+- **Goal:** Connect the station interface to the configured SSID with exponential backoff on failure, recover within 30 s after an AP reboot, never wedge on a misconfigured SSID, and tear down the provisioning softAP the instant the station interface acquires an IP (closing the captive-portal attack window).
+- **Deliverable:** the wifi connect driver (initiate, observe result, retry with growing delay) plus an event subscription for connection / disconnection / IP acquisition, including the IP-up handler that triggers softAP teardown when `CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=y`.
+- **Acceptance:** a configured device connects within the backoff schedule; an AP reboot is followed by reconnect within 30 s; a misconfigured SSID triggers provisioning instead of a hang; the softAP stops accepting clients within 1 s of the station IP-up event, while staying alive during the joining period so the onboarding app can complete its POST.
+- **Depends on:** FW-02, FW-03, FW-05, FW-01. **Blocks:** FW-13.
+- **Out of scope:** the softAP bring-up and HTTP endpoints — owner: FW-05. The NVS-backed credentials — owner: FW-02.
+- **Notes:** post-merge size assessment (2026-08-21): two deliverables in one flow (wifi connect driver + IP-up teardown handler). Reassess against the 400-changed-line split trigger when opening this SDD; if the flow trends over budget, split the PR into reviewable work-unit commits rather than re-splitting the milestone (the teardown is one handler inside the event subscription this flow already builds).
 
 #### FW-08.1 — station connects with exponential backoff on a known SSID `[leaf]`
 
@@ -688,38 +690,26 @@ SDD change: `firmware-wifi-station-backoff` · Closes: R-04.
   - **Scenario: misconfigured SSID triggers provisioning instead.** Given a misconfigured SSID and the boot-time provisioning decision in scope, When the wifi init runs, Then the failure surfaces as a provisioning entry rather than a hang.
 - **Depends on:** FW-08.1.
 
-### FW-09 — softAP tears down the instant STA gets an IP
-
-SDD change: `firmware-softap-teardown` · Closes: R-05, R-26.
-
-**Charter**
-
-- **Goal:** Close the captive-portal attack window: the moment the station interface acquires an IP, the provisioning softAP is torn down.
-- **Deliverable:** the station-mode IP-up event handler that triggers softAP teardown when `CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=y`.
-- **Acceptance:** the softAP stops accepting clients within 1 s of the station IP-up event; while STA is still joining, the softAP stays alive so the onboarding app can complete its POST.
-- **Depends on:** FW-05, FW-08, FW-01. **Blocks:** none (terminal in Wave 2).
-- **Out of scope:** the softAP HTTP endpoints — owner: FW-05. The wifi station driver — owner: FW-08.
-
-#### FW-09.1 — softAP tears down within 1 s of STA IP-up `[leaf]`
+#### FW-08.4 — softAP tears down within 1 s of STA IP-up `[leaf]`
 
 - **Scenarios:**
   - **Scenario: IP-up event triggers softAP teardown.** Given a device in provisioning mode with the softAP active, When the station interface receives an IP and `CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=y`, Then the softAP stops accepting new clients within 1 s.
   - **Scenario: Kconfig off keeps the softAP alive.** Given `CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=n`, When the station interface receives an IP, Then the softAP remains active.
-- **Depends on:** FW-08.1.
+- **Depends on:** FW-08.1, FW-05.2.
 
-#### FW-09.2 — softAP stays alive while STA is still joining `[leaf]`
+#### FW-08.5 — softAP stays alive while STA is still joining `[leaf]`
 
 - **Scenarios:**
   - **Scenario: pre-IP-up state keeps softAP active.** Given a device in provisioning mode with the station interface in connecting state, When the firmware observes a tick at 5 s into the connection attempt, Then the softAP is still serving the HTTP endpoints.
   - **Scenario: pre-IP-up retries do not affect softAP state.** Given the station interface retries the association multiple times, When the firmware observes the pre-IP-up period, Then the softAP lifecycle is independent of these retries.
-- **Depends on:** FW-09.1.
+- **Depends on:** FW-08.4.
 
-#### FW-09.3 — softAP is unreachable on the STA network after IP-up `[guard]`
+#### FW-08.6 — softAP is unreachable on the STA network after IP-up `[guard]`
 
 - **Bite proof:**
   - **Scenario: missing teardown is rejected.** Given the softAP teardown handler stubbed out (scratch violation), When the station interface receives an IP, Then the guard fails naming the teardown-on-IP invariant (the AP would remain reachable on the STA network, re-opening the captive-portal attack window).
   - **Scenario: green path closes the attack window.** Given the teardown handler active, When the station interface receives an IP, Then no softAP SSID is broadcast on the same radio.
-- **Depends on:** FW-09.1, FW-09.2.
+- **Depends on:** FW-08.4, FW-08.5.
 
 ## Wave 3 — Camera
 
@@ -740,22 +730,20 @@ flowchart TB
     FW10_3 --> FW10_5
     FW10_2 --> FW10_4
   end
-  subgraph FW11 ["FW-11 — Frame capture task"]
+  subgraph FW11 ["FW-11 — Frame capture task + QVGA loopback"]
     FW11_1["FW-11.1<br/>[leaf]"]
     FW11_2["FW-11.2<br/>[leaf]"]
     FW11_3["FW-11.3<br/>[guard]"]
+    FW11_4["FW-11.4<br/>[leaf]"]
+    FW11_5["FW-11.5<br/>[mechanical]"]
     FW11_1 --> FW11_2
     FW11_1 --> FW11_3
-  end
-  subgraph FW12 ["FW-12 — QVGA loopback (capture-and-drop)"]
-    FW12_1["FW-12.1<br/>[leaf]"]
-    FW12_2["FW-12.2<br/>[mechanical]"]
-    FW12_1 --> FW12_2
+    FW11_2 --> FW11_4
+    FW11_4 --> FW11_5
   end
   FW01 --> FW10
   FW02 --> FW10
   FW10 --> FW11
-  FW11 --> FW12
   classDef leaf fill:#e2e8f0,stroke:#94a3b8,color:#1f2937
   classDef guard fill:#fef3c7,stroke:#d97706,color:#1f2937
   classDef decision fill:#ede9fe,stroke:#8b5cf6,color:#1f2937
@@ -769,8 +757,8 @@ flowchart TB
   class FW11_1 leaf
   class FW11_2 leaf
   class FW11_3 guard
-  class FW12_1 leaf
-  class FW12_2 mechanical
+  class FW11_4 leaf
+  class FW11_5 mechanical
 ```
 
 ### FW-10 — Camera driver initialises with PRD-mandated parameters
@@ -821,23 +809,33 @@ SDD change: `firmware-camera-init` · Closes: R-06, R-13, R-14.
 #### FW-10.5 — boot-time camera_settings load is applied before the first frame `[leaf]`
 
 - **Scenarios:**
-  - **Scenario: walking skeleton — stored blob overrides Kconfig defaults.** Given the `camera_cfg` NVS namespace holds a stored blob with a matching schema version and a non-default `quality=12`, When the camera init runs, Then the documented sensor parameters (FW-10.1) are applied first, the stored blob is applied on top via runtime setters, and the first captured frame reflects `quality=12` (not the Kconfig default of 18).
-  - **Scenario: no stored blob uses Kconfig defaults.** Given the `camera_cfg` namespace is empty, When the camera init runs, Then the documented Kconfig defaults are applied and the first captured frame reflects `quality=18`.
+  - **Scenario: walking skeleton — stored blob overrides Kconfig defaults.** Given the camera-settings source holds a stored blob with a matching schema version and a non-default `quality=12`, When the camera init runs, Then the documented sensor parameters (FW-10.1) are applied first, the stored blob is applied on top via runtime setters, and the first captured frame reflects `quality=12` (not the Kconfig default of 18).
+  - **Scenario: no stored blob uses Kconfig defaults.** Given the camera-settings source is empty, When the camera init runs, Then the documented Kconfig defaults are applied and the first captured frame reflects `quality=18`.
   - **Scenario: stored blob is applied via setters, not reinit.** Given the stored blob is non-default, When the camera init runs, Then the stored values reach the sensor through runtime setters only — the guard FW-10.3 still bites if a reinit path is reintroduced.
-- **Depends on:** FW-10.3, FW-20.5.
+- **Depends on:** FW-10.3.
 - **Notes:** pins the boot-time sequencing decision (FW-10 owns init order: Kconfig defaults first, stored blob second via runtime setters). Without this leaf, the first implementer has to choose between (a) reinit-with-stored-values (rejected by FW-10.3) and (b) setter-on-init (this leaf). Recording the decision in the doc removes the ambiguity.
+
+> **Amended 2026-08-21 (rescope review, F2).** ~~Depends on: FW-10.3, FW-20.5.~~ The hard edge to
+> FW-20.5 (Wave 5) would have kept FW-10's single SDD flow open across two waves. Port-fake-swap
+> instead: at FW-10 time this leaf runs against a fake in-memory camera-settings source; FW-20.5
+> remains the recorded swap node where the real NVS-backed (`camera_cfg`) source replaces the fake.
 
 ### FW-11 — Frame capture task is the sole caller of the frame-buffer API
 
-SDD change: `firmware-frame-capture-task` · Closes: R-16.
+SDD change: `firmware-frame-capture-task` · Closes: R-16, R-25 (5 fps loopback half).
+
+> **Amended 2026-08-21 (rescope).** ~~FW-12 — QVGA loopback sustains 5 fps with no consumer~~
+> merged here: FW-12.1 restated FW-11.1's sustained-fps behavior as a longer soak — acceptance
+> evidence for this milestone, not an independent contract. FW-12.1 → FW-11.4,
+> FW-12.2 → FW-11.5. The 5 fps loopback half of R-25 is now closed here.
 
 **Charter**
 
-- **Goal:** Run a single capture task that owns the frame-buffer acquisition API, produces frames at the requested fps into a depth-2 queue, and drops frames on overflow instead of stalling the I2S DMA.
-- **Deliverable:** the capture task and the depth-2 frame queue.
-- **Acceptance:** the capture task sustains the requested fps; on queue overflow, the new frame is dropped, the buffer is returned immediately, a `fb_drops` counter increments, and the I2S DMA is not stalled.
-- **Depends on:** FW-10, FW-01. **Blocks:** FW-12, FW-15, FW-17.
-- **Out of scope:** the consumer side (stream task, WS send) — owners: FW-15, FW-17. Frame-buffer reconfiguration — owner: FW-20.
+- **Goal:** Run a single capture task that owns the frame-buffer acquisition API, produces frames at the requested fps into a depth-2 queue, drops frames on overflow instead of stalling the I2S DMA, and demonstrates the capture-and-drop loop sustaining 5 fps at QVGA with no consumer (exercising the backpressure path).
+- **Deliverable:** the capture task, the depth-2 frame queue, and the capture-and-drop soak with the `fb_drops` counter exposed for inspection.
+- **Acceptance:** the capture task sustains the requested fps; on queue overflow, the new frame is dropped, the buffer is returned immediately, a `fb_drops` counter increments, and the I2S DMA is not stalled; the 30 s soak sustains 5 fps with bounded heap and a PSRAM-allocated frame buffer visible in heap metrics.
+- **Depends on:** FW-10, FW-01. **Blocks:** FW-13 (status payload carries `fb_drops`), FW-15.
+- **Out of scope:** the consumer side (stream task, WS send) — owners: FW-15, FW-13.6. Frame-buffer reconfiguration — owner: FW-20. The loopback must run without WS, so FW-15 must NOT be a dependency.
 
 #### FW-11.1 — capture task produces frames at the requested fps `[leaf]`
 
@@ -860,29 +858,17 @@ SDD change: `firmware-frame-capture-task` · Closes: R-16.
   - **Scenario: capture task is the only owner.** Given only the capture task instantiates the acquisition call, When the firmware boots, Then no other module symbol references the acquisition API.
 - **Depends on:** FW-11.1.
 
-### FW-12 — QVGA loopback sustains 5 fps with no consumer
-
-SDD change: `firmware-qvga-loopback` · Closes: R-25.
-
-**Charter**
-
-- **Goal:** Demonstrate that the capture pipeline can sustain 5 fps at QVGA JPEG even with no WS consumer, exercising the backpressure path.
-- **Deliverable:** the capture-and-drop loop, with the `fb_drops` counter exposed for inspection.
-- **Acceptance:** 5 fps sustained; heap usage shows a PSRAM-allocated frame buffer; `fb_drops` is non-zero after enough frames to overflow the queue.
-- **Depends on:** FW-11, FW-01. **Blocks:** FW-15.
-- **Out of scope:** the WS sender — owner: FW-15. The loopback must run without WS, so FW-15 must NOT be a dependency.
-
-#### FW-12.1 — capture-and-drop loop sustains 5 fps `[leaf]`
+#### FW-11.4 — capture-and-drop loop sustains 5 fps over a 30 s soak `[leaf]`
 
 - **Scenarios:**
   - **Scenario: 5 fps sustained over 30 s.** Given the capture task started at 5 fps with no consumer, When 30 s elapses, Then the `frames_captured` counter is 150 ± 5 and `fb_drops` is non-zero.
   - **Scenario: heap stays bounded.** Given the capture loop running, When 30 s elapses, Then the free heap measurement is within 5 % of its initial value (no leak).
-- **Depends on:** FW-11.1.
+- **Depends on:** FW-11.1, FW-11.2.
 
-#### FW-12.2 — PSRAM-allocated frame buffer visible in heap metrics `[mechanical]`
+#### FW-11.5 — PSRAM-allocated frame buffer visible in heap metrics `[mechanical]`
 
 - **Closing check:** a runtime heap report shows the frame buffer allocated in PSRAM (not internal SRAM) — verified by inspecting the allocator metadata at runtime.
-- **Depends on:** FW-10.2, FW-12.1.
+- **Depends on:** FW-10.2, FW-11.4.
 
 ## Wave 4 — WebSocket + Recovery
 
@@ -893,14 +879,19 @@ with the reason NVS-logged for the next boot.
 
 ```mermaid
 flowchart TB
-  subgraph FW13 ["FW-13 — WS client + hello frame"]
+  subgraph FW13 ["FW-13 — WS client + hello + status frames"]
     FW13_1["FW-13.1<br/>[leaf]"]
     FW13_2["FW-13.2<br/>[leaf]"]
     FW13_3["FW-13.3<br/>[leaf]"]
     FW13_4["FW-13.4<br/>[guard]"]
+    FW13_5["FW-13.5<br/>[leaf]"]
+    FW13_6["FW-13.6<br/>[leaf]"]
     FW13_1 --> FW13_2
     FW13_2 --> FW13_3
     FW13_1 --> FW13_4
+    FW13_1 --> FW13_5
+    FW13_5 --> FW13_6
+    FW13_3 --> FW13_6
   end
   subgraph FW14 ["FW-14 — Auto-reconnect with backoff"]
     FW14_1["FW-14.1<br/>[leaf]"]
@@ -924,19 +915,17 @@ flowchart TB
     FW16_1 --> FW16_2
     FW16_2 --> FW16_3
   end
-  subgraph FW17 ["FW-17 — Status frames"]
-    FW17_1["FW-17.1<br/>[leaf]"]
-    FW17_2["FW-17.2<br/>[leaf]"]
-    FW17_1 --> FW17_2
-  end
   FW02 --> FW13
   FW03 --> FW13
   FW08 --> FW13
+  FW11 --> FW13
+  FW06 --> FW13
   FW13 --> FW14
-  FW13 --> FW17
   FW11 --> FW15
   FW13 --> FW15
+  FW06 --> FW15
   FW14 --> FW16
+  FW06 --> FW16
   FW01 --> FW13
   classDef leaf fill:#e2e8f0,stroke:#94a3b8,color:#1f2937
   classDef guard fill:#fef3c7,stroke:#d97706,color:#1f2937
@@ -947,6 +936,8 @@ flowchart TB
   class FW13_2 leaf
   class FW13_3 leaf
   class FW13_4 guard
+  class FW13_5 leaf
+  class FW13_6 leaf
   class FW14_1 leaf
   class FW14_2 leaf
   class FW14_3 guard
@@ -957,21 +948,25 @@ flowchart TB
   class FW16_1 leaf
   class FW16_2 leaf
   class FW16_3 guard
-  class FW17_1 leaf
-  class FW17_2 leaf
 ```
 
 ### FW-13 — WebSocket client connects and sends the hello frame on `WEBSOCKET_EVENT_CONNECTED`
 
 SDD change: `firmware-ws-client-hello` · Closes: R-07, R-09, R-17, R-27.
 
+> **Amended 2026-08-21 (rescope).** ~~FW-17 — Status frames emitted every 30 s while connected~~
+> merged here: a two-leaf milestone (timer + payload builder) below the one-SDD-flow lower bound,
+> and the PRD module map assigns hello *and* status frames to the same WS-wrapper module.
+> FW-17.1 → FW-13.5, FW-17.2 → FW-13.6. FW-17's `Blocks: FW-20` edge moved to this milestone.
+
 **Charter**
 
-- **Goal:** Open the single persistent WebSocket to `ws://<host>:<port>/cams` (no MAC in the URL path) and emit a hello frame on the first `WEBSOCKET_EVENT_CONNECTED`, with MAC read live from eFuse.
-- **Deliverable:** the WebSocket client wrapper plus the hello-frame emit hook on `WEBSOCKET_EVENT_CONNECTED`.
-- **Acceptance:** the WS connects to the configured URI; the first text frame after connect carries MAC + Name + Description + fw + caps; re-provisioning never closes the socket (MAC travels in the frame, not the URL).
-- **Depends on:** FW-02, FW-03, FW-08, FW-01. **Blocks:** FW-14, FW-15, FW-17, FW-18.
-- **Out of scope:** binary streaming — owner: FW-15. Status frames — owner: FW-17. Control plane — owner: FW-18.
+- **Goal:** Open the single persistent WebSocket to `ws://<host>:<port>/cams` (no MAC in the URL path), emit a hello frame on the first `WEBSOCKET_EVENT_CONNECTED` with MAC read live from eFuse, and emit a status text frame every 30 s while connected so the backend can re-associate a reconnected camera without waiting for the next hello.
+- **Deliverable:** the WebSocket client wrapper, the hello-frame emit hook on `WEBSOCKET_EVENT_CONNECTED`, and the periodic status emitter (timer + text-frame builder).
+- **Acceptance:** the WS connects to the configured URI; the first text frame after connect carries MAC + Name + Description + fw + caps; re-provisioning never closes the socket (MAC travels in the frame, not the URL); exactly one status frame per 30 s ± tolerance while connected, carrying the full documented payload (`mac`, `name`, `uptime_s`, `rssi_dbm`, `free_heap`, `fb_drops`, `reconnects`).
+- **Depends on:** FW-02, FW-03, FW-08, FW-11, FW-01. **Blocks:** FW-14, FW-15, FW-18, FW-20 (status-frame emission is the carrier for the fresh-hello-on-config-change).
+- **Out of scope:** binary streaming — owner: FW-15. Control plane — owner: FW-18. The `reconnects` counter's producer — owner: FW-14 (the status payload reads it; it is zero until FW-14 lands).
+- **Notes:** post-merge size assessment (2026-08-21): two deliverables in one flow (WS client wrapper + hello, and the status emitter). Reassess against the 400-changed-line split trigger when opening this SDD; if the flow trends over budget, split the PR into reviewable work-unit commits rather than re-splitting the milestone (hello and status share the same text-frame builder and identity source).
 
 #### FW-13.1 — WS connects to `/cams` with no MAC in the URL `[leaf]`
 
@@ -1000,6 +995,21 @@ SDD change: `firmware-ws-client-hello` · Closes: R-07, R-09, R-17, R-27.
   - **Scenario: MAC-injected URL is rejected.** Given the URL-builder function stubbed to splice the MAC into the path (scratch violation), When the WS client config is built, Then the guard fails naming the URL-no-MAC invariant (URL-with-MAC would force socket close on every re-provisioning).
   - **Scenario: green URL has no MAC substring.** Given a normal URL build, When the resulting URI is inspected for the MAC string, Then no occurrence is found.
 - **Depends on:** FW-13.1.
+
+#### FW-13.5 — status frame fires every 30 s while connected `[leaf]`
+
+- **Scenarios:**
+  - **Scenario: 30 s cadence observed.** Given a connected WS, When 90 s elapses, Then exactly 3 status frames are emitted.
+  - **Scenario: status paused while disconnected.** Given a disconnected WS, When 60 s elapses, Then no status frames are emitted (the emitter is suspended).
+- **Depends on:** FW-13.1.
+
+#### FW-13.6 — status frame carries the full documented payload `[leaf]`
+
+- **Scenarios:**
+  - **Scenario: every status frame carries the full payload.** Given a connected WS, a running uptime counter, a measured RSSI, and the documented runtime counters, When a status frame is observed, Then the body contains `mac`, `name`, `uptime_s`, `rssi_dbm`, `free_heap`, `fb_drops`, and `reconnects` with the expected types.
+  - **Scenario: status carries the re-association identity after reconnect.** Given a WS that reconnected within the last 30 s, When the next status frame is observed, Then it carries `mac` and `name` matching the device identity (the fields the backend needs to re-associate the camera without waiting for a hello).
+  - **Scenario: counters advance between status frames.** Given the connected device with `reconnects` = N at time T, When 30 s elapse and the next status frame is observed, Then `reconnects` ≥ N and `fb_drops` is a non-negative integer (the counters are monotonic or stable, never reset between frames).
+- **Depends on:** FW-13.5, FW-13.3.
 
 ### FW-14 — Auto-reconnect with exponential backoff
 
@@ -1050,7 +1060,7 @@ SDD change: `firmware-stream-task` · Closes: R-17, R-18.
 - **Goal:** Consume the frame queue, send each frame as a binary WebSocket message, and split oversized frames via the partial + continuation + finalisation sequence. Keep the connection alive with the documented ping cadence.
 - **Deliverable:** the stream task and the fragmentation helper.
 - **Acceptance:** frames ≤ buffer_size ship in a single send; frames > buffer_size are reassembled correctly by the receiver; ping_interval=10 s keeps the connection alive; pingpong_timeout=30 s detects a half-open socket within 30 s.
-- **Depends on:** FW-11, FW-13, FW-01. **Blocks:** FW-17, FW-19, FW-22.
+- **Depends on:** FW-11, FW-13, FW-01. **Blocks:** FW-19, FW-22.
 - **Out of scope:** JPEG encoding (handled by the camera driver — FW-10). The control plane — owner: FW-18.
 
 #### FW-15.1 — frame fits in buffer_size, sent as a single binary message `[leaf]`
@@ -1124,33 +1134,6 @@ SDD change: `firmware-soft-recovery` · Closes: R-20.
   - **Scenario: green path ignores healthy streams.** Given a healthy stream with the counter at 0, When 60 s elapses, Then the counter remains 0.
 - **Depends on:** FW-16.1.
 
-### FW-17 — Status frames emitted every 30 s while connected
-
-SDD change: `firmware-status-frames` · Closes: R-27.
-
-**Charter**
-
-- **Goal:** Emit a status text frame every 30 s while WS is connected, so the backend can re-associate a reconnected camera without waiting for the next hello.
-- **Deliverable:** the periodic status emitter (timer + text-frame builder).
-- **Acceptance:** exactly one status frame per 30 s ± tolerance; MAC + Name are present in every status so the backend can update its registry; the full status payload (`mac`, `name`, `uptime_s`, `rssi_dbm`, `free_heap`, `fb_drops`, `reconnects`) is present on every status.
-- **Depends on:** FW-13, FW-01. **Blocks:** FW-20 (status-frame emission is the carrier for the fresh-hello-on-config-change).
-- **Out of scope:** the hello frame on CONNECTED — owner: FW-13.2.
-
-#### FW-17.1 — status frame fires every 30 s while connected `[leaf]`
-
-- **Scenarios:**
-  - **Scenario: 30 s cadence observed.** Given a connected WS, When 90 s elapses, Then exactly 3 status frames are emitted.
-  - **Scenario: status paused while disconnected.** Given a disconnected WS, When 60 s elapses, Then no status frames are emitted (the emitter is suspended).
-- **Depends on:** FW-13.1.
-
-#### FW-17.2 — status frame carries the full documented payload `[leaf]`
-
-- **Scenarios:**
-  - **Scenario: every status frame carries the full payload.** Given a connected WS, a running uptime counter, a measured RSSI, and the documented runtime counters, When a status frame is observed, Then the body contains `mac`, `name`, `uptime_s`, `rssi_dbm`, `free_heap`, `fb_drops`, and `reconnects` with the expected types.
-  - **Scenario: reconnected camera re-associates without waiting for hello.** Given a backend that loses track of the camera and the next status frame arrives within 30 s of reconnect, When the backend processes the status frame, Then it re-associates the camera by MAC.
-  - **Scenario: counters advance between status frames.** Given the connected device with `reconnects` = N at time T, When 30 s elapse and the next status frame is observed, Then `reconnects` ≥ N and `fb_drops` is a non-negative integer (the counters are monotonic or stable, never reset between frames).
-- **Depends on:** FW-17.1, FW-13.3.
-
 ## Wave 5 — Control plane
 
 The backend can drive the device remotely. The six documented JSON commands work end-to-end with
@@ -1199,10 +1182,11 @@ flowchart TB
   end
   FW13 --> FW18
   FW15 --> FW19
+  FW06 --> FW19
   FW18 --> FW19
   FW10 --> FW20
   FW18 --> FW20
-  FW17 --> FW20
+  FW13 --> FW20
   FW20 --> FW21
   FW18 --> FW21
   FW01 --> FW18
@@ -1335,7 +1319,7 @@ SDD change: `firmware-config-command` · Closes: R-14, R-15, R-21, R-27.
 - **Goal:** Apply frame_size + quality + optional identity changes via the runtime setter path (no driver reinit), with strict validation that rejects out-of-range values before any setter fires. Trigger a fresh hello on identity changes so the backend re-associates.
 - **Deliverable:** the `config` command handler, the camera-settings NVS persistence under namespace `camera_cfg`, key `settings`, with a schema version.
 - **Acceptance:** valid frame_size + quality are applied via runtime setters; quality outside `[0, 63]` is rejected with `error`; optional Name/Description updates identity and arms a fresh hello on the next status tick; unknown frame_size is rejected; a stored `camera_cfg` blob whose schema version does not match falls back to defaults and is re-saved with the new schema on the next save.
-- **Depends on:** FW-10, FW-18, FW-17, FW-01. **Blocks:** FW-21 (reset_cam).
+- **Depends on:** FW-10, FW-18, FW-13, FW-01. **Blocks:** FW-21 (reset_cam).
 - **Out of scope:** the wifi + identity NVS namespace — owner: FW-02. The frame_size reinit path — owner: FW-10.3 (rejected).
 
 #### FW-20.1 — `config` applies frame_size + quality via runtime setters `[leaf]`
@@ -1365,7 +1349,7 @@ SDD change: `firmware-config-command` · Closes: R-14, R-15, R-21, R-27.
 - **Scenarios:**
   - **Scenario: identity change is persisted and triggers hello.** Given the camera connected and the status emitter running, When `{"cmd":"config","name":"back-yard","description":"covers parking lot"}` arrives, Then the new values are persisted to NVS and the next status frame carries the updated Name and Description (which the backend uses to re-associate, equivalent to a hello).
   - **Scenario: identity persistence survives restart.** Given the identity change applied, When the device reboots, Then the next hello carries the new Name and Description from NVS.
-- **Depends on:** FW-20.2, FW-17.1.
+- **Depends on:** FW-20.2, FW-13.5.
 
 #### FW-20.4 — unknown frame_size is rejected before any setter fires `[guard]`
 
@@ -1430,7 +1414,7 @@ SDD change: `firmware-misc-commands` · Closes: R-21.
     | --- |
     | 1 |
     | abc |
-- **Depends on:** FW-13.3, FW-17.1.
+- **Depends on:** FW-13.3, FW-13.5.
 
 ## Wave 6 — Energy + Integration
 
@@ -1460,8 +1444,9 @@ flowchart TB
   FW15 --> FW22
   FW19 --> FW22
   FW14 --> FW22
+  FW10 --> FW22
   FW22 --> FW23
-  FW17 --> FW23
+  FW13 --> FW23
   FW01 --> FW22
   FW01 --> FW23
   classDef leaf fill:#e2e8f0,stroke:#94a3b8,color:#1f2937
@@ -1525,7 +1510,7 @@ SDD change: `firmware-end-to-end-smoke` · Closes: R-28 (final build evidence), 
 - **Goal:** A full cold-boot → provisioning → wifi → WS connect → stream → sleep → reboot run completes without manual intervention, on the AI-Thinker ESP32-CAM board. The final build still fits in flash.
 - **Deliverable:** the smoke-test playbook (recorded in the PR description) + the final `idf.py build` evidence.
 - **Acceptance:** every documented flow path runs end-to-end on hardware; `firmware.bin` < 256 KB at the final state.
-- **Depends on:** FW-22, FW-17, FW-01. **Blocks:** none (terminal milestone).
+- **Depends on:** FW-22, FW-13, FW-01. **Blocks:** none (terminal milestone).
 - **Out of scope:** long-running field reliability (30-day MTBF) — recorded in Completion checklist, not in this milestone.
 
 #### FW-23.1 — full cold-boot flow reaches streaming then sleep `[leaf]`
@@ -1563,12 +1548,12 @@ Every observable outcome a future operator can verify, paired with the node that
 - [ ] **Boot button handles tap, boot-time long-press, runtime long-press** — closed by FW-07.1, FW-07.2, FW-07.3
 - [ ] **`/whoami` returns the device identity, `POST /provision` writes NVS and reboots** — closed by FW-05.1, FW-05.2, FW-05.3
 - [ ] **Station mode connects with exponential backoff and recovers within 30 s after AP reboot** — closed by FW-08.1, FW-08.2
-- [ ] **Provisioning softAP tears down the instant STA gets an IP** — closed by FW-09.1, FW-09.3
+- [ ] **Provisioning softAP tears down the instant STA gets an IP** — closed by FW-08.4, FW-08.6
 - [ ] **LED reflects every boot, connect, streaming, backoff, soft-recovery state** — closed by FW-06.1, FW-06.2, FW-06.3
 - [ ] **Camera init applies the documented sensor parameters; PSRAM presence is asserted** — closed by FW-10.1, FW-10.2
-- [ ] **Capture-and-drop loop sustains 5 fps; PSRAM-allocated frame buffer visible in heap** — closed by FW-12.1, FW-12.2
+- [ ] **Capture-and-drop loop sustains 5 fps; PSRAM-allocated frame buffer visible in heap** — closed by FW-11.4, FW-11.5
 - [ ] **Single persistent WS to `/cams`; hello frame on connect; MAC from eFuse** — closed by FW-13.1, FW-13.2, FW-13.3
-- [ ] **Status frame emitted every 30 s with MAC + Name** — closed by FW-17.1, FW-17.2
+- [ ] **Status frame emitted every 30 s with MAC + Name** — closed by FW-13.5, FW-13.6
 - [ ] **Frame ≤ buffer_size ships in one binary message; frame > buffer_size fragments correctly** — closed by FW-15.1, FW-15.2
 - [ ] **Reconnect delay grows on each failed attempt; counter resets on CONNECTED; clean CLOSE = no reconnect** — closed by FW-14.1, FW-14.2, FW-14.3
 - [ ] **Soft-recovery triggers at threshold and NVS-logs the reason** — closed by FW-16.1, FW-16.2
@@ -1613,14 +1598,14 @@ at least one node; every node traces to a documented purpose.
 | Source | Closed by |
 | --- | --- |
 | R-01 (NVS-backed `config_t` round-trip with schema fallback) | FW-02.1, FW-02.2, FW-02.3 |
-| R-02 (provisioning triggers when `wifi.ssid` is empty) | FW-04.1 |
-| R-03 (provisioning triggers when boot button is held ≥ 3 s at boot) | FW-04.2 |
+| R-02 (provisioning triggers when `wifi.ssid` is empty) | FW-03.3 |
+| R-03 (provisioning triggers when boot button is held ≥ 3 s at boot) | FW-07.2, FW-03.3 |
 | R-04 (STA connect with exponential backoff, LED surfacing) | FW-08.1, FW-08.2, FW-06.1 |
-| R-05 (softAP teardown on STA IP) | FW-09.1, FW-09.3 |
+| R-05 (softAP teardown on STA IP) | FW-08.4, FW-08.6 |
 | R-06 (camera init with PRD-mandated parameters) | FW-10.1, FW-03.1 |
 | R-07 (WebSocket client init and start) | FW-13.1, FW-03.1 |
 | R-08 (supervision tasks started; event-loop handoff) | FW-03.1, FW-23.1 |
-| R-09 (identity model: MAC primary, Name/Description advisory) | FW-13.3, FW-13.2, FW-17.2, FW-20.3 |
+| R-09 (identity model: MAC primary, Name/Description advisory) | FW-13.3, FW-13.2, FW-13.6, FW-20.3 |
 | R-10 (softAP HTTP `GET /whoami`) | FW-05.1 |
 | R-11 (softAP HTTP `POST /provision`) | FW-05.2 |
 | R-12 (`/whoami` returns current NVS values during re-provisioning) | FW-05.3 |
@@ -1635,10 +1620,10 @@ at least one node; every node traces to a documented purpose.
 | R-21 (control plane commands) | FW-18.1, FW-18.2, FW-19.1, FW-19.2, FW-20.1, FW-21.1, FW-21.2, FW-21.3, FW-21.4 |
 | R-22 (unknown command `error` reply) | FW-18.3 |
 | R-23 (LED state table) | FW-06.1, FW-06.2, FW-06.3, FW-06.4 |
-| R-24 (boot button: tap, boot-time long-press, runtime long-press) | FW-04.2, FW-07.1, FW-07.2, FW-07.3, FW-07.4 |
-| R-25 (energy budget + camera powered down between streams) | FW-22.1, FW-22.2, FW-22.4, FW-12.1 |
-| R-26 (security posture: ws:// LAN, JSON allow-list, no admin net-if, softAP teardown) | FW-05.4, FW-09.3, FW-18.1, FW-18.4 |
-| R-27 (protocol contract outbound text frames + raw JPEG binary) | FW-13.2, FW-15.1, FW-17.1, FW-17.2, FW-21.4 |
+| R-24 (boot button: tap, boot-time long-press, runtime long-press) | FW-07.1, FW-07.2, FW-07.3, FW-07.4 |
+| R-25 (energy budget + camera powered down between streams) | FW-22.1, FW-22.2, FW-22.4, FW-11.4 |
+| R-26 (security posture: ws:// LAN, JSON allow-list, no admin net-if, softAP teardown) | FW-05.4, FW-08.6, FW-18.1, FW-18.4 |
+| R-27 (protocol contract outbound text frames + raw JPEG binary) | FW-13.2, FW-15.1, FW-13.5, FW-13.6, FW-21.4 |
 | R-28 (build prerequisites: project Kconfig, `sdkconfig.defaults`, `idf.py` commands) | FW-01.1 (scaffold), FW-23.3 (final build evidence) |
 
 ### Node → purpose
@@ -1652,10 +1637,8 @@ at least one node; every node traces to a documented purpose.
 | FW-02.4 | R-01 (NVS partition sized for `config_t` + `camera_cfg`) |
 | FW-03.1 | R-06 + R-07 + R-08 (boot sequence order) |
 | FW-03.2 | Inconsistency Register #3 disposition (fail-loud on init failure) |
-| FW-03.3 | R-02 + R-04 (provisioning decision is deterministic at boot) |
-| FW-04.1 | R-02 (provisioning trigger on empty SSID) |
-| FW-04.2 | R-03 + R-24 (provisioning trigger on boot-time long-press) |
-| FW-04.3 | R-02 + R-03 (provisioning decision stability) |
+| FW-03.3 | R-02 + R-03 (provisioning decision is deterministic at boot; boot-time long-press branch integrated) |
+| FW-03.4 | R-02 + R-03 (provisioning decision stability; merged from ~~FW-04.3~~, 2026-08-21) |
 | FW-05.1 | R-10 (`/whoami` returns identity) |
 | FW-05.2 | R-11 (`POST /provision` writes NVS + reboots) |
 | FW-05.3 | R-12 (`/whoami` returns current NVS during re-provisioning) |
@@ -1671,9 +1654,9 @@ at least one node; every node traces to a documented purpose.
 | FW-08.1 | R-04 + R-19 (STA exponential backoff schedule) |
 | FW-08.2 | R-04 (recovery within 30 s after AP reboot) |
 | FW-08.3 | Inconsistency Register #3 disposition (no `portMAX_DELAY` wedge) |
-| FW-09.1 | R-05 + R-26 (softAP teardown on STA IP) |
-| FW-09.2 | R-05 (softAP stays alive while STA joining) |
-| FW-09.3 | R-05 + R-26 (softAP unreachable on STA network after IP-up) |
+| FW-08.4 | R-05 + R-26 (softAP teardown on STA IP; merged from ~~FW-09.1~~, 2026-08-21) |
+| FW-08.5 | R-05 (softAP stays alive while STA joining; merged from ~~FW-09.2~~, 2026-08-21) |
+| FW-08.6 | R-05 + R-26 (softAP unreachable on STA network after IP-up; merged from ~~FW-09.3~~, 2026-08-21) |
 | FW-10.1 | R-06 + R-13 (camera init with documented sensor parameters) |
 | FW-10.2 | R-13 (PSRAM presence asserted or device stops) |
 | FW-10.3 | R-14 (no driver reinit for runtime config) |
@@ -1682,12 +1665,14 @@ at least one node; every node traces to a documented purpose.
 | FW-11.1 | R-16 (capture task produces frames at requested fps) |
 | FW-11.2 | PRD § Memory budget (queue overflow drops + returns buffer) |
 | FW-11.3 | R-16 (single owner of frame-buffer API) |
-| FW-12.1 | R-25 (5 fps sustained over 30 s) |
-| FW-12.2 | PRD § Memory budget (PSRAM-allocated frame buffer visible) |
+| FW-11.4 | R-25 (5 fps sustained over 30 s; merged from ~~FW-12.1~~, 2026-08-21) |
+| FW-11.5 | PRD § Memory budget (PSRAM-allocated frame buffer visible; merged from ~~FW-12.2~~, 2026-08-21) |
 | FW-13.1 | R-07 + R-17 + R-27 (WS connects to `/cams`, no MAC in URL) |
 | FW-13.2 | R-09 + R-27 (hello frame on CONNECTED) |
 | FW-13.3 | R-09 (MAC read from eFuse, not NVS) |
 | FW-13.4 | R-07 + R-09 (URL never contains MAC) |
+| FW-13.5 | R-27 (status frame every 30 s; merged from ~~FW-17.1~~, 2026-08-21) |
+| FW-13.6 | R-27 + R-09 (status carries full payload: mac, name, uptime_s, rssi_dbm, free_heap, fb_drops, reconnects; merged from ~~FW-17.2~~, 2026-08-21) |
 | FW-14.1 | R-19 (backoff schedule matches FR-4) |
 | FW-14.2 | R-19 (counter resets on CONNECTED) |
 | FW-14.3 | R-19 + PRD § FR-3 (clean CLOSE means sleep, no reconnect) |
@@ -1698,8 +1683,6 @@ at least one node; every node traces to a documented purpose.
 | FW-16.1 | R-20 (soft-recovery triggers at threshold) |
 | FW-16.2 | R-20 (`last_recovery_reason` NVS-logged) |
 | FW-16.3 | R-20 (soft-recovery never fires while healthy stream running) |
-| FW-17.1 | R-27 (status frame every 30 s) |
-| FW-17.2 | R-27 (status carries full payload: mac, name, uptime_s, rssi_dbm, free_heap, fb_drops, reconnects) |
 | FW-18.1 | R-21 + R-26 (allow-list of six commands) |
 | FW-18.2 | R-21 + R-08 (control task does not block WS loop) |
 | FW-18.3 | R-22 (unknown cmd → `error` reply with original id) |
