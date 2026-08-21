@@ -80,6 +80,8 @@ def _common_cflags(extra_defines):
     """The host-test include + define baseline."""
     tools_dir = os.path.dirname(os.path.abspath(__file__))
     host_include = os.path.join(PROJECT_DIR, 'tests', 'host_include')
+    esp_common_include = os.path.join(IDF_PATH, 'components', 'esp_common', 'include')
+    log_include = os.path.join(IDF_PATH, 'components', 'log', 'include')
     flags = [
         '-std=c11',
         '-Wall', '-Wextra', '-Wno-unused-parameter',
@@ -87,7 +89,10 @@ def _common_cflags(extra_defines):
         f'-I{tools_dir}',                         # unity_host_test_runner.h
         f'-I{UNITY_INTERNALS}',                   # unity_internals.h, unity.h
         f'-I{NVS_INCLUDE}',                       # nvs.h types
+        f'-I{esp_common_include}',                # esp_err.h
+        f'-I{log_include}',                       # esp_log.h
         f'-I{PROJECT_DIR}/components/config/include',
+        f'-I{PROJECT_DIR}/components/boot/include',
         f'-I{PROJECT_DIR}/components/mocks/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
@@ -106,6 +111,13 @@ def _build(basename, extra_defines, test_files, workdir):
         UNITY_SRC,
         os.path.join(PROJECT_DIR, 'components', 'config', 'config.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_nvs_flash.cpp'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_boot_button.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_init_returns.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_supervision_record.c'),
+        os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
+        os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
+        os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
+        os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_supervision.c'),
         os.path.join(os.path.dirname(__file__), 'host_test_main.c'),
         os.path.join(os.path.dirname(__file__), 'host_idf_runner_shim.c'),
     ] + test_files
@@ -154,6 +166,14 @@ ALL_TESTS = [
     "future-version stored schema also falls back to defaults (defensive)",
     "save after stale-schema load persists the compiled-in schema_version",
     "matching schema_version passes without dirty flag",
+    # FW-03.1 walking skeleton + 6 ordering rows
+    "boot_run invokes the FR-1 init sequence in order [fw-03.1][walking-skeleton]",
+    "NVS init precedes load config [fw-03.1][ordering][row-1]",
+    "load config precedes wifi-station init [fw-03.1][ordering][row-2]",
+    "wifi-station init precedes camera init [fw-03.1][ordering][row-3]",
+    "camera init precedes WS init [fw-03.1][ordering][row-4]",
+    "WS init precedes supervision tasks start [fw-03.1][ordering][row-5]",
+    "supervision tasks start precedes boot orchestrator return [fw-03.1][ordering][row-6]",
 ]
 
 # The FW-02.3 bite-proof test that MUST fail when the version
@@ -175,6 +195,7 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'test_config', 'test_config_roundtrip.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_config', 'test_config_schema_mismatch.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_config', 'test_config_schema_persists.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_order.c'),
 ]
 
 
