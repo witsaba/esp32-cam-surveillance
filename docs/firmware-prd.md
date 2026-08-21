@@ -94,6 +94,43 @@ On power-on the firmware MUST run this exact order:
 7. Start the supervision tasks (health, capture, stream, control).
 8. Hand off to the event loop. `app_main` returns.
 
+### FR-1a — Identity model
+
+Identity is **separated from labelling** so the database, not the firmware, owns canonical mapping.
+
+| Field | Source | Mutable | Where it lives | Purpose |
+|---|---|---|---|---|
+| **MAC address** | eFuse, read at runtime via `esp_efuse_mac_get_default()` | Never | The chip | True unique identity. Backend uses it as the primary key in its camera registry |
+| **Name** | User, during provisioning (M1+) | Yes, via `config` command | NVS, `config_t.identity.name` | Human-friendly label (`"front-door"`). May collide across cameras — collision is fine because MAC disambiguates |
+| **Description** | User, during provisioning (M1+) | Yes, via `config` command | NVS, `config_t.identity.description` | Free-text context (`"covers the main entrance"`) |
+
+**Operational rule.** When a camera is physically moved, the operator updates the database row keyed by MAC (new Name, new Description, new Location). The firmware on the device is NOT touched — it keeps the old Name/Description until the user re-runs provisioning or sends a `config` text command. This is intentional: the firmware's NVS values are "what the operator typed into this device", not "what the backend currently calls it".
+
+**Provisioning flow** (FR-1 step 2):
+
+1. The firmware reads MAC from eFuse and starts a small HTTP server on the softAP (`http://192.168.4.1/`).
+2. **`GET /whoami`** returns:
+   ```json
+   {
+     "mac": "c8f09e9d5008",
+     "name": "",
+     "description": "",
+     "fw": "<version>",
+     "chip": "ESP32-D0WDQ6"
+   ```
+   The onboarding app calls this to display "Configuring camera c8f09e9d5008" to the user. MAC is shown but not editable.
+3. **`POST /provision`** accepts JSON:
+   ```json
+   {
+     "wifi_ssid": "<string>",
+     "wifi_password": "<string>",
+     "name": "<string, max 32 chars>",
+     "description": "<string, max 128 chars>"
+   }
+   ```
+   The firmware writes all four fields to NVS, restarts into normal boot, and tears down the softAP (FR-1 step 4).
+4. While in provisioning mode, **`GET /whoami` MUST keep returning the current NVS Name/Description** (not just empty) so the user can re-provision an already-configured device and edit only what they want to change.
+
 ### FR-2 — Camera pipeline (low-energy default)
 
 | Parameter | Default (Kconfig symbol) | Reason |
@@ -113,7 +150,7 @@ The sensor control surface (`esp_camera_sensor_get()`) is reserved for runtime r
 
 | Parameter | Default (Kconfig symbol where applicable) | Reason |
 |---|---|---|
-| `uri` | `ws://<backend-host>:<port>/cams/<node-id>` from NVS | Single persistent connection per the architecture diagram in the project README. Path is fixed at `/cams/`; node-id comes from `config_t.identity.node_id` |
+| `uri` | `ws://<backend-host>:<port>/cams` from NVS | Single persistent connection per the architecture diagram in the project README. **The path does NOT include the MAC** — MAC travels in the hello frame (§ Protocol contract) so re-provisioning never has to close + reopen the socket. Backend identifies the camera by MAC after the first frame arrives |
 | `transport` | `WEBSOCKET_TRANSPORT_OVER_TCP` | LAN deployment; `wss://` is a follow-up |
 | `disable_auto_reconnect` | `false` | Required to address the "I have to press restart" pain point |
 | `enable_close_reconnect` | `false` | A clean CLOSE means "go to sleep" — we MUST stay asleep |
@@ -161,10 +198,10 @@ Text frames from the backend carry JSON commands. The minimum viable set:
 | `cmd` | Body | Effect |
 |---|---|---|
 | `stream` | `{"on": bool, "fps": int}` | Start or stop the capture loop at the requested rate. `fps` MUST be ≥ `CONFIG_FIRMWARE_STREAM_FPS_MIN` (default 1); values below are clamped, values above the camera ceiling (≈ 15 fps at QVGA) are clamped to the ceiling |
-| `config` | `{"frame_size": "QVGA"\|"VGA", "quality": int}` | Reconfigure via `sensor_t` setters; persist to NVS if `persist=true`. Allowed `quality` range is `[0, 63]`; out-of-range values are rejected with `error` |
+| `config` | `{"frame_size": "QVGA"\|"VGA", "quality": int, "name": string?, "description": string?}` | Reconfigure via `sensor_t` setters; persist to NVS if `persist=true`. Allowed `quality` range is `[0, 63]`; out-of-range values are rejected with `error`. Optional `name` (max 32 chars) and `description` (max 128 chars) update `config_t.identity` and trigger a fresh `hello` frame on the next status tick so the backend re-associates the camera in its registry |
 | `sleep` | `{}` | Stop capture, call `esp_websocket_client_close()` with code `1000`. Auto-reconnect MUST NOT fire after this |
 | `reboot` | `{}` | Persist dirty config, then `esp_restart()` |
-| `identify` | `{}` | Reply with a text frame containing node ID, firmware version, uptime, current config |
+| `identify` | `{}` | Reply with a text frame containing MAC, Name, Description, firmware version, uptime, current config (see `identify_ok` payload in § Protocol contract) |
 
 Unknown commands MUST be logged and answered with `{"cmd":"error","reason":"unknown","id":"<original id>"}`. The control task MUST NOT block the WS event loop.
 
@@ -238,14 +275,15 @@ The firmware MUST power down the camera (`esp_camera_deinit()` or PWDN GPIO) bet
 firmware/
 ├── main/                      # app_main + boot orchestration
 ├── modules/
-│   ├── config/                # NVS read/write of config_t
+│   ├── config/                # NVS read/write of config_t (wifi + identity fields)
+│   ├── identity/              # live MAC read from eFuse, formatted for outbound frames
 │   ├── wifi/                  # station connect + backoff
 │   ├── camera/                # esp32-camera init + sensor accessors
-│   ├── ws/                    # esp_websocket_client wrapper + event handler
+│   ├── ws/                    # esp_websocket_client wrapper + event handler, hello/status frames
 │   ├── stream/                # capture task → frame queue → WS send task
 │   ├── control/               # incoming text frames → command dispatch
 │   ├── health/                # LED, watchdog, soft-recovery counter
-│   └── provisioning/          # softAP + captive portal (follow-up)
+│   └── provisioning/          # softAP + captive portal + GET /whoami + POST /provision
 ```
 
 ### Task and queue topology
@@ -316,10 +354,12 @@ A clean CLOSE frame received while in `CONNECTED` or `STREAMING` transitions dir
 
 | Module | Exports |
 |---|---|
-| `config` | `config_load(config_t *out)`, `config_save(const config_t *in)`, `config_factory_reset()` |
+| `config` | `config_load(config_t *out)`, `config_save(const config_t *in)`, `config_factory_reset()`. `config_t.identity` carries `name` (≤ 32 chars) and `description` (≤ 128 chars); MAC is read live from eFuse, not stored |
+| `identity` | `identity_mac_str()` returns the lowercase hex MAC with `:` separators stripped (e.g. `c8f09e9d5008`), used in every outbound text frame |
+| `provisioning` | `provisioning_start()` brings up the softAP + HTTP server, exposes `GET /whoami` and `POST /provision`. Tears itself down the moment STA gets an IP (FR-1 step 4) |
 | `wifi` | `wifi_connect_async()`, `wifi_is_connected()`, `wifi_wait_connected(timeout_ms)` |
 | `camera` | `camera_init()`, `camera_deinit()`, `camera_capture_blocking(camera_fb_t **fb)`, `sensor_handle()` (returns `sensor_t*`) |
-| `ws` | `ws_send_frame(const uint8_t *buf, size_t len)`, `ws_send_text(const char *json)`, `ws_close_clean()`, `ws_is_connected()`, `ws_register_text_handler(cb)` |
+| `ws` | `ws_send_frame(const uint8_t *buf, size_t len)`, `ws_send_text(const char *json)`, `ws_close_clean()`, `ws_is_connected()`, `ws_register_text_handler(cb)`. The first text frame after `CONNECTED` is always a `hello` carrying MAC + Name + Description |
 | `stream` | `stream_start(fps)`, `stream_stop()`, `stream_set_enabled(bool)` |
 | `control` | `control_init()` (creates the control task; everything else is internal) |
 | `health` | `health_init()` (creates the health task) |
@@ -337,9 +377,11 @@ The firmware is the data-plane peer. The backend terminates the connection and f
 | Frame type | Payload | When |
 |---|---|---|
 | Binary | Raw JPEG bytes, single message | Every frame while streaming |
-| Text | `{"type":"hello","id":"<node-id>","fw":"<version>","caps":["jpeg","stream","identify"]}` | Once on `WEBSOCKET_EVENT_CONNECTED` |
-| Text | `{"type":"status","uptime_s":N,"rssi_dbm":N,"free_heap":N,"fb_drops":N,"reconnects":N}` | Every 30 s while connected |
-| Text | `{"type":"identify_ok",...}` | Reply to `identify` command |
+| Text | `{"type":"hello","mac":"c8f09e9d5008","name":"front-door","description":"covers the main entrance","fw":"<version>","caps":["jpeg","stream","identify"]}` | Once on `WEBSOCKET_EVENT_CONNECTED`. **MAC is the canonical identity**; Name and Description are advisory (the backend may overwrite them from its DB) |
+| Text | `{"type":"status","mac":"c8f09e9d5008","name":"front-door","uptime_s":N,"rssi_dbm":N,"free_heap":N,"fb_drops":N,"reconnects":N}` | Every 30 s while connected. MAC + Name repeated so a reconnected camera re-associates without waiting for the next hello |
+| Text | `{"type":"identify_ok","mac":"c8f09e9d5008","name":"front-door","description":"...","fw":"<version>","uptime_s":N,"cfg":{...}}` | Reply to `identify` command (echoes the same identity model) |
+| Text | `{"type":"config_ok","changed":["name","description"]}` | Reply to a `config` command that updated identity fields, so the backend knows to refresh its cache |
+| Text | `{"type":"error","reason":"<string>","id":"<original cmd>"}` | Reply to a malformed or rejected command |
 
 **Inbound (backend → camera):**
 
@@ -354,7 +396,7 @@ Text frames only — see FR-6.
 | ID | Scope | Acceptance |
 |---|---|---|
 | **M0** | Validation scaffold (see commit history of branch `docs/esp32-cam-firmware-prd` for proof artifacts) | `idf.py build` succeeds with both managed components, `firmware.bin` < 256 KB |
-| **M1** | Boot + NVS config + LED + boot button | Cold-boot reaches `NOLINK`; NVS round-trip works; LED reflects state; 10-s button press triggers factory reset |
+| **M1** | Boot + NVS config (wifi creds + name + description) + LED + boot button + softAP provisioning + `/whoami` + `POST /provision` | Cold-boot reaches `NOLINK`; NVS round-trip works; LED reflects state; 10-s button press triggers factory reset; softAP serves `GET /whoami` returning `{mac,name,description,fw,chip}`; `POST /provision` writes wifi + name + description to NVS and reboots into normal boot |
 | **M2** | Wi-Fi station with backoff | Connects to a known SSID; recovers from AP reboot within 30 s |
 | **M3** | Camera capture + frame queue + QVGA loopback | `fb_get` / `fb_return` cycle sustains 5 fps under no WS load; PSRAM allocation visible in heap |
 | **M4** | WebSocket client + auto-reconnect + soft-recovery | Manual Wi-Fi kill mid-stream triggers reconnect within 10 s; 30-fail threshold triggers `esp_restart()`; `last_recovery_reason` visible after restart |
@@ -517,13 +559,14 @@ The first cut of this PRD shipped hand-written `CMakeLists.txt`, `idf_component.
 
 ## Open questions
 
-All five open questions from the early draft are resolved:
+All six open questions from the early draft are resolved:
 
 1. ✅ **Hardware confirmed.** Connected board on `/dev/cu.usbserial-130` is **ESP32-D0WDQ6 + 4 MB flash** → AI-Thinker ESP32-CAM. Pin map in § Hardware target. PSRAM will be confirmed at runtime in M3.
 2. ✅ **JPEG quality configurable.** `CONFIG_FIRMWARE_CAMERA_JPEG_QUALITY` (default `18`). Override in `firmware/sdkconfig.defaults` or via `idf.py menuconfig`. Runtime override via the `config` text command also bounded to `[0, 63]`.
 3. ✅ **Default stream fps = 5, configurable.** `CONFIG_FIRMWARE_STREAM_FPS` (default `5`). Runtime override via the `stream` text command; clamped to `[CONFIG_FIRMWARE_STREAM_FPS_MIN, hardware_ceiling]`.
-4. ✅ **Backend URL shape confirmed.** `ws://<host>:<port>/cams/<node-id>`.
+4. ✅ **Backend URL shape.** `ws://<host>:<port>/cams` — single endpoint, MAC travels in the hello frame (§ FR-3, § Protocol contract). Re-provisioning never drops the socket.
 5. ✅ **Provisioning via softAP + captive portal.** Plus the security constraint `CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=y` — softAP is torn down the instant station mode joins a network.
+6. ✅ **Identity model.** MAC = canonical identity (eFuse, never stored). Name + Description = user labels (NVS, editable). `/whoami` endpoint on the softAP exposes the device during onboarding; hello + status frames carry MAC + Name on every connection. See § FR-1a and § Protocol contract.
 
 ---
 
