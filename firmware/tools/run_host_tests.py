@@ -90,6 +90,9 @@ def main():
         # FW-02.1 test cases
         os.path.join(PROJECT_DIR, 'tests', 'test_config', 'test_config_load_fresh.c'),
         os.path.join(PROJECT_DIR, 'tests', 'test_config', 'test_config_roundtrip.c'),
+        # FW-02.2 test cases
+        os.path.join(PROJECT_DIR, 'tests', 'test_config', 'test_config_schema_mismatch.c'),
+        os.path.join(PROJECT_DIR, 'tests', 'test_config', 'test_config_schema_persists.c'),
     ]
     for s in sources:
         if not os.path.exists(s):
