@@ -258,42 +258,39 @@ TEST_CASE(
     mock_httpd_req_free(req);
 }
 
-/* FW-05.3 S2 (R-12): the merge logic in /provision overwrites every
- * of the 4 fields with the values from the JSON body when all 4 are
- * present. This verifies the merge wiring: seed cfg with prior
- * values, send a fresh body whose name + description match the seed
- * (so they "round-trip" — preserved from the user's perspective),
- * and assert the saved NVS reflects the body's values.
+/* FW-05.3 S2 (R-12): the partial-update semantics in /provision.
  *
- * Spec note (FW-05 spec #3615 deviation): the spec's req-softap-003
- * defines partial-update semantics where an absent JSON key
- * preserves the corresponding cfg field. The spec's req-softap-004
- * also defines strict validation where a missing key returns 400.
- * These two requirements are mutually contradictory — the same
- * "absent key" condition must produce both "preserve" and "400" per
- * the spec.
+ * Per PRD § FR-1a L132 + FW-05.3 S2, name and description are
+ * OPTIONAL keys. When a request omits either, the handler preserves
+ * the corresponding cfg field (loaded from NVS by boot_run() in
+ * production). Only `wifi_ssid` and `wifi_password` are REQUIRED.
  *
- * Resolution: this batch implements req-softap-004 (strict guard for
- * all 4 keys, per design.md §3.2 step 4 and PRD § FR-1a L130). The
- * partial-update semantics from req-softap-003 are NOT implemented
- * — the handler overwrites all 4 fields whenever all 4 are present
- * and well-formed. This test demonstrates the merge overwrite path
- * (the body values "win"); a future task could relax the strict
- * guard to enable partial update. */
+ * This test seeds cfg as if boot_run() had previously loaded a
+ * prior NVS state (wifi_ssid="old-ssid", password="old-pass",
+ * name="front-door", description="covers main entrance"), then
+ * sends a body that ONLY specifies new wifi_ssid and wifi_password
+ * (omits name + description). The expected outcome:
+ *   - response is 200 + {"ok":true} (well-formed modulo the
+ *     optional fields)
+ *   - esp_restart called exactly once
+ *   - NVS `ssid` overwritten with "new-ssid"
+ *   - NVS `password` overwritten with "new-pass"
+ *   - NVS `name` STILL "front-door" (absent → preserved)
+ *   - NVS `description` STILL "covers main entrance" (absent → preserved)
+ *
+ * This is the true partial-update path (the body leaves identity
+ * fields untouched). */
 TEST_CASE(
     "provision_partial_update_preserves_name_and_description [fw-05.3]",
-    "[softap][fw-05.3][reprovision][merge]")
+    "[softap][fw-05.3][reprovision][partial-update]")
 {
+    /* Body omits `name` and `description` — only the wifi creds
+     * change in this user update. */
     const char *body =
-        "{\"wifi_ssid\":\"home-2.4\","
-        "\"wifi_password\":\"hunter3\","
-        "\"name\":\"front-door\","
-        "\"description\":\"covers main entrance\"}";
+        "{\"wifi_ssid\":\"new-ssid\","
+        "\"wifi_password\":\"new-pass\"}";
 
-    /* Pre-seed cfg as if a prior /provision had set
-     * name="front-door" + description="covers main entrance". The
-     * body happens to carry the same name + description, so the
-     * merge result keeps them (the user's intent is "round-trip"). */
+    /* Pre-seed cfg as if boot_run() had loaded prior NVS state. */
     config_t cfg;
     memset(&cfg, 0, sizeof(cfg));
     cfg.schema_version = CONFIG_SCHEMA_VERSION;
@@ -330,9 +327,10 @@ TEST_CASE(
     /* esp_restart called exactly once. */
     TEST_ASSERT_EQUAL_INT(1, mock_esp_restart_call_count());
 
-    /* Read back the saved NVS namespace to verify the merge. */
+    /* Read back the saved NVS namespace to verify the partial merge.
+     * Use READONLY because we're not modifying NVS in the test. */
     nvs_handle_t h;
-    esp_err_t open_err = nvs_open("config", NVS_READWRITE, &h);
+    esp_err_t open_err = nvs_open("config", NVS_READONLY, &h);
     TEST_ASSERT_EQUAL_INT(ESP_OK, open_err);
 
     char buf[256];
@@ -343,23 +341,23 @@ TEST_CASE(
     len = sizeof(buf);
     esp_err_t err = nvs_get_str(h, "ssid", buf, &len);
     TEST_ASSERT_EQUAL_INT(ESP_OK, err);
-    TEST_ASSERT_EQUAL_STRING("home-2.4", buf);
+    TEST_ASSERT_EQUAL_STRING("new-ssid", buf);
 
     /* wifi_password overwritten. */
     memset(buf, 0, sizeof(buf));
     len = sizeof(buf);
     err = nvs_get_str(h, "password", buf, &len);
     TEST_ASSERT_EQUAL_INT(ESP_OK, err);
-    TEST_ASSERT_EQUAL_STRING("hunter3", buf);
+    TEST_ASSERT_EQUAL_STRING("new-pass", buf);
 
-    /* name preserved (body value == seeded value). */
+    /* name preserved from the cfg seed (absent from body). */
     memset(buf, 0, sizeof(buf));
     len = sizeof(buf);
     err = nvs_get_str(h, "name", buf, &len);
     TEST_ASSERT_EQUAL_INT(ESP_OK, err);
     TEST_ASSERT_EQUAL_STRING("front-door", buf);
 
-    /* description preserved. */
+    /* description preserved from the cfg seed (absent from body). */
     memset(buf, 0, sizeof(buf));
     len = sizeof(buf);
     err = nvs_get_str(h, "description", buf, &len);

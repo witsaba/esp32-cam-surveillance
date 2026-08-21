@@ -210,12 +210,14 @@ ALL_TESTS = [
     # FW-05.3 round-trip + partial update
     "whoami_round_trips_existing_name_and_description [fw-05.3]",
     "provision_partial_update_preserves_name_and_description [fw-05.3]",
-    # FW-05.4 strict validation guard
+    # FW-05.4 strict validation guard (wifi_ssid + wifi_password are
+    # REQUIRED; name + description are OPTIONAL per PRD § FR-1a +
+    # FW-05.3 partial-update semantics)
     "provision_rejects_non_json_body [fw-05.4]",
     "provision_rejects_missing_wifi_ssid [fw-05.4]",
     "provision_rejects_missing_wifi_password [fw-05.4]",
-    "provision_rejects_missing_name [fw-05.4]",
-    "provision_rejects_missing_description [fw-05.4]",
+    "provision_accepts_missing_name [fw-05.4]",
+    "provision_accepts_missing_description [fw-05.4]",
     "provision_accepts_well_formed_body [fw-05.4]",
 ]
 
@@ -269,11 +271,19 @@ FW03_4_GUARD_TEST_FILES = [
 
 # Pass-4 stub build includes ONLY the FW-05.4 guard file. All 6
 # guard tests compile under -DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1:
-# the 5 rejection tests FAIL because the handler no longer enforces
-# validation (it bypasses the parse + required-key + length checks
-# and proceeds straight to merge + save + restart). The 1
-# well-formed test continues to pass. The runner asserts the
-# expected pattern: 5 fail with "validation" in the message + 1 pass.
+#   - The 3 required-key rejection tests (non-JSON, missing-
+#     wifi_ssid, missing-wifi_password) FAIL because the handler
+#     no longer enforces validation (it bypasses the parse +
+#     required-key checks and proceeds straight to merge + save +
+#     restart).
+#   - The 2 accepts-missing-* tests (missing name / description)
+#     continue to PASS — those keys are OPTIONAL, so they were
+#     always going to be merged-absent + preserved-from-cfg
+#     regardless of whether the validation block ran.
+#   - The 1 well-formed test continues to PASS.
+# So the runner expects 3 fail + 3 pass. Each failure message
+# contains the literal "validation" so the runner can verify the
+# bite-proof pattern.
 FW05_4_GUARD_TEST_FILES = [
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_guard.c'),
 ]
@@ -385,14 +395,19 @@ def main():
     # ----- Pass 4: FW-05.4 strict-validation stub build -----
     # Compile softap_handlers.c + test_softap_guard.c with
     # -DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1 so the validation block
-    # in provision_post_handler_impl is macro-skipped. The 5
-    # rejection tests (non-JSON, missing-wifi_ssid, missing-password,
-    # missing-name, missing-description) MUST FAIL — they assert 400
-    # + no NVS write + no esp_restart, but the handler now proceeds
-    # straight to merge + save + restart (200). The 1 well-formed
-    # test continues to pass. Each failure message contains the
-    # literal "validation" so the runner can verify the bite-proof
-    # pattern.
+    # in provision_post_handler_impl is macro-skipped. Under stub:
+    #   - 3 rejection tests FAIL (non-JSON, missing-wifi_ssid,
+    #     missing-wifi_password): they assert 400 + no NVS write +
+    #     no esp_restart, but the handler skips validation and
+    #     proceeds to merge + save + restart (200). Each failure
+    #     message contains the literal "validation".
+    #   - 2 acceptance tests PASS (accepts-missing-name,
+    #     accepts-missing-description): the handler reaches merge
+    #     with absent identity keys → preserves from cfg seed → test
+    #     asserts 200 + save + restart, all of which hold.
+    #   - 1 well-formed test PASSES (its assertions hold under
+    #     both builds).
+    # So Pass 4 expects exactly 3 FAIL + 3 PASS.
     print()
     print("=== Pass 4: FW-05.4 stub build (SOFTAP_TEST_STUB_ACCEPT_ALL_BODIES, guard file) ===")
     fw05_4_bin = _build('fw05_4_tests_stub',
@@ -412,21 +427,24 @@ def main():
     if "validation" not in fw05_4_out:
         sys.exit(f"FAIL: FW-05.4 stub build failure message does not "
                  f"contain the literal 'validation':\n{fw05_4_out}")
-    # Exactly 5 tests should fail (the 5 rejection tests); the
-    # well-formed green test must still pass.
+    # Exactly 3 tests should fail (non-JSON + missing-wifi_ssid +
+    # missing-wifi_password). The 2 accepts-missing-* tests +
+    # accepts-well-formed test must pass.
     fail_count = sum(1 for line in fw05_4_out.splitlines() if line.startswith("FAIL ["))
     pass_count = sum(1 for line in fw05_4_out.splitlines() if line.startswith("PASS ["))
-    if fail_count != 5:
-        sys.exit(f"FAIL: FW-05.4 stub build should have exactly 5 "
-                 f"failures (non-JSON + 4 missing-key); got "
-                 f"{fail_count}. Output:\n{fw05_4_out}")
-    if pass_count != 1:
-        sys.exit(f"FAIL: FW-05.4 stub build should have exactly 1 "
-                 f"pass (well-formed green test); got {pass_count}. "
+    if fail_count != 3:
+        sys.exit(f"FAIL: FW-05.4 stub build should have exactly 3 "
+                 f"failures (non-JSON + missing-wifi_ssid + "
+                 f"missing-wifi_password); got {fail_count}. "
                  f"Output:\n{fw05_4_out}")
-    print(f"OK: FW-05.4 stub build → 5 rejection tests fail with "
-          f"'validation' message as expected; 1 well-formed test "
-          f"still passes.")
+    if pass_count != 3:
+        sys.exit(f"FAIL: FW-05.4 stub build should have exactly 3 "
+                 f"passes (accepts-missing-name + "
+                 f"accepts-missing-description + well-formed); got "
+                 f"{pass_count}. Output:\n{fw05_4_out}")
+    print(f"OK: FW-05.4 stub build → 3 rejection tests fail with "
+          f"'validation' message as expected; 3 green/partial tests "
+          f"still pass.")
 
     print()
     print("=== FW-02 + FW-03 + FW-05 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")

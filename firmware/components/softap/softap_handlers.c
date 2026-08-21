@@ -14,34 +14,51 @@
  * (FW-05.3 S1 round-trip).
  *
  * provision_post_handler reads the body via mock_httpd_req_recv,
- * parses with cJSON, and applies **strict validation + merge**:
+ * parses with cJSON, and applies validation + merge. Per PRD §
+ * FR-1a L122-131 + milestone FW-05.3 S2 + FW-05.4 S2 (reconciled):
  *
- *   FW-05.4 guard (req-softap-004):
+ *   Validation (req-softap-004, relaxed per batch-3 fix):
  *     - Non-JSON body → 400 err="json" (no save, no reboot)
- *     - JSON missing any of the 4 required keys (wifi_ssid,
- *       wifi_password, name, description) → 400 err=<key>
- *     - JSON with over-cap string values → 400 err=<key>
+ *     - JSON missing wifi_ssid or wifi_password → 400 err=<key>
+ *       (name + description are OPTIONAL; see merge below)
+ *     - JSON with any present-and-string field exceeding its
+ *       length cap → 400 err=<key>
  *
- *   FW-05.3 merge (req-softap-003): for each of the 4 keys, if
- *   present + valid string → overwrite the corresponding cfg
- *   field; if absent → preserve the corresponding cfg field. (The
- *   strict guard above means "absent" never reaches the merge block
- *   under production build; the partial-update helper is wired up
- *   so a future relaxation of the guard can use it.)
+ *   Merge (req-softap-003 — partial update):
+ *     - wifi_ssid + wifi_password: REQUIRED, always written when
+ *       the body passes validation.
+ *     - name + description: OPTIONAL. Absent from the JSON →
+ *       preserve the corresponding cfg field (the value boot_run()
+ *       loaded from NVS). Present as a string → overwrite (empty
+ *       string present is an explicit clear, not a preserve).
  *
- * On a well-formed body (all 4 keys present, within caps) the
- * handler persists via config_save(), sends 200 {"ok":true}, delays
- * 100ms, then calls esp_restart() exactly once.
+ *   This reconciles FW-05.3 S2 (partial-update preserves NVS
+ *   identity when omitted) with FW-05.4 S2 (missing required keys
+ *   get a 400). The previous (batch-2) implementation made all 4
+ *   keys required, which broke the partial-update scenario.
+ *
+ * On a well-formed body (wifi_ssid + wifi_password present + within
+ * caps; name + description either present-within-caps or absent)
+ * the handler persists via config_save(), sends 200 {"ok":true},
+ * then calls esp_restart() exactly once.
  *
  * Bite-proof stub gate (FW-05.4):
  *   When the build defines -DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1
  *   (set by run_host_tests.py Pass 4), the validation block is
  *   macro-skipped — the handler proceeds straight to merge + save +
  *   restart regardless of body shape. The Pass-4 runner compiles
- *   only test_softap_guard.c with this flag; the rejection tests in
- *   that file assert 400 (which now fails because the guard is
- *   bypassed), and the failure messages contain the literal
- *   "validation" so the runner can verify the bite-proof pattern.
+ *   only test_softap_guard.c with this flag; under the stub:
+ *     - The 3 rejection tests (non-JSON, missing-wifi_ssid,
+ *       missing-wifi_password) FAIL because the handler no longer
+ *       enforces validation — they assert 400 + no save + no
+ *       restart, but the handler now proceeds to 200 + save +
+ *       restart. Failure messages contain the literal "validation".
+ *     - The 2 accepts-missing-* tests PASS — they assert 200 +
+ *       save + restart + preserved identity, which holds under
+ *       stub because the merge helper preserves absent keys from
+ *       cfg.
+ *     - The well-formed test PASSES.
+ *   So Pass 4 expects exactly 3 fail + 3 pass.
  *
  * On host, every esp_* / httpd_* call is redirected to the mock
  * via the link headers (included before esp_http_server.h by the
@@ -224,12 +241,17 @@ static bool check_string_field(const cJSON *root, const char *key,
  *     write, not a preserve — explicit clear semantics).
  *
  * `dest` MUST be a writable char array of size `dest_cap`.
- * This function does NOT call check_string_field; the caller has
- * already validated the field's presence + type + length-cap.
+ * This function does NOT call check_string_field; for the REQUIRED
+ * fields (wifi_ssid, wifi_password) the validation block has already
+ * asserted presence + type + length-cap. For the OPTIONAL fields
+ * (name, description) the validation block only checks length-cap
+ * WHEN the field is present; the helper handles absent cleanly.
  *
  * FW-05.3 refactor: extracted from the inline merge block in
  * provision_post_handler_impl for clarity (4 fields, identical
- * pattern). */
+ * pattern). Under both production and stub builds the helper is
+ * used; under stub, more keys may be absent and the helper still
+ * preserves them correctly. */
 static void softap_apply_provision_field(const cJSON *root, const char *key,
                                            char *dest, size_t dest_cap)
 {
@@ -260,13 +282,27 @@ esp_err_t provision_post_handler_impl(httpd_req_t *req)
     cJSON *root = cJSON_Parse(body);
 
 #ifndef SOFTAP_TEST_STUB_ACCEPT_ALL_BODIES
-    /* FW-05.4 guard: strict validation. Production + the green build
-     * of Pass 1 in run_host_tests.py enforce this block. The stub
-     * build (Pass 4, with -DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1)
+    /* FW-05.4 guard (relaxed per batch-3 fix). Production + the green
+     * build of Pass 1 in run_host_tests.py enforce this block. The
+     * stub build (Pass 4, with -DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1)
      * skips the entire block to verify the guard is load-bearing —
-     * under stub, the rejection tests in test_softap_guard.c FAIL
-     * with "validation" in the message because the handler no longer
-     * returns 400 for malformed bodies. */
+     * under stub, the rejection tests in test_softap_guard.c that
+     * target REQUIRED keys (non-JSON, missing-wifi_ssid,
+     * missing-wifi_password) FAIL with "validation" in the message
+     * because the handler no longer returns 400 for those malformed
+     * bodies.
+     *
+     *   REQUIRED (absent → 400):
+     *     - wifi_ssid
+     *     - wifi_password  (JSON key, error name "password" per PRD L130)
+     *
+     *   OPTIONAL (absent → preserve from cfg; over-cap → 400):
+     *     - name
+     *     - description
+     *
+     * The optional fields use a length check only when the field is
+     * present (over-cap present → 400), distinct from check_string_field
+     * which treats absent as a failure. */
     if (!root) {
         free(body);
         ESP_LOGW(TAG, "provision: parse failed");
@@ -278,43 +314,59 @@ esp_err_t provision_post_handler_impl(httpd_req_t *req)
         return send_400(req, "json");
     }
 
-    /* Every required key MUST be present in the JSON. If absent,
-     * send 400 with err=<key> and return — no NVS write, no reboot. */
     const char *err_key = NULL;
 
-    /* PRD L130: the JSON key for password is `wifi_password`, but the
-     * error name returned is `password`. The check_string_field
-     * helper reports the JSON key; we override for password below. */
+    /* wifi_ssid — REQUIRED. */
     if (!check_string_field(root, "wifi_ssid",
                               PROV_WIFI_SSID_MAX, &err_key)) {
         goto reject;
     }
+    /* wifi_password — REQUIRED (JSON key `wifi_password`, error name
+     * `password` per PRD L130). */
     if (!check_string_field(root, "wifi_password",
                               PROV_WIFI_PASSWORD_MAX, &err_key)) {
         if (err_key && strcmp(err_key, "wifi_password") == 0) err_key = "password";
         goto reject;
     }
-    if (!check_string_field(root, "name",
-                              PROV_IDENTITY_NAME_MAX, &err_key)) {
-        goto reject;
+    /* name — OPTIONAL. Absent → preserved by the merge block below.
+     * If present AND over-cap → 400; if present AND within cap →
+     * the merge block overwrites it. */
+    {
+        const cJSON *name = cJSON_GetObjectItemCaseSensitive(root, "name");
+        if (name) {
+            if (!cJSON_IsString(name) || !name->valuestring
+                || strlen(name->valuestring) > PROV_IDENTITY_NAME_MAX) {
+                err_key = "name";
+                goto reject;
+            }
+        }
     }
-    if (!check_string_field(root, "description",
-                              PROV_IDENTITY_DESC_MAX, &err_key)) {
-        goto reject;
+    /* description — OPTIONAL. Same shape as `name`. */
+    {
+        const cJSON *desc = cJSON_GetObjectItemCaseSensitive(root, "description");
+        if (desc) {
+            if (!cJSON_IsString(desc) || !desc->valuestring
+                || strlen(desc->valuestring) > PROV_IDENTITY_DESC_MAX) {
+                err_key = "description";
+                goto reject;
+            }
+        }
     }
 #endif /* SOFTAP_TEST_STUB_ACCEPT_ALL_BODIES */
 
     /* Merge logic — runs in both production and stub builds.
      *
      *   FW-05.3 partial-update semantics: for each of the 4 keys,
-     *     - absent (NULL) → preserve the existing cfg field
+     *     - absent (NULL) → preserve the existing cfg field (this is
+     *       the genuine partial-update path now that the validation
+     *       block no longer rejects missing name/description)
      *     - present as string → overwrite the cfg field (including
      *       "" to explicitly clear a field)
      *
-     *   Under the strict guard (production), all 4 keys are
-     *   guaranteed present so the "absent" branch never fires. Under
-     *   the stub build, missing keys may reach this block; the
-     *   softap_apply_provision_field helper handles NULL defensively.
+     *   Under the production guard, only wifi_ssid + wifi_password
+     *   are guaranteed present; name + description may be absent and
+     *   are therefore preserved from cfg (FW-05.3 S2). Under the stub
+     *   build, all 4 keys may be absent and all 4 get preserved.
      */
     config_t merged = *in_cfg;
     softap_apply_provision_field(root, "wifi_ssid",
