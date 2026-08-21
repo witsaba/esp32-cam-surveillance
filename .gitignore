@@ -1,0 +1,64 @@
+# =====================================================================
+# General
+# =====================================================================
+
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.log
+
+# =====================================================================
+# Go (backend/)
+# =====================================================================
+
+backend/bin/
+backend/*.exe
+backend/*.exe~
+backend/*.dll
+backend/*.so
+backend/*.dylib
+backend/coverage.out
+backend/coverage.txt
+backend/*.test
+backend/*.out
+backend/vendor/
+
+# =====================================================================
+# Node / Qwik (frontend/)
+# =====================================================================
+
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.qwik/
+frontend/.vite/
+frontend/.cache/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+frontend/*.tsbuildinfo
+frontend/.npm/
+frontend/.next/   # in case Qwik City integrations are added later
+
+# =====================================================================
+# ESP-IDF (firmware/)
+# =====================================================================
+
+firmware/**/build/
+firmware/**/sdkconfig.old
+firmware/**/dependencies.lock
+firmware/**/managed_components/
+firmware/**/components/**/build/
+
+# =====================================================================
+# Secrets / local-only
+# =====================================================================
+
+*.env
+*.pem
+*.key
+secrets/
