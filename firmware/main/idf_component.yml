@@ -12,3 +12,4 @@
 dependencies:
   espressif/esp_websocket_client: ==1.8.0
   espressif/esp32-camera: ==2.1.7
+  espressif/cJSON: ^1.7.18

@@ -82,6 +82,7 @@ def _common_cflags(extra_defines):
     host_include = os.path.join(PROJECT_DIR, 'tests', 'host_include')
     esp_common_include = os.path.join(IDF_PATH, 'components', 'esp_common', 'include')
     log_include = os.path.join(IDF_PATH, 'components', 'log', 'include')
+    json_cjson_include = os.path.join(IDF_PATH, 'components', 'json', 'cJSON')
     flags = [
         '-std=c11',
         '-Wall', '-Wextra', '-Wno-unused-parameter',
@@ -91,9 +92,11 @@ def _common_cflags(extra_defines):
         f'-I{NVS_INCLUDE}',                       # nvs.h types
         f'-I{esp_common_include}',                # esp_err.h
         f'-I{log_include}',                       # esp_log.h
+        f'-I{json_cjson_include}',                # cJSON.h (IDF location)
         f'-I{PROJECT_DIR}/components/config/include',
         f'-I{PROJECT_DIR}/components/boot/include',
         f'-I{PROJECT_DIR}/components/mocks/include',
+        f'-I{PROJECT_DIR}/components/softap/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
     ]
@@ -109,12 +112,19 @@ def _build(basename, extra_defines, test_files, workdir):
     """
     all_sources = [
         UNITY_SRC,
+        os.path.join(IDF_PATH, 'components', 'json', 'cJSON', 'cJSON.c'),
         os.path.join(PROJECT_DIR, 'components', 'config', 'config.c'),
+        os.path.join(PROJECT_DIR, 'components', 'softap', 'softap.c'),
+        os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_handlers.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_nvs_flash.cpp'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_boot_button.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_init_returns.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_supervision_record.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_log.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_wifi.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_netif.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_http_server.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_system.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
@@ -187,6 +197,16 @@ ALL_TESTS = [
     # FW-03.4 stability guard
     "boot_decide_provisioning is deterministic across calls [fw-03.4][guard][bite-proof]",
     "boot_decide_provisioning returns same value twice when stub absent [fw-03.4][green]",
+    # FW-05.1 /whoami identity (3 scenarios)
+    "whoami_returns_identity_json_fresh_device [fw-05.1]",
+    "whoami_response_is_application_json_and_parses [fw-05.1]",
+    "whoami_mac_is_12_char_lowercase_hex [fw-05.1]",
+    # FW-05.2 /provision writes + reboots (3 outline rows + 2 length-caps)
+    "provision_writes_nvs_and_reboots_home_2_4 [fw-05.2][row-1]",
+    "provision_writes_nvs_and_reboots_office_5g [fw-05.2][row-2]",
+    "provision_writes_nvs_and_reboots_guest [fw-05.2][row-3]",
+    "provision_rejects_ssid_over_32_chars [fw-05.2][length-cap]",
+    "provision_rejects_description_over_128_chars [fw-05.2][length-cap]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -223,6 +243,9 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_fail_loud.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_decide.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_stability_guard.c'),
+    # FW-05 softAP provisioning
+    os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_whoami.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_provision.c'),
 ]
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The

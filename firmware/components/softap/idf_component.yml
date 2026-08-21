@@ -1,0 +1,9 @@
+## softap idf_component.yml — no managed-component deps.
+##
+## The softap component inherits cJSON from firmware/main/idf_component.yml
+## via the IDF component manager's top-level dependency resolution. The
+## cJSON symbol table (cJSON_Parse, cJSON_GetObjectItemCaseSensitive,
+## cJSON_IsString, cJSON_CreateObject, cJSON_AddStringToObject,
+## cJSON_Print, cJSON_Delete) is referenced from softap_handlers.c.
+dependencies:
+  espressif/cJSON: ^1.7.18

@@ -32,8 +32,9 @@ typedef enum {
     BOOT_STEP_SUPERVISION_CAPTURE      = 7,  /* capture_task_start()         */
     BOOT_STEP_SUPERVISION_STREAM       = 8,  /* stream_task_start()          */
     BOOT_STEP_SUPERVISION_CONTROL      = 9,  /* control_task_start()         */
-    BOOT_STEP_RETURN                   = 10, /* orchestrator returned        */
-    BOOT_STEP_COUNT                    = 11
+    BOOT_STEP_SOFTAP_START             = 11, /* softAP bring-up + httpd_start (FW-05) */
+    BOOT_STEP_RETURN                   = 12, /* orchestrator returned        */
+    BOOT_STEP_COUNT                    = 13
 } boot_step_t;
 
 /* Tagged-error return. `.step` is the FR-1 step where the run halted

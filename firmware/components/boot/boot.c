@@ -23,6 +23,7 @@
 #include "boot.h"
 #include "boot_status.h"
 #include "config.h"
+#include "softap.h"
 
 #include "esp_log.h"
 
@@ -62,14 +63,11 @@ bool boot_decide_provisioning(const config_t *cfg, bool button_pressed)
 }
 
 /* Provisioning branch. FW-05 owns the body (softAP + HTTP server).
- * At FW-03 time we only log and return. MUST NOT start supervision
- * tasks. */
+ * MUST NOT start supervision tasks. */
 boot_status_t boot_run_provisioning(const config_t *cfg)
 {
-    (void)cfg;
-    ESP_LOGI(TAG, "fw: provisioning branch entered (FW-05 owns the body)");
-    boot_status_t s = { .ret = ESP_OK, .step = BOOT_STEP_RETURN };
-    return s;
+    ESP_LOGI(TAG, "fw: provisioning branch entered (softAP body)");
+    return softap_run_provisioning(cfg);
 }
 
 /* Normal branch — the FR-1 sequence. Each step's return value is
@@ -161,6 +159,7 @@ const char *boot_step_str(boot_step_t step)
         [BOOT_STEP_SUPERVISION_CAPTURE]     = "supervision_capture",
         [BOOT_STEP_SUPERVISION_STREAM]      = "supervision_stream",
         [BOOT_STEP_SUPERVISION_CONTROL]     = "supervision_control",
+        [BOOT_STEP_SOFTAP_START]            = "softap_start",
         [BOOT_STEP_RETURN]                  = "return",
     };
     if ((unsigned)step >= BOOT_STEP_COUNT) return "unknown";

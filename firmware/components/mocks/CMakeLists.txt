@@ -4,7 +4,11 @@ idf_component_register(
          "mock_init_returns.c"
          "mock_supervision_record.c"
          "mock_log.c"
+         "mock_esp_wifi.c"
+         "mock_esp_netif.c"
+         "mock_http_server.c"
+         "mock_esp_system.c"
     INCLUDE_DIRS "include"
-    REQUIRES nvs_flash boot
+    REQUIRES nvs_flash boot softap
     WHOLE_ARCHIVE
 )
