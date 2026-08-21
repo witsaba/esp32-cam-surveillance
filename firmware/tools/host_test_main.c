@@ -47,9 +47,19 @@ int main(void)
         printf("RUN  [%d] %s\n", total, t->name);
         fflush(stdout);
         UnityBegin(t->file);
-        if (t->fn && t->fn[0]) {
-            t->fn[0]();
+        /* Wrap the test body in TEST_PROTECT so assertion failures
+         * (which longjmp via Unity.AbortFrame) return control here
+         * instead of crashing the binary. */
+        if (setjmp(Unity.AbortFrame) == 0) {
+            if (t->fn && t->fn[0]) {
+                t->fn[0]();
+            }
         }
+        /* IDF's unity_default_test_run() calls UnityConcludeTest()
+         * here — the function that bumps Unity.TestFailures based
+         * on Unity.CurrentTestFailed. Without this, UnityEnd()
+         * reports 0 failures even when assertions failed. */
+        UnityConcludeTest();
         int failed = UnityEnd();
         if (failed > 0) {
             failures++;

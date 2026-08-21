@@ -10,6 +10,7 @@ idf_component_register(
          "test_config_roundtrip.c"
          "test_config_schema_mismatch.c"
          "test_config_schema_persists.c"
+         "test_config_guard.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES config mocks unity
 )
