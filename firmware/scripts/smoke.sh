@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# scripts/smoke.sh — FW-02 device-side smoke.
+# scripts/smoke.sh — FW-02 + FW-03 device-side smoke.
 #
 # Builds the firmware, flashes it to the connected ESP32-CAM, captures the
-# first `${TIMEOUT_S}` seconds of monitor output, and asserts that the two
-# log lines emitted by `firmware/main/main.c::app_main` are present:
+# first `${TIMEOUT_S}` seconds of monitor output, and asserts that the
+# log lines emitted by `firmware/components/boot/boot.c::boot_run()`
+# (via the orchestrator's stubs) are present. The FW-02.4 lines are
+# kept for the smoke regression; the FW-03 lines assert the boot
+# orchestrator reached the green path (or its provisioning branch).
 #
-#   fw: nvs_flash_init ret=... stats_ret=... used_entries=... free_entries=... total_entries=... namespace_count=...
-#   fw: config_load status=... dirty=... ssid='...'
-#
-# Together these two lines close the device-side half of the FW-02.4
-# closing check (the other half is the static-math review against
-# `firmware/partitions.csv`). On exit, prints PASS / FAIL with the relevant
-# captured lines so the result is reviewable from CI logs.
+# Expected lines (all must be present for PASS):
+#   - `fw: boot_run ret=ok step=return` — green path completion
+#   - `stub: wifi_init`                   — wifi init stub fired
+#   - `stub: camera_init`                 — camera init stub fired
+#   - `stub: health_task_start`           — supervision stub fired
 #
 # Usage:
 #   scripts/smoke.sh [PORT] [TIMEOUT_SECONDS] [LOG_FILE]
@@ -22,7 +23,7 @@
 #   LOG_FILE=build/smoke.log
 #
 # Exit codes:
-#   0 — PASS (both log lines observed)
+#   0 — PASS (expected lines observed)
 #   1 — FAIL (build/flash/monitor error, or expected line missing)
 #   2 — usage error
 
@@ -89,6 +90,14 @@ if ! python "$PROJECT_DIR/scripts/capture_monitor.py" "$PORT" "$TIMEOUT_S" "$LOG
 fi
 
 # --- verdict -------------------------------------------------------------
+# The FW-03 orchestrator takes one of two branches:
+#   - normal branch  : `fw: boot_run ret=ok step=return` + stub log lines
+#   - provisioning branch : `boot: provisioning branch entered ...` (FW-05 owns the body)
+# A fresh-flashed device with empty NVS correctly takes the provisioning
+# branch (FW-03.3 closes R-02). Both branches are valid outcomes; the
+# smoke verdict is branch-aware so the script does not regress on the
+# first cold boot.
+
 if ! grep -q 'fw:' "$LOG_FILE"; then
   printf '[smoke] FAIL: no "fw:" log lines observed in %s\n' "$LOG_FILE" >&2
   printf '[smoke] --- last 30 lines of captured output ---\n' >&2
@@ -96,21 +105,44 @@ if ! grep -q 'fw:' "$LOG_FILE"; then
   exit 1
 fi
 
-if ! grep -q 'nvs_flash_init ret=' "$LOG_FILE"; then
-  printf '[smoke] FAIL: nvs_flash_init log line missing in %s\n' "$LOG_FILE" >&2
-  printf '[smoke] --- captured fw: lines ---\n' >&2
-  grep 'fw:' "$LOG_FILE" >&2 || true
+if grep -q 'fw: provisioning branch entered' "$LOG_FILE"; then
+  # Provisioning branch is the correct outcome for an empty-NVS cold boot.
+  printf '[smoke] PASS: FW-02 + FW-03 provisioning-branch log line observed (FW-03.3 R-02)\n'
+  printf '[smoke] --- captured lines ---\n'
+  grep -E 'fw:' "$LOG_FILE" | sed 's/^/    /'
+  exit 0
+fi
+
+# Normal branch — assert the green-path log line + the three canonical stubs.
+if ! grep -q 'boot_run ret=ok step=return' "$LOG_FILE"; then
+  printf '[smoke] FAIL: boot_run green-path log line missing in %s\n' "$LOG_FILE" >&2
+  printf '[smoke] --- captured boot/stub lines ---\n' >&2
+  grep -E '(fw: boot|boot: provisioning)' "$LOG_FILE" >&2 || true
   exit 1
 fi
 
-if ! grep -q 'config_load status=' "$LOG_FILE"; then
-  printf '[smoke] FAIL: config_load log line missing in %s\n' "$LOG_FILE" >&2
-  printf '[smoke] --- captured fw: lines ---\n' >&2
-  grep 'fw:' "$LOG_FILE" >&2 || true
+if ! grep -q 'stub: wifi_init' "$LOG_FILE"; then
+  printf '[smoke] FAIL: wifi_init stub log line missing in %s\n' "$LOG_FILE" >&2
+  printf '[smoke] --- captured boot/stub lines ---\n' >&2
+  grep -E 'stub:' "$LOG_FILE" >&2 || true
   exit 1
 fi
 
-printf '[smoke] PASS: both expected log lines observed\n'
+if ! grep -q 'stub: camera_init' "$LOG_FILE"; then
+  printf '[smoke] FAIL: camera_init stub log line missing in %s\n' "$LOG_FILE" >&2
+  printf '[smoke] --- captured boot/stub lines ---\n' >&2
+  grep -E 'stub:' "$LOG_FILE" >&2 || true
+  exit 1
+fi
+
+if ! grep -q 'stub: health_task_start' "$LOG_FILE"; then
+  printf '[smoke] FAIL: health_task_start stub log line missing in %s\n' "$LOG_FILE" >&2
+  printf '[smoke] --- captured boot/stub lines ---\n' >&2
+  grep -E 'stub:' "$LOG_FILE" >&2 || true
+  exit 1
+fi
+
+printf '[smoke] PASS: FW-02 + FW-03 normal-branch boot-sequence log lines observed\n'
 printf '[smoke] --- captured lines ---\n'
 grep 'fw:' "$LOG_FILE" | sed 's/^/    /'
 exit 0

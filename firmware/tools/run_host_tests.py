@@ -80,6 +80,8 @@ def _common_cflags(extra_defines):
     """The host-test include + define baseline."""
     tools_dir = os.path.dirname(os.path.abspath(__file__))
     host_include = os.path.join(PROJECT_DIR, 'tests', 'host_include')
+    esp_common_include = os.path.join(IDF_PATH, 'components', 'esp_common', 'include')
+    log_include = os.path.join(IDF_PATH, 'components', 'log', 'include')
     flags = [
         '-std=c11',
         '-Wall', '-Wextra', '-Wno-unused-parameter',
@@ -87,7 +89,10 @@ def _common_cflags(extra_defines):
         f'-I{tools_dir}',                         # unity_host_test_runner.h
         f'-I{UNITY_INTERNALS}',                   # unity_internals.h, unity.h
         f'-I{NVS_INCLUDE}',                       # nvs.h types
+        f'-I{esp_common_include}',                # esp_err.h
+        f'-I{log_include}',                       # esp_log.h
         f'-I{PROJECT_DIR}/components/config/include',
+        f'-I{PROJECT_DIR}/components/boot/include',
         f'-I{PROJECT_DIR}/components/mocks/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
@@ -106,8 +111,17 @@ def _build(basename, extra_defines, test_files, workdir):
         UNITY_SRC,
         os.path.join(PROJECT_DIR, 'components', 'config', 'config.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_nvs_flash.cpp'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_boot_button.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_init_returns.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_supervision_record.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_log.c'),
+        os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
+        os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
+        os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
+        os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_supervision.c'),
         os.path.join(os.path.dirname(__file__), 'host_test_main.c'),
         os.path.join(os.path.dirname(__file__), 'host_idf_runner_shim.c'),
+        os.path.join(PROJECT_DIR, 'tests', 'host_include', 'host_err_to_name.c'),
     ] + test_files
     for s in all_sources:
         if not os.path.exists(s):
@@ -154,7 +168,37 @@ ALL_TESTS = [
     "future-version stored schema also falls back to defaults (defensive)",
     "save after stale-schema load persists the compiled-in schema_version",
     "matching schema_version passes without dirty flag",
+    # FW-03.1 walking skeleton + 6 ordering rows
+    "boot_run invokes the FR-1 init sequence in order [fw-03.1][walking-skeleton]",
+    "NVS init precedes load config [fw-03.1][ordering][row-1]",
+    "load config precedes wifi-station init [fw-03.1][ordering][row-2]",
+    "wifi-station init precedes camera init [fw-03.1][ordering][row-3]",
+    "camera init precedes WS init [fw-03.1][ordering][row-4]",
+    "WS init precedes supervision tasks start [fw-03.1][ordering][row-5]",
+    "supervision tasks start precedes boot orchestrator return [fw-03.1][ordering][row-6]",
+    # FW-03.2 fail-loud + green path
+    "boot fails loud at camera_init when forced non-OK [fw-03.2][bite-proof]",
+    "boot green path returns ESP_OK with no error log [fw-03.2][green]",
+    # FW-03.3 provisioning decision + non-start-supervision
+    "boot_decide_provisioning returns true on empty SSID + button-not-pressed [fw-03.3]",
+    "boot_decide_provisioning returns false on non-empty SSID + button-not-pressed [fw-03.3]",
+    "boot_decide_provisioning returns true on non-empty SSID + button-pressed [fw-03.3]",
+    "boot_run in provisioning branch does not start supervision tasks [fw-03.3]",
+    # FW-03.4 stability guard
+    "boot_decide_provisioning is deterministic across calls [fw-03.4][guard][bite-proof]",
+    "boot_decide_provisioning returns same value twice when stub absent [fw-03.4][green]",
 ]
+
+# The FW-03.4 bite-proof test name. The host runner's Pass 3
+# compiles boot.c with -DBOOT_TEST_STUB_FLIP_DECISION=1 (so
+# boot_decide_provisioning() flips its return value on each
+# call); the assertion `call1 == call2` fails and the failure
+# message must contain the literal "determinism" so the runner
+# can verify the guard is load-bearing.
+FW03_BITE_PROOF_TEST_NAME = (
+    "boot_decide_provisioning is deterministic across calls "
+    "[fw-03.4][guard][bite-proof]"
+)
 
 # The FW-02.3 bite-proof test that MUST fail when the version
 # check is stubbed out. Its name deliberately contains the literal
@@ -175,6 +219,18 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'test_config', 'test_config_roundtrip.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_config', 'test_config_schema_mismatch.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_config', 'test_config_schema_persists.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_order.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_fail_loud.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_decide.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_stability_guard.c'),
+]
+
+# Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
+# green-path test in that file is guarded by `#ifndef
+# BOOT_TEST_STUB_FLIP_DECISION` so it auto-excludes itself; what
+# remains is exactly the determinism bite-proof, which MUST fail.
+FW03_4_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_stability_guard.c'),
 ]
 
 
@@ -237,8 +293,52 @@ def main():
     print(f"OK: stub build → bite-proof test fails as expected, "
           f"matching-schema test still passes.")
 
+    # ----- Pass 3: FW-03.4 determinism stub build -----
+    # The stub build defines -DBOOT_TEST_STUB_FLIP_DECISION so the
+    # production boot_decide_provisioning() body is swapped for the
+    # stub-and-flip variant (alternates true/false on each call).
+    # The bite-proof asserts call1 == call2; under the flip that
+    # invariant fails and the failure message contains "determinism"
+    # so the runner can verify the guard is load-bearing. The
+    # green-path test in test_boot_stability_guard.c is guarded by
+    # `#ifndef BOOT_TEST_STUB_FLIP_DECISION` so it does not compile
+    # into this build — only the bite-proof runs.
     print()
-    print("=== FW-02 host tests: ALL PASS (production) + bite-proof FAILS (stub) ===")
+    print("=== Pass 3: FW-03.4 stub build (BOOT_TEST_STUB_FLIP_DECISION, bite-proof only) ===")
+    fw03_4_bin = _build('fw03_4_tests_stub',
+                        ['-DBOOT_TEST_STUB_FLIP_DECISION=1'],
+                        FW03_4_GUARD_TEST_FILES, workdir)
+    fw03_4_rc, fw03_4_out = _run_binary(fw03_4_bin)
+    if fw03_4_rc == 0:
+        sys.exit(f"FAIL: FW-03.4 stub build returned 0; expected the bite-proof "
+                 f"test to fail. Output:\n{fw03_4_out}")
+    if FW03_BITE_PROOF_TEST_NAME not in fw03_4_out:
+        sys.exit(f"FAIL: FW-03.4 stub build failed but the bite-proof test "
+                 f"name '{FW03_BITE_PROOF_TEST_NAME}' is not in the output:\n{fw03_4_out}")
+    if "FAIL" not in fw03_4_out:
+        sys.exit(f"FAIL: FW-03.4 stub build rc != 0 but no FAIL line in output:\n{fw03_4_out}")
+    # The failure message must mention "determinism" per the
+    # milestones doc bite-proof requirement — this is how the
+    # verify phase proves the guard surfaces the violated invariant.
+    if "determinism" not in fw03_4_out:
+        sys.exit(f"FAIL: FW-03.4 stub build failure message does not contain "
+                 f"the literal 'determinism':\n{fw03_4_out}")
+    # Exactly one test should fail (the bite-proof); the green-path
+    # test is excluded by the `#ifndef BOOT_TEST_STUB_FLIP_DECISION`
+    # guard so no passes are expected.
+    fail_count = sum(1 for line in fw03_4_out.splitlines() if line.startswith("FAIL ["))
+    pass_count = sum(1 for line in fw03_4_out.splitlines() if line.startswith("PASS ["))
+    if fail_count != 1:
+        sys.exit(f"FAIL: FW-03.4 stub build should have exactly 1 failure "
+                 f"(bite-proof); got {fail_count}. Output:\n{fw03_4_out}")
+    if pass_count != 0:
+        sys.exit(f"FAIL: FW-03.4 stub build should have 0 passes (green-path "
+                 f"test excluded by ifndef); got {pass_count}. Output:\n{fw03_4_out}")
+    print(f"OK: FW-03.4 stub build → bite-proof test fails with "
+          f"'determinism' message as expected.")
+
+    print()
+    print("=== FW-02 + FW-03 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
     print(f"workdir kept at {workdir} for debugging; safe to rm -rf.")
 
 

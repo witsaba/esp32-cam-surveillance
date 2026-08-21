@@ -1,0 +1,6 @@
+## IDF Component Manager manifest for the `boot` component.
+##
+## FW-03 declares no managed-component deps — the orchestrator only
+## touches IDF built-ins (nvs_flash via include; freertos for
+## xTaskCreate) plus the in-tree `config` component (declared via
+## CMakeLists.txt REQUIRES).
