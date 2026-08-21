@@ -29,11 +29,16 @@ IDF_PATH      ?= $(HOME)/.espressif/v5.5.3/esp-idf
 SMOKE_TIMEOUT ?= 8
 SMOKE_LOG     ?= $(CURDIR)/build/smoke.log
 
-# Source the ESP-IDF env inside a fresh bash login shell for each recipe so
-# environment variables do not leak between targets and so contributors do
-# not need to remember to `source $IDF_PATH/export.sh` themselves.
-IDF_ENV = source $(IDF_PATH)/export.sh >/dev/null 2>&1
-IDF = bash -lc '$(IDF_ENV) && idf.py'
+# Run an idf.py subcommand with the ESP-IDF env sourced. Pass the
+# subcommand + any args as the call argument, e.g.:
+#   $(call idf,build)
+#   $(call idf,test --target esp32)
+#   $(call idf,-p $(PORT) flash)
+# The arguments land INSIDE the single-quoted bash -lc command so bash
+# does not strip them and idf.py sees the full invocation.
+define idf
+bash -lc 'source $(IDF_PATH)/export.sh >/dev/null 2>&1 && idf.py $(1)'
+endef
 
 .DEFAULT_GOAL := help
 .PHONY: help build test test-stub flash monitor smoke clean all size-components
@@ -58,28 +63,28 @@ help:
 	@echo "  SMOKE_LOG=$(SMOKE_LOG)"
 
 build:
-	$(IDF) build
+	$(call idf,build)
 
 test:
-	$(IDF) test --target esp32
+	$(call idf,test --target esp32)
 
 test-stub:
-	bash -lc '$(IDF_ENV) && python tools/run_host_tests.py --stub'
+	bash -lc 'source $(IDF_PATH)/export.sh >/dev/null 2>&1 && python tools/run_host_tests.py --stub'
 
 flash:
-	$(IDF) -p $(PORT) flash
+	$(call idf,-p $(PORT) flash)
 
 monitor:
-	$(IDF) -p $(PORT) monitor
+	$(call idf,-p $(PORT) monitor)
 
 smoke:
 	@mkdir -p $(dir $(SMOKE_LOG))
 	@./scripts/smoke.sh $(PORT) $(SMOKE_TIMEOUT) $(SMOKE_LOG)
 
 size-components:
-	$(IDF) size-components
+	$(call idf,size-components)
 
 clean:
-	$(IDF) clean
+	$(call idf,clean)
 
 all: clean build test smoke
