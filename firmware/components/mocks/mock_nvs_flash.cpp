@@ -26,7 +26,9 @@
 #include <string>
 #include <vector>
 
-#include "esp_log.h"
+/* On host, esp_log.h is a no-op stub from tests/host_include/. On
+ * device, it is the real IDF header. The mock just wants to log
+ * diagnostics when keys are missing — not load-bearing for tests. */
 
 static const char *TAG = "mock_nvs";
 

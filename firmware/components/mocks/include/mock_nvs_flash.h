@@ -14,19 +14,51 @@
  * is linked.
  *
  * Each test begins with `mock_nvs_reset()` to clear state.
+ *
+ * IMPORTANT: this header is intentionally LIGHTWEIGHT — it does NOT
+ * include nvs.h or nvs_flash.h from IDF. That avoids pulling the
+ * whole IDF tree into a plain gcc host build. We forward-declare
+ * only the types our mock touches (nvs_handle_t is `uint32_t`,
+ * esp_err_t is `int`, nvs_open_mode_t is `int`). On device builds,
+ * the production source includes the real IDF headers as normal — the
+ * mock symbols just satisfy the redirected calls.
  */
 #pragma once
 
 #include <stddef.h>
 #include <stdint.h>
 
-#include "esp_err.h"
-#include "nvs.h"
-#include "nvs_flash.h"
+/* The mock_nvs_flash.h header is included in two contexts:
+ *
+ *   1. Host test build (idf.py test → tools/run_host_tests.py):
+ *      a lightweight header from `tests/host_include/` is found first
+ *      via the include path. It defines `nvs_handle_t`, `nvs_open_mode_t`,
+ *      `nvs_stats_t`, `NVS_READWRITE`, and the `esp_err_t` enum.
+ *
+ *   2. Device build (idf.py build → firmware.elf):
+ *      IDF's real `<nvs.h>` and `<nvs_flash.h>` headers are pulled in
+ *      by the IDF build system via `REQUIRES nvs_flash`.
+ *
+ * We unconditionally include `<nvs.h>` for the open-mode enum. The
+ * compiler will resolve it from whichever include path applies.
+ */
+#include <nvs.h>
+
+#ifdef UNITY_HOST_BUILD
+#include "host_esp_err.h"  /* host stub of esp_err.h — see tests/host_include/ */
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* On device, nvs.h and nvs_flash.h are the real IDF headers; on host,
+ * the host stubs from tests/host_include/ are used. In both contexts
+ * `nvs_handle_t`, `nvs_open_mode_t`, and `nvs_stats_t` are defined.
+ *
+ * Forward-declared types matching IDF's typedefs (host only — the
+ * IDF headers also define these but the host stubs take precedence
+ * via the include path order). */
 
 /* Reset all mock state (drop every namespace). Call from each
  * test's setup hook (before RUN_TEST). */
