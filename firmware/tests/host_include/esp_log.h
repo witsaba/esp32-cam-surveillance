@@ -1,13 +1,10 @@
 /* esp_log.h — host stub of IDF's esp_log.h.
  *
- * The real IDF header pulls in sdkconfig.h, esp_rom_sys.h, and the
- * FreeRTOS port — none of which exist on a plain gcc host. We
- * provide a no-op stub so `config.c`'s `ESP_LOGW(...)` macro
- * compiles away on host. The mock test still observes the warning
- * indirectly through the version-mismatch assertion (no log capture
- * required for the FW-02.1 walk; the FW-02.3 bite-proof test instead
- * asserts that the named test fails when the version check is
- * stubbed).
+ * On host, ESP_LOGI/ESP_LOGW/ESP_LOGE write their formatted message
+ * into a capture buffer exposed by `mock_log.h` (so the FW-03.2
+ * fail-loud bite-proof can assert the orchestrator's log line names
+ * the failing step). On device, this file is replaced by IDF's real
+ * esp_log.h via the IDF include path.
  */
 #ifndef HOST_ESP_LOG_H
 #define HOST_ESP_LOG_H
@@ -21,9 +18,22 @@
 #define ESP_LOG_LEVEL_DEBUG    4
 #define ESP_LOG_LEVEL_VERBOSE  5
 
-#define ESP_LOGE(tag, fmt, ...) ((void)0)
-#define ESP_LOGW(tag, fmt, ...) ((void)0)
-#define ESP_LOGI(tag, fmt, ...) ((void)0)
+#include <stdio.h>
+
+#include "mock_log.h"
+
+#define ESP_LOGE(tag, fmt, ...) do { \
+    snprintf(mock_log_last_error, MOCK_LOG_LAST_LEN, fmt, ##__VA_ARGS__); \
+    mock_log_error_count++; \
+} while (0)
+#define ESP_LOGW(tag, fmt, ...) do { \
+    snprintf(mock_log_last_warn, MOCK_LOG_LAST_LEN, fmt, ##__VA_ARGS__); \
+    mock_log_warn_count++; \
+} while (0)
+#define ESP_LOGI(tag, fmt, ...) do { \
+    snprintf(mock_log_last_info, MOCK_LOG_LAST_LEN, fmt, ##__VA_ARGS__); \
+    mock_log_info_count++; \
+} while (0)
 #define ESP_LOGD(tag, fmt, ...) ((void)0)
 #define ESP_LOGV(tag, fmt, ...) ((void)0)
 

@@ -60,61 +60,35 @@ boot_status_t boot_run_provisioning(const config_t *cfg)
     return s;
 }
 
-/* Normal branch — the FR-1 sequence. */
+/* Normal branch — the FR-1 sequence. Each step's return value is
+ * wrapped in a `boot_status_t` tagged with the failing `boot_step_t`,
+ * and on non-OK the orchestrator emits an `ESP_LOGE("boot",
+ * "step=%s err=%s", boot_step_str(step), esp_err_to_name(ret))` line
+ * so the failing step is human-readable + greppable. */
 boot_status_t boot_run_normal(const config_t *cfg)
 {
     boot_status_t s = { .ret = ESP_OK, .step = BOOT_STEP_RETURN };
 
-    esp_err_t r;
+#define BOOT_CHECK_STEP(STEP_ENUM, CALL_EXPR) do {                   \
+        esp_err_t _r = (CALL_EXPR);                                   \
+        if (_r != ESP_OK) {                                            \
+            s.ret = _r;                                                \
+            s.step = (STEP_ENUM);                                      \
+            ESP_LOGE(TAG, "step=%s err=%s",                           \
+                     boot_step_str(s.step), esp_err_to_name(s.ret));   \
+            return s;                                                 \
+        }                                                              \
+    } while (0)
 
-    r = wifi_init(cfg);
-    if (r != ESP_OK) {
-        s.ret = r;
-        s.step = BOOT_STEP_WIFI_INIT;
-        return s;
-    }
+    BOOT_CHECK_STEP(BOOT_STEP_WIFI_INIT,            wifi_init(cfg));
+    BOOT_CHECK_STEP(BOOT_STEP_CAMERA_INIT,          camera_init(cfg));
+    BOOT_CHECK_STEP(BOOT_STEP_WS_INIT,              ws_init(cfg));
+    BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_HEALTH,   health_task_start());
+    BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_CAPTURE,  capture_task_start());
+    BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_STREAM,   stream_task_start());
+    BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_CONTROL,  control_task_start());
 
-    r = camera_init(cfg);
-    if (r != ESP_OK) {
-        s.ret = r;
-        s.step = BOOT_STEP_CAMERA_INIT;
-        return s;
-    }
-
-    r = ws_init(cfg);
-    if (r != ESP_OK) {
-        s.ret = r;
-        s.step = BOOT_STEP_WS_INIT;
-        return s;
-    }
-
-    r = health_task_start();
-    if (r != ESP_OK) {
-        s.ret = r;
-        s.step = BOOT_STEP_SUPERVISION_HEALTH;
-        return s;
-    }
-
-    r = capture_task_start();
-    if (r != ESP_OK) {
-        s.ret = r;
-        s.step = BOOT_STEP_SUPERVISION_CAPTURE;
-        return s;
-    }
-
-    r = stream_task_start();
-    if (r != ESP_OK) {
-        s.ret = r;
-        s.step = BOOT_STEP_SUPERVISION_STREAM;
-        return s;
-    }
-
-    r = control_task_start();
-    if (r != ESP_OK) {
-        s.ret = r;
-        s.step = BOOT_STEP_SUPERVISION_CONTROL;
-        return s;
-    }
+#undef BOOT_CHECK_STEP
 
     return s;
 }

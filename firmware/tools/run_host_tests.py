@@ -114,12 +114,14 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_boot_button.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_init_returns.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_supervision_record.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_log.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_supervision.c'),
         os.path.join(os.path.dirname(__file__), 'host_test_main.c'),
         os.path.join(os.path.dirname(__file__), 'host_idf_runner_shim.c'),
+        os.path.join(PROJECT_DIR, 'tests', 'host_include', 'host_err_to_name.c'),
     ] + test_files
     for s in all_sources:
         if not os.path.exists(s):
@@ -174,6 +176,9 @@ ALL_TESTS = [
     "camera init precedes WS init [fw-03.1][ordering][row-4]",
     "WS init precedes supervision tasks start [fw-03.1][ordering][row-5]",
     "supervision tasks start precedes boot orchestrator return [fw-03.1][ordering][row-6]",
+    # FW-03.2 fail-loud + green path
+    "boot fails loud at camera_init when forced non-OK [fw-03.2][bite-proof]",
+    "boot green path returns ESP_OK with no error log [fw-03.2][green]",
 ]
 
 # The FW-02.3 bite-proof test that MUST fail when the version
@@ -196,6 +201,7 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'test_config', 'test_config_schema_mismatch.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_config', 'test_config_schema_persists.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_order.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_fail_loud.c'),
 ]
 
 

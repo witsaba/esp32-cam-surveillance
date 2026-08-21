@@ -7,6 +7,7 @@
 # + supervision record).
 idf_component_register(
     SRCS "test_boot_order.c"
+         "test_boot_fail_loud.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES boot config mocks unity
 )
