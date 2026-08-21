@@ -146,6 +146,17 @@ Identity is **separated from labelling** so the database, not the firmware, owns
 
 The sensor control surface (`esp_camera_sensor_get()`) is reserved for runtime reconfiguration triggered by the backend (`config` text command — see § Protocol contract). The firmware MUST NOT reinitialise the driver to change resolution or quality; use the `sensor_t` setters.
 
+### FR-2b — Camera settings module
+
+The 28 OV2640 sensor parameters (brightness, contrast, saturation, sharpness, denoise, special_effect, framesize, quality, whitebal, awb_gain, wb_mode, aec, aec2, ae_level, aec_value, agc, agc_gain, gainceiling, bpc, wpc, raw_gma, lenc, hmirror, vflip, dcw, colorbar) are owned by a dedicated `camera_settings` module that:
+
+- **Persists** them as a single NVS blob under namespace `camera_cfg`, key `settings`. Schema-versioned: if the stored blob's version doesn't match the firmware's expected version, the firmware MUST log a warning, fall back to `camera_settings_get_defaults()`, and re-save with the new schema.
+- **Validates** every integer against the OV2640 enum range BEFORE calling any `sensor_t->set_*`. Out-of-range values from the backend's `config` command are clamped or rejected with an `error` reply — never silently coerced. (`rural_home_assistant`'s reference at `components/camera_settings/camera_settings.c:159` calls `s->set_framesize(s, settings->framesize)` with no bounds check; a `{"framesize": 99}` JSON body would dereference a corrupt function-pointer table in the OV2640 driver. We must not repeat this.)
+- **Exposes** `camera_settings_get(camera_settings_t *out)`, `camera_settings_apply(const camera_settings_t *in)` (writes via `sensor_t` setters), `camera_settings_save(const camera_settings_t *in)`, and `camera_settings_reset_defaults()` (camera-only; does NOT touch wifi or identity — that's the boot-button factory reset).
+- **Is the single owner of `esp_camera_fb_get` / `esp_camera_fb_return`.** The capture task is the only consumer. No other module touches the camera bus directly. This makes the binary-semaphore-around-`fb_get` pattern unnecessary — the frame queue between capture and stream tasks is itself the mutex.
+
+**Concurrency model.** Because only one task (`capture`) ever calls `esp_camera_fb_get`, no semaphore is needed around the camera bus. The reference firmware at `rural_home_assistant/backend/iot-camera/components/http_server/http_server.c:24-82` wraps `fb_get` in a binary semaphore because its HTTP server has multiple concurrent handlers; the PRD's single-capture-task design eliminates that race by construction. The settings module applies changes via `sensor_t` setters, which are themselves safe to call from any task — `sensor_t->set_*` does not touch `fb_get`.
+
 ### FR-3 — WebSocket pipeline
 
 | Parameter | Default (Kconfig symbol where applicable) | Reason |
@@ -199,6 +210,7 @@ Text frames from the backend carry JSON commands. The minimum viable set:
 |---|---|---|
 | `stream` | `{"on": bool, "fps": int}` | Start or stop the capture loop at the requested rate. `fps` MUST be ≥ `CONFIG_FIRMWARE_STREAM_FPS_MIN` (default 1); values below are clamped, values above the camera ceiling (≈ 15 fps at QVGA) are clamped to the ceiling |
 | `config` | `{"frame_size": "QVGA"\|"VGA", "quality": int, "name": string?, "description": string?}` | Reconfigure via `sensor_t` setters; persist to NVS if `persist=true`. Allowed `quality` range is `[0, 63]`; out-of-range values are rejected with `error`. Optional `name` (max 32 chars) and `description` (max 128 chars) update `config_t.identity` and trigger a fresh `hello` frame on the next status tick so the backend re-associates the camera in its registry |
+| `reset_cam` | `{}` | Camera-only reset. Calls `camera_settings_reset_defaults()` + `camera_settings_apply()` + `camera_settings_save()`. Does NOT touch wifi creds or identity (use the boot-button factory reset for that — FR-7). Replies `{"type":"config_ok","changed":["reset_cam"]}`. Useful when a deployment has accidentally pushed bad sensor params and the camera is still reachable |
 | `sleep` | `{}` | Stop capture, call `esp_websocket_client_close()` with code `1000`. Auto-reconnect MUST NOT fire after this |
 | `reboot` | `{}` | Persist dirty config, then `esp_restart()` |
 | `identify` | `{}` | Reply with a text frame containing MAC, Name, Description, firmware version, uptime, current config (see `identify_ok` payload in § Protocol contract) |
@@ -376,7 +388,7 @@ The firmware is the data-plane peer. The backend terminates the connection and f
 
 | Frame type | Payload | When |
 |---|---|---|
-| Binary | Raw JPEG bytes, single message | Every frame while streaming |
+| Binary | **Raw JPEG bytes from `camera_fb_t.buf`, single message. No base64, no JSON envelope, no Content-Type header** — the WebSocket frame's binary opcode IS the contract. The reference firmware at `rural_home_assistant` removed base64 wrapping in commit `4a2b626` for a ~33 % bandwidth saving; the PRD carries that decision forward | Every frame while streaming |
 | Text | `{"type":"hello","mac":"c8f09e9d5008","name":"front-door","description":"covers the main entrance","fw":"<version>","caps":["jpeg","stream","identify"]}` | Once on `WEBSOCKET_EVENT_CONNECTED`. **MAC is the canonical identity**; Name and Description are advisory (the backend may overwrite them from its DB) |
 | Text | `{"type":"status","mac":"c8f09e9d5008","name":"front-door","uptime_s":N,"rssi_dbm":N,"free_heap":N,"fb_drops":N,"reconnects":N}` | Every 30 s while connected. MAC + Name repeated so a reconnected camera re-associates without waiting for the next hello |
 | Text | `{"type":"identify_ok","mac":"c8f09e9d5008","name":"front-door","description":"...","fw":"<version>","uptime_s":N,"cfg":{...}}` | Reply to `identify` command (echoes the same identity model) |
@@ -567,6 +579,45 @@ All six open questions from the early draft are resolved:
 4. ✅ **Backend URL shape.** `ws://<host>:<port>/cams` — single endpoint, MAC travels in the hello frame (§ FR-3, § Protocol contract). Re-provisioning never drops the socket.
 5. ✅ **Provisioning via softAP + captive portal.** Plus the security constraint `CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=y` — softAP is torn down the instant station mode joins a network.
 6. ✅ **Identity model.** MAC = canonical identity (eFuse, never stored). Name + Description = user labels (NVS, editable). `/whoami` endpoint on the softAP exposes the device during onboarding; hello + status frames carry MAC + Name on every connection. See § FR-1a and § Protocol contract.
+
+---
+
+## References
+
+The PRD deliberately inherits several patterns from a previous, working-but-suboptimal ESP32-CAM firmware (`liwaisi-tech/rural_home_assistant`, branch `main`). The investigation behind each cross-reference:
+
+| Pattern | Source | Carried forward as |
+|---|---|---|
+| AI-Thinker pin map | `backend/iot-camera/components/cam_reader/cam_reader.c:11-27` | § Hardware target — exact pin values match |
+| PSRAM runtime detection with sensible fallback | `backend/iot-camera/components/cam_reader/cam_reader.c:43,72-73` | Tightened to hard-fail (`PSRAM_REQUIRED` log + stop) — AI-Thinker-specific requirement |
+| NVS-persisted camera settings blob | `backend/iot-camera/components/camera_settings/camera_settings.c:73-133` | § FR-2b — `camera_settings` module with strict validation (the reference accepts out-of-range enums; we don't) |
+| Direct JPEG transmission, no base64 | `backend/iot-camera/components/http_server/http_server.c:69-70`; removed in commit `4a2b626` for ~33 % bandwidth | § Protocol contract — explicit "raw bytes, no base64" rule |
+| Binary semaphore around `fb_get` | `backend/iot-camera/components/http_server/http_server.c:24-82` | Replaced by single-capture-task design — semaphore unnecessary because no concurrent access exists (§ FR-2b, concurrency model) |
+
+**Solved-problem ledger (problems we DO NOT want to re-introduce):**
+
+| Bug class | Where it lived | Why the PRD avoids it |
+|---|---|---|
+| Hard-coded WiFi creds in Kconfig (no provisioning) | `backend/iot-camera/components/wifi/wifi.c:27-29` | FR-1 step 2 mandates softAP provisioning when SSID is empty |
+| `portMAX_DELAY` block on first WiFi connect (wedges device on misconfigured SSID) | `backend/iot-camera/components/wifi/wifi.c:140-144` | FR-1 step 2 — unconfigured SSID enters provisioning instead of wedging |
+| Hard ceiling of 5 retries then die | `backend/iot-camera/components/wifi/wifi.c:78-84` | FR-4 — infinite retries with exponential backoff (2 s → 30 s cap) |
+| No soft-recovery / no `esp_restart()` ever | (absent in reference) | FR-5 — 30 fails in 10 min → `esp_restart()` + NVS-logged reason |
+| `sscanf("%d", &value)` parsing JSON, no enum bounds check | `backend/iot-camera/components/camera_settings/camera_settings.c:284-300` | FR-2b — strict validation before any `sensor_t->set_*` call |
+| String-matching JSON body for boolean flags | `backend/iot-camera/components/http_server/http_server.c:243` | FR-6 — strict JSON parser + command allow-list |
+| Stack-buffer sized to magic constant (2048 bytes) | `backend/iot-camera/components/http_server/http_server.c:210` | (implementation concern; flagged for M3/M4 implementer) |
+| One FreeRTOS task per WS connection (memory exhaustion under attack) | Deleted WS variant in `06b5ed4:backend/iot-camera/main/camera_server.c:151` | § Architecture — single shared stream task fed by a queue, never per-connection tasks |
+| MQTT → HTTP refactor scars | `backend/iot-camera` commit history `4a2b626` | (historical context only; PRD targets WS push, closer to the deleted MQTT design) |
+| Removed WS streaming variant | `backend/iot-camera` commit `06b5ed4` | (historical context only) |
+| Sibling humidity sensor solved problems not yet adopted by the camera firmware | `backend/iot-humidity-sensor/components/wifi_manager/src/wifi_*.c`, `boot_counter.c`, `whoami.c` | M1 implementer SHOULD read these as reference implementations of provisioning + exponential backoff + `/whoami` even though the new code lands in `firmware/` |
+
+**What the PRD explicitly does NOT inherit** (deliberate regressions from the reference):
+
+- `CAMERA_GRAB_LATEST` → PRD mandates `CAMERA_GRAB_WHEN_EMPTY` (FR-2). LATEST is the right choice for an on-demand capture endpoint; WHEN_EMPTY is the right choice for a streaming pipeline because the WS consumer needs backpressure.
+- `fb_count=2 if PSRAM` → PRD mandates `fb_count=1` always. Two PSRAM buffers are unnecessary for a 5 fps QVGA stream and double the PSRAM footprint.
+- XCLK 20 MHz → PRD mandates XCLK 10 MHz. The frame rate at QVGA@5 fps is bounded by the capture cadence, not the XCLK, so halving XCLK saves ~30 % LEDC power.
+- FRAMESIZE_SVGA, quality 12 → PRD mandates FRAMESIZE_QVGA, quality 18. SVGA@q12 produces ~3-4× larger frames than QVGA@q18; the PRD optimises for energy + bandwidth, not raw image quality.
+
+---
 
 ---
 
