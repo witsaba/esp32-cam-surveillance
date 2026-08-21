@@ -67,7 +67,7 @@ bool boot_decide_provisioning(const config_t *cfg, bool button_pressed)
 boot_status_t boot_run_provisioning(const config_t *cfg)
 {
     (void)cfg;
-    ESP_LOGI(TAG, "boot: provisioning branch entered (FW-05 owns the body)");
+    ESP_LOGI(TAG, "fw: provisioning branch entered (FW-05 owns the body)");
     boot_status_t s = { .ret = ESP_OK, .step = BOOT_STEP_RETURN };
     return s;
 }

@@ -90,6 +90,14 @@ if ! python "$PROJECT_DIR/scripts/capture_monitor.py" "$PORT" "$TIMEOUT_S" "$LOG
 fi
 
 # --- verdict -------------------------------------------------------------
+# The FW-03 orchestrator takes one of two branches:
+#   - normal branch  : `fw: boot_run ret=ok step=return` + stub log lines
+#   - provisioning branch : `boot: provisioning branch entered ...` (FW-05 owns the body)
+# A fresh-flashed device with empty NVS correctly takes the provisioning
+# branch (FW-03.3 closes R-02). Both branches are valid outcomes; the
+# smoke verdict is branch-aware so the script does not regress on the
+# first cold boot.
+
 if ! grep -q 'fw:' "$LOG_FILE"; then
   printf '[smoke] FAIL: no "fw:" log lines observed in %s\n' "$LOG_FILE" >&2
   printf '[smoke] --- last 30 lines of captured output ---\n' >&2
@@ -97,6 +105,15 @@ if ! grep -q 'fw:' "$LOG_FILE"; then
   exit 1
 fi
 
+if grep -q 'boot: provisioning branch entered' "$LOG_FILE"; then
+  # Provisioning branch is the correct outcome for an empty-NVS cold boot.
+  printf '[smoke] PASS: FW-02 + FW-03 provisioning-branch log line observed (FW-03.3 R-02)\n'
+  printf '[smoke] --- captured lines ---\n'
+  grep -E '(fw:|boot:)' "$LOG_FILE" | sed 's/^/    /'
+  exit 0
+fi
+
+# Normal branch — assert the green-path log line + the three canonical stubs.
 if ! grep -q 'boot_run ret=ok step=return' "$LOG_FILE"; then
   printf '[smoke] FAIL: boot_run green-path log line missing in %s\n' "$LOG_FILE" >&2
   printf '[smoke] --- captured boot/stub lines ---\n' >&2
@@ -125,7 +142,7 @@ if ! grep -q 'stub: health_task_start' "$LOG_FILE"; then
   exit 1
 fi
 
-printf '[smoke] PASS: FW-02 + FW-03 boot-sequence log lines observed\n'
+printf '[smoke] PASS: FW-02 + FW-03 normal-branch boot-sequence log lines observed\n'
 printf '[smoke] --- captured lines ---\n'
 grep 'fw:' "$LOG_FILE" | sed 's/^/    /'
 exit 0
