@@ -53,6 +53,13 @@ firmware/**/sdkconfig.old
 firmware/**/dependencies.lock
 firmware/**/managed_components/
 firmware/**/components/**/build/
+firmware/**/__pycache__/
+firmware/**/*.pyc
+**/__pycache__/
+**/*.pyc
+
+# Worktree-local orchestrator artifacts (not tracked; refresh via sdd-init)
+.atl/
 
 # =====================================================================
 # Secrets / local-only
