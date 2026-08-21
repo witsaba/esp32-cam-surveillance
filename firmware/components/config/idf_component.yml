@@ -1,0 +1,5 @@
+## IDF Component Manager manifest for the `config` component.
+##
+## No managed-component dependencies — `config` only depends on the
+## built-in `nvs_flash` (declared via CMakeLists.txt REQUIRES).
+## FW-02 deliberately does not bump any external dep version here.

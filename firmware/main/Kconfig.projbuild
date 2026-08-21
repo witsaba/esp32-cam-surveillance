@@ -1,0 +1,52 @@
+menu "ESP32-CAM Surveillance Firmware"
+
+    config FIRMWARE_CAMERA_JPEG_QUALITY
+        int "JPEG quality (0=highest, 63=lowest, 18=balanced)"
+        range 0 63
+        default 18
+        help
+            OV2640 JPEG quality factor. Lower = higher quality + larger frame.
+            12 ≈ premium, 18 ≈ balanced (default), 25 ≈ compact for low bandwidth.
+
+    config FIRMWARE_CAMERA_FRAME_SIZE
+        int "Frame size enum (FRAMESIZE_QVGA=5, VGA=8, SVGA=9)"
+        range 0 13
+        default 5
+        help
+            See esp32-camera framesize_t. Low-energy default is QVGA (5).
+
+    config FIRMWARE_STREAM_FPS
+        int "Default stream framerate when backend sends stream.on"
+        range 1 30
+        default 5
+
+    config FIRMWARE_STREAM_FPS_MIN
+        int "Hard floor on stream fps"
+        range 1 10
+        default 1
+
+    config FIRMWARE_WS_RECONNECT_INITIAL_MS
+        int "Reconnect delay after the first failure (ms)"
+        range 500 30000
+        default 2000
+
+    config FIRMWARE_WS_RECONNECT_CAP_MS
+        int "Maximum reconnect delay after exponential growth (ms)"
+        range 5000 300000
+        default 30000
+
+    config FIRMWARE_SOFT_RECOVERY_FAILS
+        int "Consecutive reconnect failures before esp_restart()"
+        range 5 200
+        default 30
+
+    config FIRMWARE_SOFT_RECOVERY_WINDOW_MIN
+        int "Sliding window for counting soft-recovery failures (minutes)"
+        range 1 60
+        default 10
+
+    config FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT
+        bool "Power down the softAP once station mode joins a network"
+        default y
+
+endmenu

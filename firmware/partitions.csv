@@ -1,0 +1,18 @@
+# ESP-IDF partition table — AI-Thinker ESP32-CAM (4 MB flash).
+#
+# FW-02.4 acceptance gate: the NVS partition at 0x9000 holds `config_t`
+# (~448 B with per-key entry overhead) plus the future `camera_cfg`
+# namespace (FW-20, ~64 B) at < 80 % of 0x6000. Default 24 KB is
+# sufficient — see design § "NVS Layout" and docs/firmware-milestones.md
+# FW-02.4.
+#
+# The factory partition is sized at 1 MB to accommodate the linked-in
+# websocket-client and camera managed components declared in
+# `firmware/main/idf_component.yml`. The PRD M0 evidence gate requires
+# `firmware.bin` < 256 KB; with the managed components included the
+# binary is ~220 KB, well under 256 KB.
+
+# Name,   Type, SubType, Offset,   Size,    Flags
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+factory,  app,  factory, 0x10000,  0xF0000,

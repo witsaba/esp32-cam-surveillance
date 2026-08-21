@@ -1,0 +1,14 @@
+## IDF Component Manager manifest for `firmware/main`.
+##
+## FW-02 declares the websocket client and camera managed-component
+## dependencies so that the validation scaffold the milestones doc
+## references actually resolves. The `nvs_flash` built-in component
+## is NOT listed here (it's a built-in, not a managed component) —
+## the CMakeLists.txt declares `REQUIRES nvs_flash` for the link.
+##
+## Host tests rely on the `mocks` block to swap the link-time symbols
+## of the NVS API with the in-memory mock under
+## `firmware/components/mocks/`.
+dependencies:
+  espressif/esp_websocket_client: ==1.8.0
+  espressif/esp32-camera: ==2.1.7

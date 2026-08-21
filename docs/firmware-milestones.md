@@ -1,7 +1,7 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 1 of 23 milestones complete (FW-01 closed by merge commit `1ab5705`).
-> **First SDD to start**: FW-02 (`firmware-nvs-config-schema`).
+> **Status**: 2 of 23 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by merge commit on the `feat/fw-02-nvs-config-schema` branch — see amendment blockquote at the end of § FW-02).
+> **First SDD to start**: FW-02 (`firmware-nvs-config-schema`) — closed in this same push window.
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
 > **Date**: 2026-08-21.
@@ -392,8 +392,10 @@ SDD change: `firmware-nvs-config-schema` · Closes: R-01.
 
 #### FW-02.4 — NVS partition sized for `config_t` max blob `[mechanical]`
 
-- **Closing check:** the NVS partition declares a size sufficient for `config_t` plus the `camera_cfg` namespace allocated in FW-20, verified by `idf.py size-components` showing partition usage under 80 %.
+- **Closing check:** ~~the NVS partition declares a size sufficient for `config_t` plus the `camera_cfg` namespace allocated in FW-20, verified by `idf.py size-components` showing partition usage under 80 %~~ (superseded 2026-08-21 — see amendment blockquote below; `idf.py size-components` reports *app-binary* component sizes, not NVS partition usage). Static-math acceptance (code review of `firmware/partitions.csv`) confirms the 0x6000 (24 KB) NVS partition holds `config_t` (~512 B with per-key entry overhead — see design § "NVS Layout" for the entry-overhead math) plus the future `camera_cfg` namespace (~64 B allocated in FW-20) at well under 80 % of 24 KB, AND device-side runtime check: `nvs_get_stats(NULL, &stats)` is called from `firmware/main/main.c` immediately after `nvs_flash_init()` and emits an `ESP_LOGI` line containing `used_entries / free_entries / total_entries / namespace_count` with `used_bytes < 0x6000 * 0.8` observable on `idf.py monitor`.
 - **Depends on:** FW-02.1.
+
+> **Amendment 2026-08-21 (FW-02 merge).** The original closing-check wording named `idf.py size-components` as the verification tool. That command reports *app-binary* component sizes (DRAM, IRAM, flash code/data), not NVS partition usage — the wrong tool for the question. Replaced with the two-check contract above: a static-math check against `partitions.csv` plus a device-side `nvs_get_stats()` runtime smoke. The static-math check matches the reference humidity-sensor partition sizing and is conservative (~2 % used); the device-side smoke is observable via `idf.py monitor` after the boot orchestrator lands (FW-03.1). Closing evidence: `firmware.bin` = 0x38ba0 (227 KB), 76 % free in the 0xF0000 factory partition — well under the 256 KB M0 evidence gate. `idf.py test --target esp32` runs the host-side Unity suite green: 7 tests in production build (FW-02.1 fresh + round-trip, FW-02.2 stale + future + persists, FW-02.3 matching-schema, FW-02.3 bite-proof); 1 expected failure in the stub build (FW-02.3 bite-proof: stubs the version check → stale-schema test fails by name containing the literal `schema_version`, matching-schema test still passes).
 
 ### FW-03 — Boot orchestrator runs the FR-1 sequence
 
