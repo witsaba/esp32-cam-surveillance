@@ -50,7 +50,7 @@ fi
 source "$IDF_PATH/export.sh" >/dev/null 2>&1
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$PROJECT_DIR/firmware"
+cd "$PROJECT_DIR"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 

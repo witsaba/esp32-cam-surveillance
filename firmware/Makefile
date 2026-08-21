@@ -27,7 +27,7 @@ SHELL := /bin/bash
 PORT          ?= /dev/cu.usbserial-130
 IDF_PATH      ?= $(HOME)/.espressif/v5.5.3/esp-idf
 SMOKE_TIMEOUT ?= 8
-SMOKE_LOG     ?= $(CURDIR)/firmware/build/smoke.log
+SMOKE_LOG     ?= $(CURDIR)/build/smoke.log
 
 # Source the ESP-IDF env inside a fresh bash login shell for each recipe so
 # environment variables do not leak between targets and so contributors do
@@ -58,28 +58,28 @@ help:
 	@echo "  SMOKE_LOG=$(SMOKE_LOG)"
 
 build:
-	cd firmware && $(IDF) build
+	$(IDF) build
 
 test:
-	cd firmware && $(IDF) test --target esp32
+	$(IDF) test --target esp32
 
 test-stub:
-	cd firmware && bash -lc '$(IDF_ENV) && python tools/run_host_tests.py --stub'
+	bash -lc '$(IDF_ENV) && python tools/run_host_tests.py --stub'
 
 flash:
-	cd firmware && $(IDF) -p $(PORT) flash
+	$(IDF) -p $(PORT) flash
 
 monitor:
-	cd firmware && $(IDF) -p $(PORT) monitor
+	$(IDF) -p $(PORT) monitor
 
 smoke:
 	@mkdir -p $(dir $(SMOKE_LOG))
 	@./scripts/smoke.sh $(PORT) $(SMOKE_TIMEOUT) $(SMOKE_LOG)
 
 size-components:
-	cd firmware && $(IDF) size-components
+	$(IDF) size-components
 
 clean:
-	cd firmware && $(IDF) clean
+	$(IDF) clean
 
 all: clean build test smoke
