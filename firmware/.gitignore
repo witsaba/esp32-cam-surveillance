@@ -1,0 +1,12 @@
+# ESP-IDF local ignores — every entry here is also covered by the
+# repository root `.gitignore`, but a local file documents intent
+# inside the firmware/ directory and survives subtree splits.
+build/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/
+components/**/build/
+.cache/
+clangd/
+compile_commands.json
