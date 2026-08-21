@@ -14,29 +14,34 @@
  * (FW-05.3 S1 round-trip).
  *
  * provision_post_handler reads the body via mock_httpd_req_recv,
- * parses with cJSON, and applies **partial-update semantics**:
+ * parses with cJSON, and applies **strict validation + merge**:
  *
- *   - For each of the 4 known keys (wifi_ssid, wifi_password,
- *     name, description):
- *       - ABSENT from JSON body (cJSON_GetObjectItemCaseSensitive
- *         returns NULL) → preserve the corresponding cfg field
- *       - PRESENT as a string → overwrite the corresponding cfg
- *         field (including the empty-string case to explicitly
- *         clear a field)
+ *   FW-05.4 guard (req-softap-004):
+ *     - Non-JSON body → 400 err="json" (no save, no reboot)
+ *     - JSON missing any of the 4 required keys (wifi_ssid,
+ *       wifi_password, name, description) → 400 err=<key>
+ *     - JSON with over-cap string values → 400 err=<key>
  *
- *   - In addition, the FW-05.4 guard imposes:
- *       - Non-JSON body → 400 err="json" (no save, no reboot)
- *       - JSON missing any required key → 400 err=<key> (no save,
- *         no reboot)
- *       - JSON with over-cap string values → 400 err=<key>
- *
- *   The presence/absent distinction is what makes the handler
- *   partial-update: cJSON distinguishes absent (NULL) from present-
- *   and-empty ("") via cJSON_GetObjectItemCaseSensitive / cJSON_IsString.
+ *   FW-05.3 merge (req-softap-003): for each of the 4 keys, if
+ *   present + valid string → overwrite the corresponding cfg
+ *   field; if absent → preserve the corresponding cfg field. (The
+ *   strict guard above means "absent" never reaches the merge block
+ *   under production build; the partial-update helper is wired up
+ *   so a future relaxation of the guard can use it.)
  *
  * On a well-formed body (all 4 keys present, within caps) the
  * handler persists via config_save(), sends 200 {"ok":true}, delays
  * 100ms, then calls esp_restart() exactly once.
+ *
+ * Bite-proof stub gate (FW-05.4):
+ *   When the build defines -DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1
+ *   (set by run_host_tests.py Pass 4), the validation block is
+ *   macro-skipped — the handler proceeds straight to merge + save +
+ *   restart regardless of body shape. The Pass-4 runner compiles
+ *   only test_softap_guard.c with this flag; the rejection tests in
+ *   that file assert 400 (which now fails because the guard is
+ *   bypassed), and the failure messages contain the literal
+ *   "validation" so the runner can verify the bite-proof pattern.
  *
  * On host, every esp_* / httpd_* call is redirected to the mock
  * via the link headers (included before esp_http_server.h by the
@@ -47,11 +52,6 @@
  *   - esp_restart → mock_esp_restart (counter-only no-op)
  *   - httpd_req_recv → drains req->primed_recv_buffer
  *   - httpd_resp_set_type/send → records on req->captured_*
- *
- * The handler is the single place where the FW-05.4 strict
- * validation lives. The bite-proof stub gate
- * (`-DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1`) is added by the
- * TASK-4 commit (out of scope for this batch).
  */
 #include <string.h>
 
@@ -258,6 +258,15 @@ esp_err_t provision_post_handler_impl(httpd_req_t *req)
     }
 
     cJSON *root = cJSON_Parse(body);
+
+#ifndef SOFTAP_TEST_STUB_ACCEPT_ALL_BODIES
+    /* FW-05.4 guard: strict validation. Production + the green build
+     * of Pass 1 in run_host_tests.py enforce this block. The stub
+     * build (Pass 4, with -DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1)
+     * skips the entire block to verify the guard is load-bearing —
+     * under stub, the rejection tests in test_softap_guard.c FAIL
+     * with "validation" in the message because the handler no longer
+     * returns 400 for malformed bodies. */
     if (!root) {
         free(body);
         ESP_LOGW(TAG, "provision: parse failed");
@@ -269,10 +278,8 @@ esp_err_t provision_post_handler_impl(httpd_req_t *req)
         return send_400(req, "json");
     }
 
-    /* FW-05.4 guard: every required key MUST be present in the JSON.
-     * If absent, send 400 with err=<key> and return — the partial-
-     * update semantics below NEVER overwrite a field whose JSON key
-     * is missing, so we enforce "key must be present" up front. */
+    /* Every required key MUST be present in the JSON. If absent,
+     * send 400 with err=<key> and return — no NVS write, no reboot. */
     const char *err_key = NULL;
 
     /* PRD L130: the JSON key for password is `wifi_password`, but the
@@ -295,14 +302,20 @@ esp_err_t provision_post_handler_impl(httpd_req_t *req)
                               PROV_IDENTITY_DESC_MAX, &err_key)) {
         goto reject;
     }
+#endif /* SOFTAP_TEST_STUB_ACCEPT_ALL_BODIES */
 
-    /* All required keys present + length-valid — apply partial-update
-     * semantics. For each key:
-     *   - absent (NULL) → preserve the existing cfg field
-     *   - present as string → overwrite the cfg field (including ""
-     *     to explicitly clear a field)
-     * The cfg is loaded by boot_run() at boot, so "preserve" means
-     * "leave whatever was in NVS at boot time alone". */
+    /* Merge logic — runs in both production and stub builds.
+     *
+     *   FW-05.3 partial-update semantics: for each of the 4 keys,
+     *     - absent (NULL) → preserve the existing cfg field
+     *     - present as string → overwrite the cfg field (including
+     *       "" to explicitly clear a field)
+     *
+     *   Under the strict guard (production), all 4 keys are
+     *   guaranteed present so the "absent" branch never fires. Under
+     *   the stub build, missing keys may reach this block; the
+     *   softap_apply_provision_field helper handles NULL defensively.
+     */
     config_t merged = *in_cfg;
     softap_apply_provision_field(root, "wifi_ssid",
                                   merged.wifi.ssid,
@@ -324,7 +337,7 @@ esp_err_t provision_post_handler_impl(httpd_req_t *req)
     if (cs != CONFIG_OK) {
         ESP_LOGE(TAG, "provision: config_save failed (%d)", (int)cs);
         /* Persist failure is a 4xx — the client should retry. */
-        cJSON_Delete(root);
+        if (root) cJSON_Delete(root);
         free(body);
         return send_400(req, "save");
     }
@@ -335,7 +348,7 @@ esp_err_t provision_post_handler_impl(httpd_req_t *req)
 
     ESP_LOGI(TAG, "provision: restarting in 100ms");
 
-    cJSON_Delete(root);
+    if (root) cJSON_Delete(root);
     free(body);
 
     /* 100 ms LwIP-flush window per IDF community reports; the worker
@@ -348,9 +361,11 @@ esp_err_t provision_post_handler_impl(httpd_req_t *req)
      * counter. We return ESP_OK for the compiler. */
     return ESP_OK;
 
+#ifndef SOFTAP_TEST_STUB_ACCEPT_ALL_BODIES
 reject:
-    cJSON_Delete(root);
+    if (root) cJSON_Delete(root);
     free(body);
     ESP_LOGW(TAG, "provision: rejected (err=%s)", err_key ? err_key : "json");
     return send_400(req, err_key ? err_key : "json");
+#endif
 }

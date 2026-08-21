@@ -210,6 +210,13 @@ ALL_TESTS = [
     # FW-05.3 round-trip + partial update
     "whoami_round_trips_existing_name_and_description [fw-05.3]",
     "provision_partial_update_preserves_name_and_description [fw-05.3]",
+    # FW-05.4 strict validation guard
+    "provision_rejects_non_json_body [fw-05.4]",
+    "provision_rejects_missing_wifi_ssid [fw-05.4]",
+    "provision_rejects_missing_wifi_password [fw-05.4]",
+    "provision_rejects_missing_name [fw-05.4]",
+    "provision_rejects_missing_description [fw-05.4]",
+    "provision_accepts_well_formed_body [fw-05.4]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -249,6 +256,7 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # FW-05 softAP provisioning
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_whoami.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_provision.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_guard.c'),
 ]
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
@@ -257,6 +265,17 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
 # remains is exactly the determinism bite-proof, which MUST fail.
 FW03_4_GUARD_TEST_FILES = [
     os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_stability_guard.c'),
+]
+
+# Pass-4 stub build includes ONLY the FW-05.4 guard file. All 6
+# guard tests compile under -DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1:
+# the 5 rejection tests FAIL because the handler no longer enforces
+# validation (it bypasses the parse + required-key + length checks
+# and proceeds straight to merge + save + restart). The 1
+# well-formed test continues to pass. The runner asserts the
+# expected pattern: 5 fail with "validation" in the message + 1 pass.
+FW05_4_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_guard.c'),
 ]
 
 
@@ -363,8 +382,54 @@ def main():
     print(f"OK: FW-03.4 stub build → bite-proof test fails with "
           f"'determinism' message as expected.")
 
+    # ----- Pass 4: FW-05.4 strict-validation stub build -----
+    # Compile softap_handlers.c + test_softap_guard.c with
+    # -DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1 so the validation block
+    # in provision_post_handler_impl is macro-skipped. The 5
+    # rejection tests (non-JSON, missing-wifi_ssid, missing-password,
+    # missing-name, missing-description) MUST FAIL — they assert 400
+    # + no NVS write + no esp_restart, but the handler now proceeds
+    # straight to merge + save + restart (200). The 1 well-formed
+    # test continues to pass. Each failure message contains the
+    # literal "validation" so the runner can verify the bite-proof
+    # pattern.
     print()
-    print("=== FW-02 + FW-03 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
+    print("=== Pass 4: FW-05.4 stub build (SOFTAP_TEST_STUB_ACCEPT_ALL_BODIES, guard file) ===")
+    fw05_4_bin = _build('fw05_4_tests_stub',
+                        ['-DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1'],
+                        FW05_4_GUARD_TEST_FILES, workdir)
+    fw05_4_rc, fw05_4_out = _run_binary(fw05_4_bin)
+    if fw05_4_rc == 0:
+        sys.exit(f"FAIL: FW-05.4 stub build returned 0; expected bite-proof "
+                 f"to fail. The stub gate didn't bypass the validation "
+                 f"path, so the rejection tests still passed. Output:\n{fw05_4_out}")
+    if "FAIL" not in fw05_4_out:
+        sys.exit(f"FAIL: FW-05.4 stub build rc != 0 but no FAIL line in "
+                 f"output:\n{fw05_4_out}")
+    # The failure messages must mention "validation" per the
+    # milestones doc bite-proof requirement — this is how the verify
+    # phase proves the guard surfaces the violated invariant.
+    if "validation" not in fw05_4_out:
+        sys.exit(f"FAIL: FW-05.4 stub build failure message does not "
+                 f"contain the literal 'validation':\n{fw05_4_out}")
+    # Exactly 5 tests should fail (the 5 rejection tests); the
+    # well-formed green test must still pass.
+    fail_count = sum(1 for line in fw05_4_out.splitlines() if line.startswith("FAIL ["))
+    pass_count = sum(1 for line in fw05_4_out.splitlines() if line.startswith("PASS ["))
+    if fail_count != 5:
+        sys.exit(f"FAIL: FW-05.4 stub build should have exactly 5 "
+                 f"failures (non-JSON + 4 missing-key); got "
+                 f"{fail_count}. Output:\n{fw05_4_out}")
+    if pass_count != 1:
+        sys.exit(f"FAIL: FW-05.4 stub build should have exactly 1 "
+                 f"pass (well-formed green test); got {pass_count}. "
+                 f"Output:\n{fw05_4_out}")
+    print(f"OK: FW-05.4 stub build → 5 rejection tests fail with "
+          f"'validation' message as expected; 1 well-formed test "
+          f"still passes.")
+
+    print()
+    print("=== FW-02 + FW-03 + FW-05 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
     print(f"workdir kept at {workdir} for debugging; safe to rm -rf.")
 
 
