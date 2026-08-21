@@ -179,6 +179,11 @@ ALL_TESTS = [
     # FW-03.2 fail-loud + green path
     "boot fails loud at camera_init when forced non-OK [fw-03.2][bite-proof]",
     "boot green path returns ESP_OK with no error log [fw-03.2][green]",
+    # FW-03.3 provisioning decision + non-start-supervision
+    "boot_decide_provisioning returns true on empty SSID + button-not-pressed [fw-03.3]",
+    "boot_decide_provisioning returns false on non-empty SSID + button-not-pressed [fw-03.3]",
+    "boot_decide_provisioning returns true on non-empty SSID + button-pressed [fw-03.3]",
+    "boot_run in provisioning branch does not start supervision tasks [fw-03.3]",
 ]
 
 # The FW-02.3 bite-proof test that MUST fail when the version
@@ -202,6 +207,7 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'test_config', 'test_config_schema_persists.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_order.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_fail_loud.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_decide.c'),
 ]
 
 
