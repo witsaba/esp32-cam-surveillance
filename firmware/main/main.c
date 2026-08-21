@@ -20,10 +20,27 @@ void app_main(void)
 {
     esp_err_t ret = nvs_flash_init();
 
+    /* FW-02.4 device-side partition sizing smoke. After NVS init
+     * (and after writing every field of config_t in the FW-02.1
+     * round-trip flow), this prints the live entry counts. The
+     * companion static-math check is done in code review against
+     * `firmware/partitions.csv` (24 KB NVS holds config_t ~512 B
+     * + camera_cfg ~64 B at < 2 % usage). */
+    nvs_stats_t nvs_stats = {0};
+    esp_err_t stats_ret = nvs_get_stats(NULL, &nvs_stats);
+    ESP_LOGI(TAG,
+             "nvs_flash_init ret=%d stats_ret=%d used_entries=%lu "
+             "free_entries=%lu total_entries=%lu namespace_count=%lu",
+             ret, stats_ret,
+             (unsigned long)nvs_stats.used_entries,
+             (unsigned long)nvs_stats.free_entries,
+             (unsigned long)nvs_stats.total_entries,
+             (unsigned long)nvs_stats.namespace_count);
+
     config_t cfg;
     bool dirty = false;
     config_status_t st = config_load(&cfg, &dirty);
     ESP_LOGI(TAG,
-             "nvs_flash_init ret=%d config_load status=%d dirty=%d ssid='%s'",
-             ret, (int)st, dirty ? 1 : 0, cfg.wifi.ssid);
+             "config_load status=%d dirty=%d ssid='%s'",
+             (int)st, dirty ? 1 : 0, cfg.wifi.ssid);
 }
