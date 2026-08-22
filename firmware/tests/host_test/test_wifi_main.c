@@ -53,9 +53,13 @@ TEST_CASE(
     mock_esp_wifi_connect_return_set(ESP_OK);
 
     config_t cfg = {0};
-    /* A known, non-empty SSID — T-08-B exercises the empty-SSID
-     * path; this smoke just confirms the green path is wired. */
-    (void)cfg;
+    /* A known, non-empty SSID — T-08-D exercises the empty-SSID
+     * rejection path (FW-08.3 S2); this smoke just confirms the
+     * green path is wired. */
+    const char *ssid = "HomeNetwork";
+    for (size_t i = 0; ssid[i] != '\0' && i < sizeof(cfg.wifi.ssid) - 1; ++i) {
+        cfg.wifi.ssid[i] = ssid[i];
+    }
 
     esp_err_t rc = wifi_init(&cfg);
     TEST_ASSERT_EQUAL_INT(ESP_OK, rc);

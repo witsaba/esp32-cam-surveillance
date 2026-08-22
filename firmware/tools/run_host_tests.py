@@ -338,6 +338,9 @@ ALL_TESTS = [
     "test_fw08_1_backoff_failures_4 [fw-08.1][row-4]",
     "test_fw08_1_backoff_failures_5 [fw-08.1][row-5][cap-reached]",
     "test_fw08_1_backoff_failures_6 [fw-08.1][row-6][cap-holds]",
+    # FW-08.2 — AP-reboot recovery + counter reset (T-08-C).
+    "test_fw08_2_ap_reboot_reconnects_within_30s [fw-08.2][scenario-S1]",
+    "test_fw08_2_counter_resets_on_ip_up [fw-08.2][scenario-S2]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -429,6 +432,8 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # wifi_backoff_delay_ms(N) helper against the charter
     # L742-748 table.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_backoff.c'),
+    # FW-08.2 — AP-reboot recovery + counter reset (T-08-C).
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_recovery.c'),
 ]
 
 # FW-08 — Pass 7 + Pass 8 stub-build file lists. Populated by
