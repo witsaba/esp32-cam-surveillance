@@ -41,6 +41,7 @@
 
 #include "esp_log.h"
 #include "esp_mac.h"      /* esp_read_mac; not auto-included by esp_system.h in IDF v5.5.3 */
+#include "esp_heap_caps.h" /* heap_caps_malloc for off-stack page buffer */
 #include "esp_http_server.h"
 
 #ifdef UNITY_HOST_BUILD
@@ -55,7 +56,12 @@ static const char *TAG = "softap_home";
 /* Helper: format the 6-byte MAC as a 12-char lowercase hex string.
  * Reused by softap_handlers.c::whoami_get_handler_impl but duplicated
  * here to avoid exposing it across modules (keep FW-05 modules
- * self-contained). If a third caller appears, lift to softap_util.c. */
+ * self-contained). If a third caller appears, lift to softap_util.c.
+ *
+ * IMPORTANT: this helper runs on the httpd worker task whose stack
+ * is 4096 bytes (hardcoded in IDF v5.5.3 — not Kconfig-tunable).
+ * The handler must keep its stack footprint small. The MAC hex
+ * string (13 bytes) is the biggest stack local this helper needs. */
 static void mac_to_hex12(const uint8_t mac[6], char out[13])
 {
     static const char hex[] = "0123456789abcdef";
@@ -158,12 +164,15 @@ static void render_home_page(char *out, size_t cap,
 
 esp_err_t home_get_handler_impl(httpd_req_t *req)
 {
-    /* Pull MAC from the device (mock-friendly on host). On device,
-     * esp_read_mac reads from eFuse (~10us); on host, the mock
-     * returns whatever the test primed via mock_esp_read_mac_set_bytes.
-     * If the test forgot to prime the MAC, fall back to zeros so the
-     * handler still returns a valid page (the page is the primary
-     * deliverable; the MAC is cosmetic). */
+    /* The httpd worker task's stack is 4096 bytes (hardcoded in
+     * IDF v5.5.3, NOT Kconfig-tunable — engram #3642). The handler
+     * must keep its stack footprint minimal. We do this by:
+     *   - MAC hex (13 bytes) and small locals on the stack
+     *   - The rendered page buffer (~2.4 KB) on the HEAP, with
+     *     MALLOC_CAP_SPIRAM so we don't fragment internal RAM
+     *   - Freeing before return
+     * The previous char page[4096] on the stack overflowed
+     * immediately (engram #3641). */
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
 
@@ -174,16 +183,33 @@ esp_err_t home_get_handler_impl(httpd_req_t *req)
     const char *name = (cfg && cfg->identity.name[0]) ? cfg->identity.name : "";
     const char *desc = (cfg && cfg->identity.description[0]) ? cfg->identity.description : "";
 
-    /* 4 KB stack buffer covers the full template + max-length identity
-     * strings. The template alone is ~2.1 KB; with 32-char Name +
-     * 128-char Description pre-filled, the rendered page is ~2.4 KB.
-     * Buffer headroom avoids any snprintf truncation that would drop
-     * the closing </body></html> and the JS POST block. */
-    char page[4096];
-    render_home_page(page, sizeof(page), mac_hex, name, desc);
+    /* Heap buffer (PSRAM preferred, internal RAM fallback). 3 KB
+     * covers the full template (~2.1 KB) + max-length identity
+     * strings (32 + 128 chars) with headroom. */
+    const size_t page_cap = 3072;
+    char *page = (char *)heap_caps_malloc(page_cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!page) {
+        /* PSRAM unavailable (shouldn't happen on AI-Thinker but
+         * fall back to internal RAM if it does). */
+        page = (char *)malloc(page_cap);
+        if (!page) {
+            /* Out of memory — send a minimal 500 inline rather than
+             * calling httpd_resp_send_500 (which would need a stack
+             * buffer too). The string literal lives in flash so it
+             * doesn't consume RAM. */
+            ESP_LOGE(TAG, "home page: out of memory (%u bytes)", (unsigned)page_cap);
+            httpd_resp_set_type(req, "text/plain");
+            httpd_resp_send(req, "500 Internal Server Error", 25);
+            return ESP_FAIL;
+        }
+    }
+
+    render_home_page(page, page_cap, mac_hex, name, desc);
+    size_t page_len = strlen(page);
 
     httpd_resp_set_type(req, "text/html; charset=utf-8");
-    httpd_resp_send(req, page, (ssize_t)strlen(page));
-    ESP_LOGI(TAG, "served home page (%u bytes) for mac=%s", (unsigned)strlen(page), mac_hex);
-    return ESP_OK;
+    esp_err_t r = httpd_resp_send(req, page, (ssize_t)page_len);
+    ESP_LOGI(TAG, "served home page (%u bytes) for mac=%s", (unsigned)page_len, mac_hex);
+    free(page);
+    return r;
 }
