@@ -21,6 +21,7 @@ idf_component_register(
     SRCS "test_button_tap_ignore.c"
          "test_button_boot_longpress.c"
          "test_button_runtime_reset.c"
+         "test_button_guard.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES button mocks boot config unity
 )

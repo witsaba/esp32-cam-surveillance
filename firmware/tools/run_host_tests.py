@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """run_host_tests.py — host-side Unity test runner for FW-02, FW-03,
-FW-05, and FW-06.
+FW-05, FW-06, and FW-07.
 
 Builds and runs the in-tree host tests against the in-memory
-mock surface. Five compile passes:
+mock surface. Six compile passes:
 
   Pass 1 — production build (no stub flags): all FW-02/FW-03/FW-05
-           + FW-06 tests must pass (current count: 52).
+           + FW-06 + FW-07 tests must pass (current count: 68).
 
   Pass 2 — stub build (-DCONFIG_TEST_STUB_VERSION_CHECK): the FW-02.3
            bite-proof MUST FAIL with 'schema_version' in the message.
@@ -22,7 +22,12 @@ mock surface. Five compile passes:
            bite-proof MUST FAIL with 'timer_fire' in the message
            (process aborts via the guard tripwire).
 
-Exits 0 only when all 5 passes satisfy their expected outcomes.
+  Pass 6 — stub build (-DBUTTON_TEST_STUB_DISABLE_DEBOUNCE): the
+           FW-07.4 bite-proof MUST FAIL with 'debounce' in the
+           message (test fires via TEST_FAIL_MESSAGE on jitter-
+           induced phantom edges).
+
+Exits 0 only when all 6 passes satisfy their expected outcomes.
 Exits 1 on any unexpected pass/fail pattern (regression in either
 direction).
 
@@ -297,6 +302,16 @@ ALL_TESTS = [
     "runtime_9990ms_does_not_trigger_10010ms_does [fw-07.3][scenario-S12]",
     "runtime_press_does_not_touch_camera_cfg_namespace [fw-07.3][scenario-S13]",
     "factory_reset_calls_once_each [fw-07.3][scenario-S14]",
+    # FW-07.4 debounce filter guard (2 green-path scenarios).
+    # Phase E lands the DEBOUNCE_MS contact-bounce filter + the
+    # `#ifdef BUTTON_TEST_STUB_DISABLE_DEBOUNCE` gate around it.
+    # S15 covers the bite-proof jitter pattern (phantom edges
+    # collapsed into one transition); S16 covers the green path
+    # (clean 50 ms tap is NOT swallowed by the filter). The
+    # bite-proof stub build is Pass 6 below and uses
+    # -DBUTTON_TEST_STUB_DISABLE_DEBOUNCE=1.
+    "debounce_filters_jitter_phantom_press [fw-07.4]",
+    "debounce_does_not_swallow_clean_tap [fw-07.4]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -366,6 +381,14 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # cb body does NOT touch the `camera_cfg` NVS
     # namespace.
     os.path.join(PROJECT_DIR, 'tests', 'test_button', 'test_button_runtime_reset.c'),
+    # FW-07.4 debounce filter (2 green-path scenarios). Phase E
+    # lands the DEBOUNCE_MS contact-bounce filter + the
+    # `#ifdef BUTTON_TEST_STUB_DISABLE_DEBOUNCE` gate. The
+    # green-path tests compile under the production build
+    # (Pass 1 above); the bite-proof test compiles under the
+    # Pass 6 stub build below. The #ifdef inside the file
+    # selects which one is compiled into each build.
+    os.path.join(PROJECT_DIR, 'tests', 'test_button', 'test_button_guard.c'),
 ]
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
@@ -409,6 +432,30 @@ FW05_4_GUARD_TEST_FILES = [
 # LED_TEST_STUB_DISABLE_TIMER).
 FW06_4_GUARD_TEST_FILES = [
     os.path.join(PROJECT_DIR, 'tests', 'test_led', 'test_led_guard.c'),
+]
+
+# Pass-6 stub build includes ONLY the FW-07.4 guard file. The
+# build defines -DBUTTON_TEST_STUB_DISABLE_DEBOUNCE=1 so
+# button.c's `button_edge_is_bouncing()` returns false
+# unconditionally (every edge is accepted). The bite-proof
+# test drives the S15 jitter pattern (LOW at t=0, HIGH at t=5,
+# LOW at t=15, HIGH at t=50) which the production filter would
+# collapse into a single transition; with the filter
+# short-circuited the jitter propagates and the test's
+# TEST_FAIL_MESSAGE fires with a body containing the literal
+# "debounce". The runner expects:
+#   - rc != 0 (test failed via TEST_FAIL_MESSAGE)
+#   - literal "debounce" in stdout (from the test's
+#     "bite-proof stub build entered" marker AND from the
+#     TEST_FAIL_MESSAGE body)
+# Mirrors the FW-06.4 LED_TEST_STUB_DISABLE_TIMER pattern
+# exactly: the same compile flag is applied to BOTH the
+# production source (button.c) and the test file
+# (test_button_guard.c). The green-path tests in
+# test_button_guard.c are excluded from this build by the
+# `#ifndef BUTTON_TEST_STUB_DISABLE_DEBOUNCE` inside the file.
+FW07_4_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'test_button', 'test_button_guard.c'),
 ]
 
 
@@ -608,8 +655,55 @@ def main():
           f"'timer_fire' invariant as expected (process aborted "
           f"with rc={fw06_4_rc}).")
 
+    # ----- Pass 6: FW-07.4 debounce invariant stub build -----
+    # Compile test_button_guard.c (and button.c) with
+    # -DBUTTON_TEST_STUB_DISABLE_DEBOUNCE=1 so the
+    # `button_edge_is_bouncing()` body in button.c is
+    # short-circuited to return false (every edge passes).
+    # The bite-proof test drives the S15 jitter pattern
+    # (LOW at t=0, HIGH at t=5, LOW at t=15, HIGH at t=50);
+    # under stub the three jitter edges all pass and the
+    # test's TEST_FAIL_MESSAGE trips with a message
+    # containing the literal "debounce". The Pass-6 runner
+    # expects:
+    #   - rc != 0 (TEST_FAIL_MESSAGE exits non-zero)
+    #   - literal "debounce" present in stdout (from the
+    #     test's marker line AND from the TEST_FAIL_MESSAGE
+    #     body)
+    # The green-path tests (test_button_guard.c ::
+    # debounce_filters_jitter_phantom_press + ::
+    # debounce_does_not_swallow_clean_tap) are excluded from
+    # this build by the #ifndef BUTTON_TEST_STUB_DISABLE_DEBOUNCE
+    # inside the test file — only the bite-proof runs.
     print()
-    print("=== FW-02 + FW-03 + FW-05 + FW-06 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
+    print("=== Pass 6: FW-07.4 stub build (BUTTON_TEST_STUB_DISABLE_DEBOUNCE, guard file) ===")
+    fw07_4_bin = _build('fw07_4_tests_stub',
+                        ['-DBUTTON_TEST_STUB_DISABLE_DEBOUNCE=1'],
+                        FW07_4_GUARD_TEST_FILES, workdir)
+    fw07_4_rc, fw07_4_out = _run_binary(fw07_4_bin)
+    # Under stub, the S15 jitter produces phantom edges and
+    # the test's TEST_FAIL_MESSAGE fires. Pass 6 expects
+    # rc != 0 + literal "debounce" in stdout. Mirrors the
+    # behavior of Pass 5 (timer_fire).
+    if fw07_4_rc == 0:
+        sys.exit(f"FAIL: FW-07.4 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The stub gate "
+                 f"didn't bypass the debounce invariant. "
+                 f"Output:\n{fw07_4_out}")
+    if "debounce" not in fw07_4_out:
+        sys.exit(f"FAIL: FW-07.4 stub build output does not "
+                 f"contain the literal 'debounce':\n{fw07_4_out}")
+    # The guard test name should appear in the output so the
+    # runner can match it to the expected bite-proof.
+    if "guard_bite_proof_debounce_disabled" not in fw07_4_out:
+        sys.exit(f"FAIL: FW-07.4 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw07_4_out}")
+    print(f"OK: FW-07.4 stub build → guard tripped on "
+          f"'debounce' invariant as expected (test failed "
+          f"with rc={fw07_4_rc}).")
+
+    print()
+    print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
     print(f"workdir kept at {workdir} for debugging; safe to rm -rf.")
 
 

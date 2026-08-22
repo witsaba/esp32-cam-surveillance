@@ -1,8 +1,9 @@
 /* button.c — FW-07 boot-button driver (R-03 measurement half + R-24
- * runtime factory reset). Phase D implementation: FW-07.2
+ * runtime factory reset). Phase D + E implementation: FW-07.2
  * boot-time long-press detection (latch + BOOT_TIME window +
  * strap-grace transient absorption) + FW-07.3 runtime
- * long-press callback dispatch.
+ * long-press callback dispatch + FW-07.4 debounce filter
+ * (collapses contact-bounce jitter into one transition).
  *
  * The driver owns 3 responsibilities per PRD § FR-1 step 2 L237 +
  * § FR-7 L234-238:
@@ -30,6 +31,16 @@
  *      reset) is absorbed by a STRAP_GRACE_MS window after
  *      `button_init()`. Polls before the window expires return
  *      without state change.
+ *
+ *   4. **Debounce filter** (FW-07.4 — Phase E, this file) —
+ *      every GPIO edge (falling OR rising) that lands within
+ *      DEBOUNCE_MS (default 20 ms) of the previously-accepted
+ *      edge is treated as contact-bounce and ignored. The
+ *      filter body is gated by
+ *      `#ifdef BUTTON_TEST_STUB_DISABLE_DEBOUNCE` (mirrors the
+ *      FW-06 LED pattern around esp_timer_create) so Pass 6
+ *      of run_host_tests.py can exercise the bite-proof on
+ *      jitter-induced phantom presses.
  *
  * State machine (Phase C + D — FW-07.1 + FW-07.2 + FW-07.3):
  *
@@ -159,6 +170,58 @@ static inline int64_t button_runtime_cooldown_us(void)
     return (int64_t)CONFIG_FIRMWARE_BOOT_BUTTON_DEBOUNCE_MS * 4 * 1000LL;
 }
 
+/* FW-07.4 — debounce filter (per PRD § FR-7 L234 "the user-press
+ * signal is filtered through a DEBOUNCE_MS debounce so contact-
+ * bounce jitter does not generate spurious press events"). Returns
+ * true iff a new edge at `now_us` is INSIDE the debounce window
+ * from the previously-recorded edge (`last_edge_us`) and should be
+ * ignored as a contact-bounce artifact.
+ *
+ * The filter is implemented AS the gate's else-branch (mirrors the
+ * FW-06 `#ifdef LED_TEST_STUB_DISABLE_TIMER` pattern around
+ * `led.c::esp_timer_create()`):
+ *
+ *   - When BUTTON_TEST_STUB_DISABLE_DEBOUNCE is NOT defined
+ *     (production): the filter enforces the DEBOUNCE_MS window —
+ *     any edge whose time-since-last-edge is < DEBOUNCE_MS is
+ *     considered contact-bounce and ignored.
+ *   - When BUTTON_TEST_STUB_DISABLE_DEBOUNCE IS defined (test
+ *     bite-proof): the filter is short-circuited to "never
+ *     bouncing" so every edge is accepted. The Pass-6 test
+ *     (firmware/tools/run_host_tests.py) exercises a jitter
+ *     pattern that the production filter would collapse into
+ *     a single transition; with the filter disabled the
+ *     jitter is propagated and the bite-proof trips with
+ *     "debounce" in the output.
+ *
+ * The function is static-inline so the compiler can constant-fold
+ * it under the stub flag (the (void)last_edge_us + (void)now_us
+ * cast suppresses the unused-parameter warning). */
+#ifdef BUTTON_TEST_STUB_DISABLE_DEBOUNCE
+/* Stub violation: debounce disabled — all edges pass. */
+static inline bool button_edge_is_bouncing(int64_t last_edge_us,
+                                            int64_t now_us)
+{
+    (void)last_edge_us;
+    (void)now_us;
+    return false;
+}
+#else
+static inline bool button_edge_is_bouncing(int64_t last_edge_us,
+                                            int64_t now_us)
+{
+    /* Sentinel INT64_MIN means "no previous edge" — the very
+     * first edge at button_init() time is unconditionally
+     * accepted because `now_us - INT64_MIN` is a huge positive
+     * number that dwarfs DEBOUNCE_MS. Mirrors the
+     * `g_phase = BUTTON_PHASE_COUNT` sentinel idiom used for
+     * "uninitialized phase". */
+    if (last_edge_us == INT64_MIN) return false;
+    return (now_us - last_edge_us) <
+           (int64_t)(CONFIG_FIRMWARE_BOOT_BUTTON_DEBOUNCE_MS * 1000);
+}
+#endif
+
 /* Phase / state storage — single-byte/8-byte volatile, atomic
  * write on Xtensa LX6. Matches FW-03 lock-free idiom in boot.c. */
 static volatile button_phase_t g_phase = BUTTON_PHASE_COUNT;  /* sentinel: uninit */
@@ -167,7 +230,8 @@ static volatile button_state_t g_state = BUTTON_STATE_IDLE;
 /* Press-window timestamps. g_press_start_us is set on the
  * falling edge (IDLE → PRESSED); g_press_end_us is the
  * now_us of the most recent rising edge (PRESSED → IDLE).
- * g_last_edge_us feeds the debounce filter (Phase E).
+ * See g_last_edge_us declaration below for the debounce
+ * filter (Phase E) anchor.
  *
  * g_strap_release_us is the absolute now_us threshold below
  * which polls return without state change. Set once in
@@ -185,7 +249,14 @@ static volatile button_state_t g_state = BUTTON_STATE_IDLE;
 static volatile int64_t g_strap_release_us = 0;
 static volatile int64_t g_boot_time_end_us = 0;
 static volatile int64_t g_press_start_us    = 0;
-static volatile int64_t g_last_edge_us      = 0;
+/* FW-07.4 — `g_last_edge_us` feeds the debounce filter. The
+ * sentinel value INT64_MIN means "no previous accepted edge"
+ * — the very first edge after button_init() is unconditionally
+ * accepted (the filter would otherwise swallow it as a 0-ms
+ * intra-DEBOUNCE_MS "edge"). Updated only on ACCEPTED edges
+ * (the filter compares each new edge against the last
+ * ACCEPTED edge, ignoring bouncing edges' timestamps). */
+static volatile int64_t g_last_edge_us      = INT64_MIN;
 static volatile bool    g_press_in_progress = false;
 
 /* FW-07.3 — runtime-press-window start timestamp. The runtime
@@ -295,7 +366,10 @@ esp_err_t button_init(void)
     int64_t now_us = esp_timer_get_time();
     g_strap_release_us = now_us + button_strap_grace_us();
     g_boot_time_end_us = g_strap_release_us + button_boot_time_window_us();
-    g_last_edge_us    = now_us;
+    /* g_last_edge_us = INT64_MIN sentinel: "no previous
+     * accepted edge" — the very first edge after button_init
+     * is unconditionally accepted by the debounce filter. */
+    g_last_edge_us    = INT64_MIN;
 
     /* Create the 10 ms periodic esp_timer handle. The callback
      * is `button_esp_timer_cb`; it forwards to button_poll_once
@@ -359,7 +433,7 @@ esp_err_t button_deinit(void)
     g_phase          = BUTTON_PHASE_COUNT;  /* sentinel: uninit */
     g_state          = BUTTON_STATE_IDLE;
     g_press_start_us = 0;
-    g_last_edge_us   = 0;
+    g_last_edge_us   = INT64_MIN;
     g_strap_release_us = 0;
     g_boot_time_end_us = 0;
     g_press_in_progress = false;
@@ -421,6 +495,26 @@ esp_err_t button_deinit(void)
  *     (the cb pointer is NULL — see g_runtime_longpress_cb).
  *     No log line, no crash. This is the "silent ignore"
  *     contract.
+ *
+ * Phase E (FW-07.4) additions (debounce filter):
+ *   - Every new edge (falling OR rising, in any phase) is
+ *     checked against `g_last_edge_us`. If the time delta
+ *     is < DEBOUNCE_MS (default 20 ms), the edge is treated
+ *     as contact-bounce and ignored:
+ *       - Falling edge ignored → state stays IDLE, no press
+ *         window opens.
+ *       - Rising edge ignored → state stays PRESSED, the
+ *         press window stays open.
+ *   - When an edge is ignored, g_last_edge_us is NOT updated
+ *     (subsequent edges compare against the LAST ACCEPTED
+ *     edge until jitter settles).
+ *   - The filter body is gated by
+ *     `#ifdef BUTTON_TEST_STUB_DISABLE_DEBOUNCE` (mirrors the
+ *     FW-06 `#ifdef LED_TEST_STUB_DISABLE_TIMER` pattern).
+ *     Under stub, the filter returns false (every edge
+ *     passes) — used by Pass 6 of run_host_tests.py to
+ *     exercise the bite-proof on jitter-induced phantom
+ *     presses.
  */
 void button_poll_once(int64_t now_us)
 {
@@ -430,7 +524,14 @@ void button_poll_once(int64_t now_us)
      * a falling edge that started before the window ended.
      * The state-machine transitions are deferred until the
      * window expires; once it does, transition to BOOT_TIME
-     * and process this same poll as the first BOOT_TIME poll. */
+     * and process this same poll as the first BOOT_TIME poll.
+     *
+     * FW-07.4 — debounce filter also applies inside
+     * STRAP_GRACE. Without this, a jitter pattern that begins
+     * inside the strap-grace window could record a stale
+     * `g_press_start_us` and then a fresh BOOT_TIME poll would
+     * see a state that doesn't match the GPIO. The filter
+     * collapses jitter the same way regardless of phase. */
     if (g_phase == BUTTON_PHASE_STRAP_GRACE) {
         int sg_level = gpio_get_level(CONFIG_FIRMWARE_BOOT_BUTTON_GPIO);
         bool sg_pressed_now = (sg_level == 0);
@@ -442,17 +543,27 @@ void button_poll_once(int64_t now_us)
          * measured from when the user actually pressed it.
          * Rising edges clear the in-progress flag so a
          * subsequent falling edge inside BOOT_TIME can
-         * start a fresh press measurement. */
+         * start a fresh press measurement.
+         *
+         * FW-07.4 — debounce: a new edge that lands within
+         * DEBOUNCE_MS of the previously-accepted edge is
+         * contact-bounce and must be ignored. */
         if (sg_pressed_now && !g_press_in_progress) {
-            g_press_start_us = now_us;
-            g_press_in_progress = true;
+            if (!button_edge_is_bouncing(g_last_edge_us, now_us)) {
+                g_press_start_us = now_us;
+                g_press_in_progress = true;
+                g_last_edge_us    = now_us;
+            }
         } else if (!sg_pressed_now && g_press_in_progress) {
-            /* Rising edge during strap grace: the user
-             * released before the window ended. Clear the
-             * in-progress flag so a later falling edge in
-             * BOOT_TIME starts fresh. */
-            g_press_in_progress = false;
-            g_press_start_us = 0;
+            if (!button_edge_is_bouncing(g_last_edge_us, now_us)) {
+                /* Rising edge during strap grace: the user
+                 * released before the window ended. Clear
+                 * the in-progress flag so a later falling
+                 * edge in BOOT_TIME starts fresh. */
+                g_press_in_progress = false;
+                g_press_start_us    = 0;
+                g_last_edge_us      = now_us;
+            }
         }
         if (now_us < g_strap_release_us) return;
         g_phase = BUTTON_PHASE_BOOT_TIME;
@@ -507,7 +618,18 @@ void button_poll_once(int64_t now_us)
              * crossing fires a fresh cb (Phase D). If we
              * are in RUNTIME phase at the falling edge,
              * seed g_runtime_press_start_us = now_us so
-             * the runtime duration counter starts fresh. */
+             * the runtime duration counter starts fresh.
+             *
+             * FW-07.4 — debounce filter: a falling edge
+             * that lands within DEBOUNCE_MS of the
+             * previously-accepted edge is contact-bounce
+             * and is ignored. The press window does NOT
+             * open and g_last_edge_us is NOT updated —
+             * subsequent edges compare against the last
+             * ACCEPTED edge until jitter settles. */
+            if (button_edge_is_bouncing(g_last_edge_us, now_us)) {
+                break;
+            }
             if (!g_press_in_progress) {
                 g_press_start_us = now_us;
                 g_press_in_progress = true;
@@ -577,7 +699,17 @@ void button_poll_once(int64_t now_us)
              *     for the runtime cb dispatch (Phase D
              *     correction: count the duration only while
              *     the state machine was in RUNTIME — see
-             *     g_runtime_press_start_us rationale). */
+             *     g_runtime_press_start_us rationale).
+             *
+             * FW-07.4 — debounce filter: a rising edge
+             * that lands within DEBOUNCE_MS of the
+             * previously-accepted edge is contact-bounce
+             * and is ignored. The state stays PRESSED
+             * (the press window does NOT close) and
+             * g_last_edge_us is NOT updated. */
+            if (button_edge_is_bouncing(g_last_edge_us, now_us)) {
+                break;
+            }
             int64_t total_duration_us = now_us - g_press_start_us;
             int64_t runtime_duration_us = now_us - g_runtime_press_start_us;
             if (total_duration_us > button_tap_max_us()) {
