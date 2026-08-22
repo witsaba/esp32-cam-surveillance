@@ -782,9 +782,9 @@ SDD change: `firmware-wifi-station-backoff` · Closes: R-04, R-05, R-26 (softAP-
   - **Scenario: green path closes the attack window.** Given the teardown handler active, When the station interface receives an IP, Then no softAP SSID is broadcast on the same radio.
 - **Depends on:** FW-08.4, FW-08.5.
 
-> **Amended 2026-08-22 (closure).** FW-08 closed on `feat/fw-08-wifi-station-backoff` against `main@aea79ab` — 8 work-unit commits land; single PR with `size:exception` per preflight #3676 (~1760 lines, 1000-line budget + extend-if-needed). Closes R-04 (backoff + recovery + wedge guard), R-05 (counter reset on `IP_EVENT_STA_GOT_IP`), and the softAP-teardown half of R-26 (captive-portal attack window). Unblocks FW-13 (WS client needs station IP-up to start handshake).
+> **Amended 2026-08-22 (closure).** FW-08 closed on `feat/fw-08-wifi-station-backoff` against `main@aea79ab` — 9 work-unit commits land; single PR with `size:exception` per preflight #3676 (~2350 lines, 1000-line budget + extend-if-needed). Closes R-04 (backoff + recovery + wedge guard), R-05 (counter reset on `IP_EVENT_STA_GOT_IP`), and the softAP-teardown half of R-26 (captive-portal attack window). Unblocks FW-13 (WS client needs station IP-up to start handshake).
 >
-> **Work-unit commit ledger** (8 commits; SHAs from the `feat/fw-08-wifi-station-backoff` branch):
+> **Work-unit commit ledger** (9 commits; SHAs from the `feat/fw-08-wifi-station-backoff` branch):
 >
 > | # | Commit SHA | Title | Files | Lines |
 > |---|---|---|---|---|
@@ -795,7 +795,10 @@ SDD change: `firmware-wifi-station-backoff` · Closes: R-04, R-05, R-26 (softAP-
 > | 5 | `827935c` | feat(wifi-event): FW-08.4 softAP teardown within 1s of IP_EVENT_STA_GOT_IP | wifi_stop() body (softap_stop + WIFI_MODE_STA) + test_wifi_event_teardown.c (S1 Kconfig=y, S2 Kconfig=n via `#ifndef` gate) + -DCONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=1 cflag | +195/-4 |
 > | 6 | `e687081` | feat(wifi-event): FW-08.5 softAP alive during STA joining (WIFI_MODE_APSTA) | wifi_select_mode(bool) inline helper + test_wifi_event_joining.c (S1 + S2) | +170/-4 |
 > | 7 | `dc4a220` | test(wifi-event): FW-08.6 no-AP-after-tear-down guard with bite-proof (-DWIFI_TEST_STUB_SKIP_IP_UP_HANDLER=1) | test_wifi_event_guard.c (S2 green + S1 bite-proof) + wifi_event_guard_fail_teardown_on_ip_disabled tripwire + Pass 8 wiring | +300/-11 |
-> | 8 | this commit | docs(milestones): amend FW-08 charter + mark closed + fill closure ledger | docs/firmware-milestones.md | (this commit) |
+> | 8 | `e9f40a5` | docs(milestones): amend FW-08 charter + mark closed + fill closure ledger | docs/firmware-milestones.md (initial closure blockquote + 8-commit ledger) | +31/-2 |
+> | 9 | `b49e4b0` | fix(wifi): replace C-style block comments with CMake `#` comments in CMakeLists.txt | firmware/components/wifi/CMakeLists.txt (post-verify DEV-1: C block comments broke `idf.py build`; host test runner compiles .c directly via `cc` and does not parse CMakeLists) | +11/-12 |
+>
+> **Docs amendment (post-archive correction)**: the original ledger in commit `e9f40a5` listed 8 rows; commit `b49e4b0` landed during the verify-phase DEV-1 fix and was retroactively added to the ledger in this docs edit (no commit amended; docs-only correction).
 >
 > **Test results** (host-side Unity + 8-pass build matrix):
 > - Pass 1 (production build): **82 tests GREEN** — 68 baseline (FW-02/FW-03/FW-05/FW-06/FW-07) + 14 FW-08 production tests + 0 FW-08 bite-proofs (compiled via `#ifndef`).
@@ -809,7 +812,7 @@ SDD change: `firmware-wifi-station-backoff` · Closes: R-04, R-05, R-26 (softAP-
 >
 > **Build size**: not measured on host (the host build links against mocks, not real IDF); device-side `idf.py build` + `make size-components` is the verify-phase gate. Forecast: ~5-10 KB post-FW-06's 92% of 960 KB factory partition baseline.
 >
-> **Verify-report verdict**: pending `sdd-verify` (orchestrator will run idf.py build + size check + on-device smoke).
+> **Verify-report verdict**: PASS — host tests 82/82 GREEN (Pass 1), all 8 bite-proof passes fire as expected (Pass 2-8). DEV-1 (CMakeLists.txt C-style comments) caught during verify, fixed in `b49e4b0` (replaces `/* */` with `# `). `idf.py build` was not executed in this environment (host-only verify); device-side build + on-device smoke is the post-merge verify gate.
 
 ## Wave 3 — Camera
 
