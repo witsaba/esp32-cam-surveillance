@@ -331,6 +331,13 @@ ALL_TESTS = [
     # FW-08 — wifi component smoke (T-08-A only). Full 18-test
     # surface (16 prod + 2 bite-proofs) lands across T-08-B..T-08-G.
     "test_wifi_init_succeeds [fw-08][smoke][build-infra]",
+    # FW-08.1 — 6-row backoff schedule (T-08-B).
+    "test_fw08_1_backoff_failures_1 [fw-08.1][row-1]",
+    "test_fw08_1_backoff_failures_2 [fw-08.1][row-2]",
+    "test_fw08_1_backoff_failures_3 [fw-08.1][row-3]",
+    "test_fw08_1_backoff_failures_4 [fw-08.1][row-4]",
+    "test_fw08_1_backoff_failures_5 [fw-08.1][row-5][cap-reached]",
+    "test_fw08_1_backoff_failures_6 [fw-08.1][row-6][cap-holds]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -418,6 +425,10 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # the LED_TEST_STUB_DISABLE_TIMER / BUTTON_TEST_STUB_DISABLE
     # _DEBOUNCE pattern).
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_main.c'),
+    # FW-08.1 — 6-row backoff schedule (T-08-B). Tests the pure
+    # wifi_backoff_delay_ms(N) helper against the charter
+    # L742-748 table.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_backoff.c'),
 ]
 
 # FW-08 — Pass 7 + Pass 8 stub-build file lists. Populated by

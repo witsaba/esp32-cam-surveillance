@@ -41,10 +41,23 @@
 #include "esp_timer.h"
 #endif
 
-/* 6-row backoff schedule — charter L742-748. Index 0 is a
- * sentinel (no-failure-yet, unused on the retry path). Indices 1..5
- * are the per-failure delay; failures >= 5 clamp to index 5. */
-static const uint32_t s_backoff_ms[6] = { 0, 2000, 4000, 8000, 16000, 30000 };
+/* 6-row backoff schedule — charter L742-748 + PRD § FR-4 L186-192
+ * (WS analog). Index 0 is a sentinel (no-failure-yet, unused on
+ * the retry path). Indices 1..5 are the per-failure delay;
+ * failures >= 5 clamp to index 5 (the 30 s cap).
+ *
+ * The named constant `WIFI_BACKOFF_TABLE_LEN` makes the clamp
+ * math readable; the table itself is intentionally `const` so the
+ * compiler embeds it in .rodata. */
+#define WIFI_BACKOFF_TABLE_LEN 6
+static const uint32_t s_backoff_ms[WIFI_BACKOFF_TABLE_LEN] = {
+    /* index 0 (sentinel) */ 0,
+    /* failure 1 */          2000,
+    /* failure 2 */          4000,
+    /* failure 3 */          8000,
+    /* failure 4 */          16000,
+    /* failure 5 (cap) */    30000,
+};
 
 /* Backoff handle — created once in wifi_init(), re-armed on each
  * WIFI_EVENT_STA_DISCONNECTED via esp_timer_start_once. Owned by
@@ -53,11 +66,12 @@ static esp_timer_handle_t s_backoff_handle = NULL;
 
 uint32_t wifi_backoff_delay_ms(uint32_t consecutive_failures)
 {
-    /* Clamp failures to the table's last index (cap). The test
-     * contract asserts this directly for failures 1..6. */
+    /* Clamp failures to the table's last index (the 30 s cap).
+     * The test contract asserts this directly for failures 1..6
+     * (FW-08.1 charter L742-748). */
     uint32_t idx = consecutive_failures;
-    if (idx >= sizeof(s_backoff_ms) / sizeof(s_backoff_ms[0])) {
-        idx = (sizeof(s_backoff_ms) / sizeof(s_backoff_ms[0])) - 1;
+    if (idx >= WIFI_BACKOFF_TABLE_LEN) {
+        idx = WIFI_BACKOFF_TABLE_LEN - 1;
     }
     return s_backoff_ms[idx];
 }
