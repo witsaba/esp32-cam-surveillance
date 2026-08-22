@@ -1,6 +1,6 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 6 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #X, merge commit `<sha>` — see amendment blockquote at the end of § FW-06).
+> **Status**: 6 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8 [DRAFT awaiting user merge], tip commit `486eb7a` — see amendment blockquote at the end of § FW-06).
 > **Next SDD to start**: FW-07 (boot button).
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
@@ -595,15 +595,16 @@ SDD change: `firmware-status-led` · Closes: R-23.
   - **Scenario: green path keeps the LED moving.** Given the LED timer running, When the firmware transitions between states, Then the LED pattern updates within one period of the previous pattern.
 - **Depends on:** FW-06.3.
 
-> **Amended 2026-08-22 (FW-06 closure evidence).** PR #X merged (merge commit `<sha>`) on the `feat/fw-06-status-led` branch off `main@c4df13d`. 4 work-unit commits, each independently green via `python3 firmware/tools/run_host_tests.py` (single PR; `size:exception` granted because the 4-commit shape straddled the 1000-line preflight budget but each commit was independently reviewable). Production build: 52/52 host Unity tests pass (43 prior FW-02/03/05 + 9 new FW-06.1/06.2/06.3/06.4-green). Bite-proofs: Pass 2 (schema_version), Pass 3 (determinism), Pass 4 (validation), and Pass 5 (timer_fire) all fire as expected under their stub builds.
+> **Amended 2026-08-22 (FW-06 closure evidence).** PR [#8](https://github.com/witsaba/esp32-cam-surveillance/pull/8) [DRAFT, awaiting user merge] on the `feat/fw-06-status-led` branch off `main@c4df13d`. 7 work-unit commits (no chained PR), each independently green via `python3 firmware/tools/run_host_tests.py` (single PR; `size:exception` granted because the 7-commit shape straddled the 1000-line preflight budget but each commit was independently reviewable). Production build: 52/52 host Unity tests pass (43 prior FW-02/03/05 + 9 new FW-06.1/06.2/06.3/06.4-green). Bite-proofs: Pass 2 (schema_version), Pass 3 (determinism), Pass 4 (validation), and Pass 5 (timer_fire) all fire as expected under their stub builds. `firmware.bin` = 0xd7730 (882,480 bytes; 92% of 960 KB factory partition; 10% free).
 >
-> **Work-unit commits** (each independently revertable; no chained PR):
-> - `feat(led): add LED component skeleton + mock_gpio + mock_esp_timer + 8 Kconfig symbols` — Phase 1 build infra (12 new files + 5 modified).
-> - `feat(led): FW-06.1 boot + connecting states (BOOTING/WIFI_CONNECTING/WS_CONNECTING)` — real `led.c` impl replaces the Phase-1 stub; 3 host tests.
-> - `feat(led): FW-06.2 connected states (CONNECTED_IDLE heartbeat + STREAMING solid)` — test coverage for the connected-state branches of `led_state_cfg`; 2 host tests.
-> - `feat(led): FW-06.3 backoff + soft-recovery 5Hz×3s (BACKOFF blink + oneshot + recovery-cb)` — test coverage for the backoff + soft-recovery branches; 3 host tests (incl. `mock_esp_timer_fire_callback` test entry).
-> - `test(led): FW-06.4 timer-fire guard with bite-proof (-DLED_TEST_STUB_DISABLE_TIMER=1)` — green-path test + stub-build bite-proof; Pass 5 verifies the literal `timer_fire` in the guard abort message.
-> - `docs(milestones): amend FW-06 charter + mark FW-06 closed` — bumps status to 6/19, amends charter L558 to clarify GPIO 0 (button) vs GPIO 4 (LED).
+> **Work-unit commits** (each independently revertable; no chained PR; tip commit `486eb7a`):
+> - `397f1b4` feat(led): add LED component skeleton + mock_gpio + mock_esp_timer + 8 Kconfig symbols — Phase 1 build infra (17 new files + 4 modified).
+> - `57ff2df` feat(led): FW-06.1 boot + connecting states (BOOTING/WIFI_CONNECTING/WS_CONNECTING) — real `led.c` impl replaces the Phase-1 stub; 3 host tests.
+> - `a198e5a` feat(led): FW-06.2 connected states (CONNECTED_IDLE heartbeat + STREAMING solid) — test coverage for the connected-state branches of `led_state_cfg`; 2 host tests.
+> - `2e0ac8e` feat(led): FW-06.3 backoff + soft-recovery 5Hz×3s (BACKOFF blink + oneshot + recovery-cb) — test coverage for the backoff + soft-recovery branches; 3 host tests (incl. `mock_esp_timer_fire_callback` test entry).
+> - `4fe3b3e` test(led): FW-06.4 timer-fire guard with bite-proof (-DLED_TEST_STUB_DISABLE_TIMER=1) — green-path test + stub-build bite-proof; Pass 5 verifies the literal `timer_fire` in the guard abort message.
+> - `048a3cf` docs(milestones): amend FW-06 charter + mark FW-06 closed — bumps status to 6/19, amends charter L558 to clarify GPIO 0 (button) vs GPIO 4 (LED).
+> - `486eb7a` fix(led): drop empty 'dependencies:' key (idf_component.yml validator rejects empty dict) — required for `idf.py build` to succeed.
 >
 > **Deviations from design**: 0 design deviations. 1 implementation nuance (carried forward, not a deviation): `led_init()` calls `gpio_set_level` once for the initial OFF state, so the test fixtures' `gpio_set_level_call_count` assertions were relaxed from `==1` to `>=1` where they assumed only the state-entry would write — documented inline in the test files. 1 bite-proof nuance: the guard's host-side tripwire uses `printf+abort()` (no Unity runtime linked into production `led.c`); on device, the same `#ifdef LED_TEST_STUB_DISABLE_TIMER` gate would trip a hard abort with the same literal in the diagnostic. The gate is host-only; device builds with the flag set are a configuration error and trip immediately on the first blink-state transition.
 >
