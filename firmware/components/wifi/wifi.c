@@ -110,13 +110,20 @@ esp_err_t wifi_event_subscribe(wifi_event_id_t id,
                                 wifi_event_cb_t cb,
                                 void *arg)
 {
-    /* Route through the IDF v5.5.3 idiom — instance-based
-     * registration — and the mock capture table on host. The
+    /* Route through the IDF v5.5.3 default-event-loop API. The
      * wifi_event_id_t enum is local to the wifi component
      * (WIFI_EVT_* = 0/1/2); the IDF event_id values are
      * WIFI_EVENT_STA_DISCONNECTED = 5 and IP_EVENT_STA_GOT_IP = 0
      * (mirrored in mock_esp_event_link.h). We map here so the
-     * handlers fire on the right (base, id) tuple. */
+     * handlers fire on the right (base, id) tuple.
+     *
+     * We use `esp_event_handler_instance_register` (5-arg, default
+     * loop) NOT `_with` (6-arg, explicit loop). The `_with` form
+     * asserts the event_loop != NULL — it is meant for custom loops.
+     * The default loop is created by `esp_event_loop_create_default`
+     * in wifi_init() step 3; IDF's `_register` looks it up
+     * internally and returns ESP_ERR_INVALID_STATE if it was not
+     * yet created (caught on device flash, engram #3694). */
     esp_event_base_t base = NULL;
     int32_t event_id = 0;
     switch (id) {
@@ -136,19 +143,16 @@ esp_err_t wifi_event_subscribe(wifi_event_id_t id,
             return ESP_ERR_INVALID_ARG;
     }
 #ifdef UNITY_HOST_BUILD
-    /* Host: mock capture. The mock signature drops the leading
-     * `esp_event_loop_handle_t event_loop` parameter (host tests
-     * use the default event loop; see mock_esp_event_link.h). */
-    return mock_esp_event_handler_instance_register_with(
+    /* Host: mock capture. The mock has the same 5-arg shape as the
+     * real IDF `_register` (no event_loop argument — uses default). */
+    return mock_esp_event_handler_instance_register(
         base, event_id,
         (esp_event_handler_t)cb,
         arg,
         NULL /* instance */);
 #else
-    /* Device: real IDF signature is 6-arg (event_loop, base, id,
-     * handler, arg, instance). Pass NULL for the default loop. */
-    return esp_event_handler_instance_register_with(
-        NULL /* event_loop: default */,
+    /* Device: real IDF 5-arg default-loop registration. */
+    return esp_event_handler_instance_register(
         base, event_id,
         (esp_event_handler_t)cb,
         arg,

@@ -23,10 +23,10 @@ typedef struct {
 static mock_esp_event_capture_t g_captures[MOCK_ESP_EVENT_MAX_CAPTURES];
 
 static esp_err_t g_create_return                = ESP_OK;
-static esp_err_t g_register_with_return         = ESP_OK;
+static esp_err_t g_register_return               = ESP_OK;
 
 static int g_create_count                       = 0;
-static int g_register_with_count                = 0;
+static int g_register_count                     = 0;
 static int g_fire_handler_count                 = 0;
 
 void mock_esp_event_loop_create_default_return_set(esp_err_t r)
@@ -34,9 +34,9 @@ void mock_esp_event_loop_create_default_return_set(esp_err_t r)
     g_create_return = r;
 }
 
-void mock_esp_event_handler_instance_register_with_return_set(esp_err_t r)
+void mock_esp_event_handler_instance_register_return_set(esp_err_t r)
 {
-    g_register_with_return = r;
+    g_register_return = r;
 }
 
 int mock_esp_event_loop_create_default_call_count(void)
@@ -44,9 +44,9 @@ int mock_esp_event_loop_create_default_call_count(void)
     return g_create_count;
 }
 
-int mock_esp_event_handler_instance_register_with_call_count(void)
+int mock_esp_event_handler_instance_register_call_count(void)
 {
-    return g_register_with_count;
+    return g_register_count;
 }
 
 int mock_esp_event_fire_handler_call_count(void)
@@ -58,9 +58,9 @@ void mock_esp_event_reset(void)
 {
     memset(g_captures, 0, sizeof(g_captures));
     g_create_return        = ESP_OK;
-    g_register_with_return = ESP_OK;
+    g_register_return      = ESP_OK;
     g_create_count         = 0;
-    g_register_with_count  = 0;
+    g_register_count       = 0;
     g_fire_handler_count   = 0;
 }
 
@@ -108,15 +108,15 @@ esp_err_t mock_esp_event_loop_create_default(void)
     return g_create_return;
 }
 
-esp_err_t mock_esp_event_handler_instance_register_with(
+esp_err_t mock_esp_event_handler_instance_register(
     esp_event_base_t base,
     int32_t event_id,
     esp_event_handler_t handler,
     void *arg,
     esp_event_handler_instance_t *instance)
 {
-    g_register_with_count++;
-    if (g_register_with_return != ESP_OK) return g_register_with_return;
+    g_register_count++;
+    if (g_register_return != ESP_OK) return g_register_return;
     if (!handler) return ESP_ERR_INVALID_ARG;
 
     /* Allocate a free slot. */

@@ -41,13 +41,13 @@ typedef void *esp_event_handler_instance_t;
 
 /* ---------- primable return values ---------- */
 void mock_esp_event_loop_create_default_return_set(esp_err_t r);
-/* FW-08 — esp_event_handler_instance_register_with return prime. */
-void mock_esp_event_handler_instance_register_with_return_set(esp_err_t r);
+/* FW-08 — esp_event_handler_instance_register return prime (default-loop). */
+void mock_esp_event_handler_instance_register_return_set(esp_err_t r);
 
 /* ---------- call counters ---------- */
 int  mock_esp_event_loop_create_default_call_count(void);
 /* FW-08 — subscription counter + fire invocation counter. */
-int  mock_esp_event_handler_instance_register_with_call_count(void);
+int  mock_esp_event_handler_instance_register_call_count(void);
 int  mock_esp_event_fire_handler_call_count(void);
 
 /* ---------- reset ---------- */
@@ -82,8 +82,11 @@ void mock_esp_event_last_captured_base_id(esp_event_base_t *out_base,
 
 /* ---------- mock targets ---------- */
 esp_err_t mock_esp_event_loop_create_default(void);
-/* FW-08 — instance-based register (modern IDF v5.5.3 idiom). */
-esp_err_t mock_esp_event_handler_instance_register_with(
+/* FW-08 — default-loop instance register (matches real IDF
+ * esp_event_handler_instance_register at
+ * components/esp_event/default_event_loop.c:28-44 — 5 args, no
+ * event_loop param, internally uses s_default_loop). */
+esp_err_t mock_esp_event_handler_instance_register(
     esp_event_base_t base,
     int32_t event_id,
     esp_event_handler_t handler,
