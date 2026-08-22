@@ -237,6 +237,10 @@ ALL_TESTS = [
     "home_get_html_escapes_identity [fw-05][home-page][security]",
     # FW-05 station-join crash regression (engram #3639)
     "softap_owns_cfg_after_caller_returns [fw-05][regression][engram-3639]",
+    # FW-06.1 boot + connecting (3 scenarios)
+    "booting_holds_level_on [fw-06.1]",
+    "wifi_connecting_period_100ms [fw-06.1]",
+    "ws_connecting_period_50ms [fw-06.1]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -279,6 +283,8 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_guard.c'),
     # FW-05 home page (scope expansion 2026-08-22)
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_home.c'),
+    # FW-06 status LED
+    os.path.join(PROJECT_DIR, 'tests', 'test_led', 'test_led_boot_connecting.c'),
 ]
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
