@@ -216,13 +216,37 @@ esp_err_t wifi_init(const config_t *cfg)
     r = led_set_state(LED_STATE_WIFI_CONNECTING);
     if (r != ESP_OK) return r;
 
-    /* Step 3: create the STA netif. On host, the mock returns
+    /* Step 3: bring up the underlying subsystems the STA netif
+     * creator depends on. All three are idempotent (each returns
+     * ESP_ERR_INVALID_STATE if already initialized, which we
+     * accept as success). The softAP bring-up in boot_run_
+     * provisioning already does these when the device was just
+     * provisioned — esp_restart() wipes their state, so this
+     * boot's wifi_init() must re-do them. Without this,
+     * esp_netif_create_default_wifi_sta() aborts with
+     * ESP_ERR_INVALID_STATE at esp_wifi_set_default_wifi_sta_
+     * handlers() because the default event loop never existed
+     * (caught on device flash, engram #3694). */
+    r = esp_netif_init();
+    if (r != ESP_OK && r != ESP_ERR_INVALID_STATE) return r;
+
+    r = esp_event_loop_create_default();
+    if (r != ESP_OK && r != ESP_ERR_INVALID_STATE) return r;
+
+    /* esp_wifi_init() is also idempotent — it returns ESP_OK the
+     * first time and ESP_ERR_INVALID_STATE if the wifi driver
+     * is already up. We accept both. */
+    wifi_init_config_t cfg_init = WIFI_INIT_CONFIG_DEFAULT();
+    r = esp_wifi_init(&cfg_init);
+    if (r != ESP_OK && r != ESP_ERR_INVALID_STATE) return r;
+
+    /* Step 4: create the STA netif. On host, the mock returns
      * the sentinel STA handle. */
     if (esp_netif_create_default_wifi_sta() == NULL) {
         return ESP_FAIL;
     }
 
-    /* Step 4: set mode. APSTA when softAP is active (FW-08.5
+    /* Step 5: set mode. APSTA when softAP is active (FW-08.5
      * — softAP must stay alive during the joining window);
      * STA otherwise. The mode selection is extracted into a
      * single inline helper for testability (FW-08.5 S1 asserts
@@ -232,7 +256,7 @@ esp_err_t wifi_init(const config_t *cfg)
     r = esp_wifi_set_mode(mode);
     if (r != ESP_OK) return r;
 
-    /* Step 5: STA config from cfg. */
+    /* Step 6: STA config from cfg. */
     wifi_config_t wifi_cfg = {0};
     size_t i = 0;
     for (; i < sizeof(wifi_cfg.sta.ssid) - 1 && cfg->wifi.ssid[i] != '\0'; ++i) {
@@ -250,11 +274,11 @@ esp_err_t wifi_init(const config_t *cfg)
     r = esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg);
     if (r != ESP_OK) return r;
 
-    /* Step 6: start the driver. */
+    /* Step 7: start the driver. */
     r = esp_wifi_start();
     if (r != ESP_OK) return r;
 
-    /* Step 7: subscribe to the WIFI/IP events. Handlers are
+    /* Step 8: subscribe to the WIFI/IP events. Handlers are
      * defined in wifi_event.c; the IDF event loop dispatches
      * them on its task. The host mock fires them synchronously
      * via mock_esp_event_fire_handler. */
@@ -268,7 +292,7 @@ esp_err_t wifi_init(const config_t *cfg)
                               NULL);
     if (r != ESP_OK) return r;
 
-    /* Step 8: create the backoff timer (one-shot, lazy-armed by
+    /* Step 9: create the backoff timer (one-shot, lazy-armed by
      * the STA-disconnect handler). The callback is installed
      * by wifi_event_install_retry_cb so wifi_event.c owns the
      * retry_cb body. The mock's esp_timer_create requires a
@@ -291,7 +315,7 @@ esp_err_t wifi_init(const config_t *cfg)
     if (r != ESP_OK) return r;
     wifi_event_install_retry_cb(s_backoff_handle, timer_args.callback);
 
-    /* Step 9: issue the first esp_wifi_connect().
+    /* Step 10: issue the first esp_wifi_connect().
      *
      * FW-08.3 — bounded-wait guard. The reference firmware
      * (backend/iot-camera/components/wifi/wifi.c:140-144)
