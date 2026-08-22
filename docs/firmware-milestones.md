@@ -1,6 +1,6 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 7 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8 [DRAFT awaiting user merge], tip commit `486eb7a` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9 [DRAFT awaiting user merge] — see amendment blockquote at the end of § FW-07).
+> **Status**: 7 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07).
 > **Next SDD to start**: FW-08 (Wi-Fi station).
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
@@ -595,7 +595,7 @@ SDD change: `firmware-status-led` · Closes: R-23.
   - **Scenario: green path keeps the LED moving.** Given the LED timer running, When the firmware transitions between states, Then the LED pattern updates within one period of the previous pattern.
 - **Depends on:** FW-06.3.
 
-> **Amended 2026-08-22 (FW-06 closure evidence).** PR [#8](https://github.com/witsaba/esp32-cam-surveillance/pull/8) [DRAFT, awaiting user merge] on the `feat/fw-06-status-led` branch off `main@c4df13d`. 7 work-unit commits (no chained PR), each independently green via `python3 firmware/tools/run_host_tests.py` (single PR; `size:exception` granted because the 7-commit shape straddled the 1000-line preflight budget but each commit was independently reviewable). Production build: 52/52 host Unity tests pass (43 prior FW-02/03/05 + 9 new FW-06.1/06.2/06.3/06.4-green). Bite-proofs: Pass 2 (schema_version), Pass 3 (determinism), Pass 4 (validation), and Pass 5 (timer_fire) all fire as expected under their stub builds. `firmware.bin` = 0xd7730 (882,480 bytes; 92% of 960 KB factory partition; 10% free).
+> **Amended 2026-08-22 (FW-06 closure evidence).** PR [#8](https://github.com/witsaba/esp32-cam-surveillance/pull/8) merged `2026-08-22` at merge commit `0d4fe7d` on the `feat/fw-06-status-led` branch off `main@c4df13d`. 7 work-unit commits (no chained PR), each independently green via `python3 firmware/tools/run_host_tests.py` (single PR; `size:exception` granted because the 7-commit shape straddled the 1000-line preflight budget but each commit was independently reviewable). Production build: 52/52 host Unity tests pass (43 prior FW-02/03/05 + 9 new FW-06.1/06.2/06.3/06.4-green). Bite-proofs: Pass 2 (schema_version), Pass 3 (determinism), Pass 4 (validation), and Pass 5 (timer_fire) all fire as expected under their stub builds. `firmware.bin` = 0xd7730 (882,480 bytes; 92% of 960 KB factory partition; 10% free).
 >
 > **Work-unit commits** (each independently revertable; no chained PR; tip commit `486eb7a`):
 > - `397f1b4` feat(led): add LED component skeleton + mock_gpio + mock_esp_timer + 8 Kconfig symbols — Phase 1 build infra (17 new files + 4 modified).
@@ -656,7 +656,7 @@ SDD change: `firmware-boot-button` · Closes: R-03 (press-duration-measurement h
   - **Scenario: green path filters jitter cleanly.** Given a real 50 ms tap, When the debounce filter runs, Then exactly one press event is delivered to the press-duration logic.
 - **Depends on:** FW-07.1.
 
-> **Amendment 2026-08-22 (FW-07 PR #9 merged, merge commit `1e671be`).** The boot-button milestone closes R-03 (press-duration-measurement half) and R-24 across 5 work-unit commits on `feat/fw-07-boot-button` (1 skeleton + 4 milestone nodes — FW-07.1 tap-ignore, FW-07.2 boot-time long-press, FW-07.3 runtime factory reset, FW-07.4 debounce guard with bite-proof). The driver ships three behaviors: tap-ignore (< 100 ms no-op), boot-time long-press (≥ 3 s during BOOT_TIME asserts `boot_button_pressed_at_boot`), runtime long-press (≥ 10 s during RUNTIME fires the registered `config_factory_reset()+esp_restart` callback), plus a per-edge debounce filter that collapses contact-bounce jitter into one transition. See the commit ledger below:
+> **Amendment 2026-08-22 (FW-07 PR #9 merged, merge commit `091b2a4`).** The boot-button milestone closes R-03 (press-duration-measurement half) and R-24 across 6 work-unit commits on `feat/fw-07-boot-button` (1 skeleton + 4 milestone nodes + 1 docs amendment — FW-07.1 tap-ignore, FW-07.2 boot-time long-press, FW-07.3 runtime factory reset, FW-07.4 debounce guard with bite-proof). The driver ships three behaviors: tap-ignore (< 100 ms no-op), boot-time long-press (≥ 3 s during BOOT_TIME asserts `boot_button_pressed_at_boot`), runtime long-press (≥ 10 s during RUNTIME fires the registered `config_factory_reset()+esp_restart` callback), plus a per-edge debounce filter that collapses contact-bounce jitter into one transition. See the commit ledger below:
 >
 > | SHA | Subject | Closes |
 > |---|---|---|
@@ -665,11 +665,13 @@ SDD change: `firmware-boot-button` · Closes: R-03 (press-duration-measurement h
 > | `67c5553` | feat(button): FW-07.2 boot-time long-press measurement | FW-07.2 (S5-S9) |
 > | `32ca29e` | feat(button): FW-07.3 runtime factory reset | FW-07.3 (S10-S14) |
 > | `1e671be` | test(button): FW-07.4 debounce guard with bite-proof | FW-07.4 (S15 + bite-proof) |
+> | `65c63f9` | docs(milestones): amend FW-07 charter + mark FW-07 closed + fill closure ledger | docs amendment (post-feature) |
 >
-> **PR**: #9 (`feat/fw-07-boot-button` → `main`, draft, awaiting user review and merge).
+> **PR**: [#9](https://github.com/witsaba/esp32-cam-surveillance/pull/9) (`feat/fw-07-boot-button` → `main`) merged `2026-08-22` at merge commit `091b2a4`. Pre-merge review was DRAFT (orchestrator opened; user merged without changes per standing preference).
 > **Test results**: `idf.py test --target esp32` → 68/68 production tests PASS (4 FW-07.1 + 5 FW-07.2 + 5 FW-07.3 + 2 FW-07.4 + 52 prior FW-02/03/05/06). All 5 bite-proof stub-build passes (Pass 2 schema_version, Pass 3 determinism, Pass 4 validation, Pass 5 timer_fire, Pass 6 debounce) fire as expected.
 > **Build**: `idf.py build` succeeds; `firmware.bin` = 890,640 bytes (91% of the 960 KB factory partition (`0xF0000`), 9% free).
 > **Verify-report verdict**: PASS — all 4 milestone nodes CLOSED, 2/2 requirements closed (R-03 measurement half + R-24 fully), 16/16 scenarios closed.
+> **Post-merge cleanup (session ses_fw07_archive)**: local `main` updated to `091b2a4` (`git pull --ff-only`); `feat/fw-07-boot-button` worktree removed (`git worktree remove --force …/fw-07-boot-button`); local branch deleted (`git branch -d feat/fw-07-boot-button`).
 
 ## Wave 2 — Wi-Fi
 
