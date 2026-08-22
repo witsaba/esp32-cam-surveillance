@@ -1,22 +1,26 @@
 /* button.c — FW-07 boot-button driver (R-03 measurement half + R-24
- * runtime factory reset). Phase B implementation: FW-07.1 tap-ignore
- * state machine.
+ * runtime factory reset). Phase C implementation: FW-07.2
+ * boot-time long-press detection (latch + BOOT_TIME window +
+ * strap-grace transient absorption).
  *
  * The driver owns 3 responsibilities per PRD § FR-1 step 2 L237 +
  * § FR-7 L234-238:
  *
- *   1. **Boot-time press signal** (FW-07.2 — Phase C) —
- *      `boot_button_pressed_at_boot()` returns true iff the user
+ *   1. **Boot-time press signal** (FW-07.2 — Phase C, this file)
+ *      — `boot_button_pressed_at_boot()` returns true iff the user
  *      held the button for ≥ BOOT_LONGPRESS_MS during the
- *      BOOT_TIME phase. Phase B ships the strong symbol that
- *      returns false always (no boot-time detection wired yet).
+ *      BOOT_TIME phase. The latch is sticky: once asserted it
+ *      stays asserted until `button_deinit()` or a reboot.
  *
  *   2. **Runtime long-press → factory reset** (FW-07.3 — Phase D)
  *      — fires a user-registered callback exactly once when the
  *      user holds the button for ≥ RUNTIME_LONGPRESS_MS during
- *      the RUNTIME phase. Phase B declares
+ *      the RUNTIME phase. Phase C declares
  *      `button_on_runtime_longpress_set()` to store the cb
- *      pointer; the actual dispatch lands in Phase D.
+ *      pointer; the actual dispatch lands in Phase D. The RUNTIME
+ *      branch in `button_poll_once()` is a no-op in Phase C
+ *      (state machine stays in whatever sub-state it had at the
+ *      BOOT_TIME→RUNTIME transition; Phase D wires the cb fire).
  *
  *   3. **Strap-pin tolerance** (FW-07.1 — Phase B, this file) —
  *      the GPIO-0 ROM bootloader transient (~100 ms LOW after
@@ -24,19 +28,37 @@
  *      `button_init()`. Polls before the window expires return
  *      without state change.
  *
- * State machine (Phase B — FW-07.1 only):
+ * State machine (Phase C — FW-07.1 + FW-07.2):
  *
  *   phase: STRAP_GRACE → BOOT_TIME → RUNTIME
  *   state: IDLE → PRESSED → IDLE
+ *
+ *   STRAP_GRACE: ignore GPIO reads.
+ *   BOOT_TIME: measure boot-time press. Latch
+ *     `g_boot_button_pressed_at_boot` when duration crosses
+ *     BOOT_LONGPRESS_MS.
+ *   RUNTIME: stop measuring boot-time (Phase C). Phase D wires
+ *     the runtime long-press cb dispatch here.
  *
  *   IDLE + falling edge → PRESSED; g_press_start_us = now_us
  *   PRESSED + rising edge:
  *     duration = now_us - g_press_start_us
  *     if duration ≤ TAP_MAX_US:  → IDLE (TAP — ignore)
+ *     else if phase == BOOT_TIME + duration ≥ BOOT_LONGPRESS_MS:
+ *                                  latch g_boot_button_pressed_at_boot
+ *                                  → IDLE
  *     else:                      → IDLE (qualified press;
- *                                  Phase C/D handle the
- *                                  BOOT_TIME / RUNTIME branch
- *                                  logic)
+ *                                  Phase D will dispatch the
+ *                                  runtime cb in the RUNTIME
+ *                                  branch before reaching this
+ *                                  path)
+ *   PRESSED + each poll (while held): check duration; if
+ *     duration ≥ BOOT_LONGPRESS_MS and phase == BOOT_TIME, latch
+ *     g_boot_button_pressed_at_boot (sticky; stays set until
+ *     button_deinit). This handles the S6 scenario where the
+ *     press continues past BOOT_LONGPRESS_MS without a rising
+ *     edge inside BOOT_TIME.
+ *
  *   All polls while phase == STRAP_GRACE: return without state
  *   change.
  *
@@ -86,6 +108,27 @@ static inline int64_t button_strap_grace_us(void)
     return (int64_t)CONFIG_FIRMWARE_BOOT_BUTTON_STRAP_GRACE_MS * 1000LL;
 }
 
+/* FW-07.2 — boot-time long-press threshold (microseconds).
+ * Compared against `now_us - g_press_start_us` while the state
+ * machine is in BUTTON_PHASE_BOOT_TIME. Crossing this threshold
+ * latches `g_boot_button_pressed_at_boot` sticky-true. */
+static inline int64_t button_boot_longpress_us(void)
+{
+    return (int64_t)CONFIG_FIRMWARE_BOOT_BUTTON_BOOT_LONGPRESS_MS * 1000LL;
+}
+
+/* FW-07.2 — BOOT_TIME phase duration (microseconds). The state
+ * machine is in BOOT_TIME from STRAP_GRACE end to STRAP_GRACE
+ * end + BOOT_TIME_WINDOW. Default 5 s gives the user enough
+ * slack to hold for ≥ BOOT_LONGPRESS_MS (3 s default) and still
+ * see the rising edge inside BOOT_TIME; longer presses (10 s,
+ * 30 s, etc.) cross into RUNTIME while the latch is already
+ * sticky-true. */
+static inline int64_t button_boot_time_window_us(void)
+{
+    return (int64_t)CONFIG_FIRMWARE_BOOT_BUTTON_BOOT_TIME_WINDOW_MS * 1000LL;
+}
+
 /* Phase / state storage — single-byte/8-byte volatile, atomic
  * write on Xtensa LX6. Matches FW-03 lock-free idiom in boot.c. */
 static volatile button_phase_t g_phase = BUTTON_PHASE_COUNT;  /* sentinel: uninit */
@@ -98,15 +141,28 @@ static volatile button_state_t g_state = BUTTON_STATE_IDLE;
  *
  * g_strap_release_us is the absolute now_us threshold below
  * which polls return without state change. Set once in
- * button_init() to (now + STRAP_GRACE_MS). */
+ * button_init() to (now + STRAP_GRACE_MS).
+ *
+ * g_boot_time_end_us is the absolute now_us threshold above
+ * which polls transition from BOOT_TIME to RUNTIME. Set once
+ * in button_init() to (now + STRAP_GRACE_MS + BOOT_TIME_WINDOW_MS).
+ *
+ * g_press_start_us uses a dedicated boolean sentinel
+ * (g_press_in_progress) to detect "no press in flight" vs
+ * "press started at us=0" — the latter can happen if the
+ * falling edge lands on the very first poll inside
+ * STRAP_GRACE. Using 0 as a sentinel would lose that case. */
 static volatile int64_t g_strap_release_us = 0;
+static volatile int64_t g_boot_time_end_us = 0;
 static volatile int64_t g_press_start_us    = 0;
 static volatile int64_t g_last_edge_us      = 0;
+static volatile bool    g_press_in_progress = false;
 
-/* BOOT_TIME long-press latch (Phase C will set this when a
- * ≥ BOOT_LONGPRESS_MS press is detected during BOOT_TIME).
- * Phase B keeps it at false; `boot_button_pressed_at_boot()`
- * reads this directly. */
+/* BOOT_TIME long-press latch (FW-07.2 — Phase C). Sticky: once
+ * asserted during BOOT_TIME (via the duration-crossing check
+ * in button_poll_once()), it stays asserted until
+ * `button_deinit()` clears it. Read by
+ * `boot_button_pressed_at_boot()`. */
 static volatile bool g_boot_button_pressed_at_boot = false;
 
 /* Initialization guard. button_init() is idempotent. */
@@ -168,9 +224,14 @@ esp_err_t button_init(void)
 
     /* Strap-grace release time = now + STRAP_GRACE_MS. Polls
      * arriving before this timestamp return without state
-     * change. esp_timer_get_time() is microsecond resolution. */
+     * change. esp_timer_get_time() is microsecond resolution.
+     *
+     * BOOT_TIME end = STRAP_GRACE release + BOOT_TIME_WINDOW.
+     * Polls arriving after this timestamp transition the phase
+     * machine from BOOT_TIME to RUNTIME. */
     int64_t now_us = esp_timer_get_time();
     g_strap_release_us = now_us + button_strap_grace_us();
+    g_boot_time_end_us = g_strap_release_us + button_boot_time_window_us();
     g_last_edge_us    = now_us;
 
     /* Create the 10 ms periodic esp_timer handle. The callback
@@ -197,6 +258,7 @@ esp_err_t button_init(void)
     g_phase = BUTTON_PHASE_STRAP_GRACE;
     g_state = BUTTON_STATE_IDLE;
     g_press_start_us      = 0;
+    g_press_in_progress   = false;
     g_boot_button_pressed_at_boot = false;
     g_initialized         = 1;
 
@@ -236,6 +298,8 @@ esp_err_t button_deinit(void)
     g_press_start_us = 0;
     g_last_edge_us   = 0;
     g_strap_release_us = 0;
+    g_boot_time_end_us = 0;
+    g_press_in_progress = false;
     g_boot_button_pressed_at_boot = false;
     g_runtime_longpress_cb = NULL;
     g_initialized    = 0;
@@ -246,33 +310,93 @@ esp_err_t button_deinit(void)
  * esp_timer cb body). now_us MUST be the value returned by
  * esp_timer_get_time() (or its mock equivalent).
  *
- * Phase B (FW-07.1) logic:
- *   - If now_us < g_strap_release_us: return (strap grace).
- *   - Phase transition: STRAP_GRACE → BOOT_TIME on the first
- *     poll after the grace window. (Phase C will add the
- *     BOOT_TIME → RUNTIME transition.)
+ * Phase C (FW-07.2) logic:
+ *   - If now_us < g_strap_release_us: read it (to detect
+ *     falling edges inside the strap window) but return
+ *     without state-machine transitions. The press-start time
+ *     IS recorded so a press that began inside STRAP_GRACE is
+ *     measured from the actual falling edge, not from the
+ *     BOOT_TIME entry.
+ *   - Phase transition STRAP_GRACE → BOOT_TIME on the first
+ *     poll after the grace window. If the GPIO is LOW at the
+ *     transition moment, treat it as a press that started
+ *     inside STRAP_GRACE (g_press_start_us was already set
+ *     by the strap-grace polls).
+ *   - Phase transition BOOT_TIME → RUNTIME on the first poll
+ *     after g_boot_time_end_us.
  *   - Read the GPIO level (mocked on host).
  *   - Detect edges: falling (HIGH→LOW) opens a press window;
  *     rising (LOW→HIGH) closes it.
- *   - On the rising edge, compute duration. If duration ≤
- *     TAP_MAX_US, the press is a TAP — reset to IDLE without
- *     any side effect (no cb fire, no boot-time latch). Longer
- *     presses return to IDLE too; the BOOT_TIME / RUNTIME
- *     branch logic lands in Phases C and D. */
+ *   - While state == PRESSED and phase == BOOT_TIME, check on
+ *     each poll whether the press duration has crossed
+ *     BOOT_LONGPRESS_MS; if so, latch
+ *     `g_boot_button_pressed_at_boot = true` (sticky).
+ *   - On the rising edge, compute duration:
+ *       - If duration ≤ TAP_MAX_US: tap — discard.
+ *       - If phase == BOOT_TIME and duration ≥ BOOT_LONGPRESS_MS:
+ *         latch `g_boot_button_pressed_at_boot` (rising-edge
+ *         catch in case the in-POLL check missed it — e.g. the
+ *         duration crossed exactly at the rising edge boundary).
+ *         Return to IDLE.
+ *       - Else: qualified press — return to IDLE. Phase D will
+ *         dispatch the runtime cb in the RUNTIME branch before
+ *         reaching this path. */
 void button_poll_once(int64_t now_us)
 {
     if (!g_initialized) return;
 
-    /* Strap-grace window: ignore everything until now_us
-     * crosses g_strap_release_us. After crossing, transition
-     * to BOOT_TIME exactly once. */
+    /* Strap-grace window: still read the GPIO so we capture
+     * a falling edge that started before the window ended.
+     * The state-machine transitions are deferred until the
+     * window expires; once it does, transition to BOOT_TIME
+     * and process this same poll as the first BOOT_TIME poll. */
     if (g_phase == BUTTON_PHASE_STRAP_GRACE) {
+        int sg_level = gpio_get_level(CONFIG_FIRMWARE_BOOT_BUTTON_GPIO);
+        bool sg_pressed_now = (sg_level == 0);
+        /* Track falling + rising edges inside the strap-grace
+         * window so a press that began BEFORE the window
+         * ended is measured from the actual falling edge
+         * (not from the BOOT_TIME entry). This is the
+         * FW-07.2 contract: "hold for 3 seconds" must be
+         * measured from when the user actually pressed it.
+         * Rising edges clear the in-progress flag so a
+         * subsequent falling edge inside BOOT_TIME can
+         * start a fresh press measurement. */
+        if (sg_pressed_now && !g_press_in_progress) {
+            g_press_start_us = now_us;
+            g_press_in_progress = true;
+        } else if (!sg_pressed_now && g_press_in_progress) {
+            /* Rising edge during strap grace: the user
+             * released before the window ended. Clear the
+             * in-progress flag so a later falling edge in
+             * BOOT_TIME starts fresh. */
+            g_press_in_progress = false;
+            g_press_start_us = 0;
+        }
         if (now_us < g_strap_release_us) return;
         g_phase = BUTTON_PHASE_BOOT_TIME;
         g_state = BUTTON_STATE_IDLE;
         /* Don't return — process this same poll as the first
          * BOOT_TIME poll so the strap-grace release doesn't
-         * drop one edge. */
+         * drop one edge. If the GPIO is still LOW at the
+         * transition, fall through to the IDLE→PRESSED
+         * branch below. */
+    }
+
+    /* BOOT_TIME → RUNTIME transition: first poll after
+     * g_boot_time_end_us moves us into RUNTIME. From then on,
+     * the boot-time latch is sticky (already-set stays set) and
+     * no further boot-time measurement happens. Phase D wires
+     * the runtime long-press cb dispatch on the RUNTIME
+     * branch. */
+    if (g_phase == BUTTON_PHASE_BOOT_TIME &&
+        now_us >= g_boot_time_end_us) {
+        g_phase = BUTTON_PHASE_RUNTIME;
+        /* Stay in the current sub-state (IDLE or PRESSED).
+         * A press that started in BOOT_TIME and crosses into
+         * RUNTIME while still held keeps g_press_start_us so
+         * Phase D can continue the duration measurement from
+         * the original falling edge. */
     }
 
     int level = gpio_get_level(CONFIG_FIRMWARE_BOOT_BUTTON_GPIO);
@@ -282,44 +406,61 @@ void button_poll_once(int64_t now_us)
     switch (g_state) {
     case BUTTON_STATE_IDLE:
         if (pressed_now) {
-            /* Falling edge: open a press window. */
+            /* Falling edge: open a press window. If the
+             * press started inside STRAP_GRACE,
+             * g_press_in_progress + g_press_start_us were
+             * already set there; if not (the press started
+             * inside BOOT_TIME), record it now. */
+            if (!g_press_in_progress) {
+                g_press_start_us = now_us;
+                g_press_in_progress = true;
+            }
             g_state         = BUTTON_STATE_PRESSED;
-            g_press_start_us = now_us;
             g_last_edge_us   = now_us;
         }
         break;
     case BUTTON_STATE_PRESSED:
+        /* While still held in BOOT_TIME, check whether the
+         * press duration has crossed BOOT_LONGPRESS_MS; if
+         * so, latch the boot-time signal sticky-true. The
+         * latch is idempotent — once set, additional polls
+         * just re-write `true`. This handles the S6 scenario
+         * (10 s press) where the duration keeps growing past
+         * BOOT_LONGPRESS_MS without a rising edge. */
+        if (pressed_now && g_phase == BUTTON_PHASE_BOOT_TIME) {
+            int64_t held_us = now_us - g_press_start_us;
+            if (held_us >= button_boot_longpress_us()) {
+                g_boot_button_pressed_at_boot = true;
+            }
+        }
         if (!pressed_now) {
-            /* Rising edge: close the press window. The
-             * tap-ignore filter is the entire FW-07.1
-             * contract — any press whose duration is
-             * ≤ TAP_MAX_US is discarded (return to IDLE
-             * without side effects). Longer presses also
-             * return to IDLE here; Phases C/D will latch
-             * the boot-time signal + dispatch the runtime
-             * cb before reaching this branch.
-             *
-             * We compute the duration explicitly even
-             * though Phase B discards it — keeping the
-             * arithmetic visible makes the FW-07.1
-             * contract audit-trivial for the next
-             * maintainer (no risk of accidentally
-             * forgetting to compare against TAP_MAX_US
-             * when Phase C lands). */
+            /* Rising edge: close the press window. */
             int64_t duration_us = now_us - g_press_start_us;
             if (duration_us > button_tap_max_us()) {
-                /* Qualified press — Phase C will latch
-                 * the boot-time signal + Phase D will
-                 * dispatch the runtime cb. For now,
-                 * reset to IDLE. */
+                /* Qualified press. If we're still in
+                 * BOOT_TIME and the press crossed
+                 * BOOT_LONGPRESS_MS, latch the boot-time
+                 * signal. This catches the rising-edge
+                 * boundary case where the duration equals
+                 * BOOT_LONGPRESS_MS exactly at the moment
+                 * of release. */
+                if (g_phase == BUTTON_PHASE_BOOT_TIME &&
+                    duration_us >= button_boot_longpress_us()) {
+                    g_boot_button_pressed_at_boot = true;
+                }
+                /* Phase D will dispatch the runtime cb in
+                 * the RUNTIME branch before reaching this
+                 * path. */
             }
             g_state       = BUTTON_STATE_IDLE;
+            g_press_in_progress = false;  /* close the press window */
+            g_press_start_us = 0;
             g_last_edge_us = now_us;
         }
         break;
     case BUTTON_STATE_RELEASED:
     default:
-        /* Defensive: RELEASED is unused in Phase B (rising
+        /* Defensive: RELEASED is unused in Phase C (rising
          * edge collapses to IDLE). Reset to IDLE on any
          * unexpected state. */
         g_state = BUTTON_STATE_IDLE;
@@ -343,11 +484,16 @@ esp_err_t button_on_runtime_longpress_set(button_longpress_cb_t cb)
  * `boot_button_stub.c` via standard linker precedence. On
  * host, `mock_boot_link.h` redirects this to
  * `mock_boot_button_pressed_at_boot_impl` so the boot orchestrator
- * tests keep their existing shape (the mock wins on host).
+ * tests keep their existing shape (the mock wins on host
+ * for callers that include mock_boot_link.h; tests that
+ * `#undef boot_button_pressed_at_boot` after the include
+ * hit THIS strong symbol and verify the actual latch).
  *
- * Phase B always returns false (Phase C will latch the
- * g_boot_button_pressed_at_boot flag during BOOT_TIME long-
- * press detection). */
+ * Phase C (FW-07.2): returns true iff the user held the
+ * button for ≥ BOOT_LONGPRESS_MS during the BOOT_TIME phase.
+ * The latch is sticky — once asserted it stays asserted
+ * until `button_deinit()` clears it. Consumed at boot.c:124
+ * (FW-03.3 unchanged). */
 bool boot_button_pressed_at_boot(void)
 {
     return g_boot_button_pressed_at_boot;

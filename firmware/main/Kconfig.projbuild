@@ -203,6 +203,22 @@ if FIRMWARE_BOOT_BUTTON
             window elapses. Default 500 ms is well above the
             transient envelope.
 
+    config FIRMWARE_BOOT_BUTTON_BOOT_TIME_WINDOW_MS
+        int "BOOT_TIME phase duration after strap grace ends (ms)"
+        range 1000 30000
+        default 5000
+        help
+            FW-07.2: the state machine is in BOOT_TIME from
+            (button_init + STRAP_GRACE_MS) to (button_init +
+            STRAP_GRACE_MS + BOOT_TIME_WINDOW_MS). After this
+            window the phase transitions to RUNTIME and the
+            boot-time latch becomes sticky (Phase D wires the
+            runtime factory-reset cb). Default 5 s gives the
+            user enough slack to hold for ≥ BOOT_LONGPRESS_MS
+            (3 s default) and still see the rising edge inside
+            BOOT_TIME; longer presses (10 s, 30 s, etc.) cross
+            into RUNTIME while the latch is already sticky-true.
+
 endif  # FIRMWARE_BOOT_BUTTON
 
 endmenu

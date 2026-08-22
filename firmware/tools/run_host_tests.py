@@ -271,6 +271,17 @@ ALL_TESTS = [
     "tap_99ms_is_ignored [fw-07.1]",
     "tap_100ms_is_ignored [fw-07.1]",
     "tap_101ms_is_ignored [fw-07.1]",
+    # FW-07.2 boot-time long-press detection (5 scenarios). The
+    # latch `g_boot_button_pressed_at_boot` is asserted by the
+    # strong symbol in button.c when the press crosses
+    # BOOT_LONGPRESS_MS (3 s default) during BOOT_TIME. The
+    # runtime cb MUST stay dormant during BOOT_TIME (Phase D
+    # wires it for RUNTIME only).
+    "boot_longpress_3s_asserts_signal [fw-07.2]",
+    "boot_longpress_10s_asserts_signal_no_runtime_cb [fw-07.2]",
+    "boot_short_2s_does_not_assert [fw-07.2]",
+    "strap_pin_transient_500ms_is_absorbed [fw-07.2]",
+    "strap_grace_release_before_window_ends [fw-07.2]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -328,6 +339,9 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # full FW-07 surface (boot-time + runtime + debounce guard)
     # arrives in Phases C/D/E.
     os.path.join(PROJECT_DIR, 'tests', 'test_button', 'test_button_tap_ignore.c'),
+    # FW-07.2 boot-time long-press detection (5 scenarios).
+    # Phase C lands the BOOT_TIME latch logic + these 5 tests.
+    os.path.join(PROJECT_DIR, 'tests', 'test_button', 'test_button_boot_longpress.c'),
 ]
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The

@@ -93,6 +93,16 @@ extern "C" {
 #define CONFIG_FIRMWARE_BOOT_BUTTON_STRAP_GRACE_MS 500
 #endif
 
+/* FW-07.2 — BOOT_TIME phase duration (microseconds). The state
+ * machine is in BOOT_TIME from (button_init + STRAP_GRACE_MS)
+ * to (button_init + STRAP_GRACE_MS + BOOT_TIME_WINDOW_MS).
+ * Default 5000 ms gives a 5 s window for the user to assert
+ * the provisioning signal; longer than BOOT_LONGPRESS_MS (3 s
+ * default) plus 2 s of slack for the rising-edge measurement. */
+#ifndef CONFIG_FIRMWARE_BOOT_BUTTON_BOOT_TIME_WINDOW_MS
+#define CONFIG_FIRMWARE_BOOT_BUTTON_BOOT_TIME_WINDOW_MS 5000
+#endif
+
 typedef enum {
     BUTTON_PHASE_STRAP_GRACE = 0,  /* ignore edges until g_strap_release_us */
     BUTTON_PHASE_BOOT_TIME   = 1,  /* measure boot-time press */
