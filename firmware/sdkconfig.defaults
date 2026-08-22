@@ -24,6 +24,14 @@ CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
 # WebSocket client — dynamic buffer for streaming payloads.
 CONFIG_ESP_WS_CLIENT_ENABLE_DYNAMIC_BUFFER=y
 
+# HTTP server worker task stack — bumped from default 4096 to 8192
+# because the FW-05 home page handler renders a ~2.4 KB HTML page
+# (snprintf into a stack buffer + httpd_resp_send + lwIP send chain).
+# The 4096-byte default overflows during GET / under stack pressure
+# (caught on device interaction, engram #3641). The IDF softAP
+# example also uses 8192 for the same reason.
+CONFIG_HTTPD_TASK_STACK_SIZE=8192
+
 # Project tunables (mirrored from Kconfig.projbuild defaults).
 CONFIG_FIRMWARE_CAMERA_JPEG_QUALITY=18
 CONFIG_FIRMWARE_CAMERA_FRAME_SIZE=5
