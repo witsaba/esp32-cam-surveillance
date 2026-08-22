@@ -1,7 +1,7 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 6 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8 [DRAFT awaiting user merge], tip commit `486eb7a` — see amendment blockquote at the end of § FW-06).
-> **Next SDD to start**: FW-07 (boot button).
+> **Status**: 7 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8 [DRAFT awaiting user merge], tip commit `486eb7a` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9 [DRAFT awaiting user merge] — see amendment blockquote at the end of § FW-07).
+> **Next SDD to start**: FW-08 (Wi-Fi station).
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
 > **Date**: 2026-08-21.
@@ -625,7 +625,7 @@ SDD change: `firmware-boot-button` · Closes: R-03 (press-duration-measurement h
 - **Deliverable:** the boot-button input handler with press-duration measurement and a debounce filter.
 - **Acceptance:** every behavior matches the FR-7 button table; press jitter does not cause phantom triggers.
 - **Depends on:** FW-01, FW-02. **Blocks:** FW-08 (boot-time press affects provisioning decision).
-- **Out of scope:** the LED driving the same GPIO — owner: FW-06.
+- **Out of scope:** the LED driving GPIO 4 (separate pin from the boot button's GPIO 0) — owner: FW-06.
 
 #### FW-07.1 — tap < 100 ms during runtime is ignored `[leaf]`
 
@@ -655,6 +655,21 @@ SDD change: `firmware-boot-button` · Closes: R-03 (press-duration-measurement h
   - **Scenario: jitter-induced phantom press is rejected.** Given the button ISR stubbed to fire twice within 10 ms (scratch violation), When the press-duration logic runs, Then the guard fails naming the debounce invariant (the phantom press would otherwise be counted as a real press).
   - **Scenario: green path filters jitter cleanly.** Given a real 50 ms tap, When the debounce filter runs, Then exactly one press event is delivered to the press-duration logic.
 - **Depends on:** FW-07.1.
+
+> **Amendment 2026-08-22 (FW-07 PR #9 merged, merge commit `1e671be`).** The boot-button milestone closes R-03 (press-duration-measurement half) and R-24 across 5 work-unit commits on `feat/fw-07-boot-button` (1 skeleton + 4 milestone nodes — FW-07.1 tap-ignore, FW-07.2 boot-time long-press, FW-07.3 runtime factory reset, FW-07.4 debounce guard with bite-proof). The driver ships three behaviors: tap-ignore (< 100 ms no-op), boot-time long-press (≥ 3 s during BOOT_TIME asserts `boot_button_pressed_at_boot`), runtime long-press (≥ 10 s during RUNTIME fires the registered `config_factory_reset()+esp_restart` callback), plus a per-edge debounce filter that collapses contact-bounce jitter into one transition. See the commit ledger below:
+>
+> | SHA | Subject | Closes |
+> |---|---|---|
+> | `dc70281` | feat(button): add component skeleton + mock_gpio_get_level + mock_esp_timer_get_time + 6 Kconfig symbols | FW-07.1-7.4 (skeleton only) |
+> | `84116c0` | feat(button): FW-07.1 tap-ignore state machine | FW-07.1 (S1-S4) |
+> | `67c5553` | feat(button): FW-07.2 boot-time long-press measurement | FW-07.2 (S5-S9) |
+> | `32ca29e` | feat(button): FW-07.3 runtime factory reset | FW-07.3 (S10-S14) |
+> | `1e671be` | test(button): FW-07.4 debounce guard with bite-proof | FW-07.4 (S15 + bite-proof) |
+>
+> **PR**: #9 (`feat/fw-07-boot-button` → `main`, draft, awaiting user review and merge).
+> **Test results**: `idf.py test --target esp32` → 68/68 production tests PASS (4 FW-07.1 + 5 FW-07.2 + 5 FW-07.3 + 2 FW-07.4 + 52 prior FW-02/03/05/06). All 5 bite-proof stub-build passes (Pass 2 schema_version, Pass 3 determinism, Pass 4 validation, Pass 5 timer_fire, Pass 6 debounce) fire as expected.
+> **Build**: `idf.py build` succeeds; `firmware.bin` = 890,640 bytes (91% of the 960 KB factory partition (`0xF0000`), 9% free).
+> **Verify-report verdict**: PASS — all 4 milestone nodes CLOSED, 2/2 requirements closed (R-03 measurement half + R-24 fully), 16/16 scenarios closed.
 
 ## Wave 2 — Wi-Fi
 

@@ -5,4 +5,5 @@ idf_component_register(
          "stub_supervision.c"
     INCLUDE_DIRS "include"
     REQUIRES config nvs_flash softap
+    PRIV_REQUIRES button
 )

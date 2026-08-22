@@ -57,6 +57,10 @@ void mock_esp_timer_start_once_set_return(esp_err_t r);
 void mock_esp_timer_stop_set_return(esp_err_t r);
 void mock_esp_timer_restart_set_return(esp_err_t r);
 void mock_esp_timer_delete_set_return(esp_err_t r);
+/* FW-07 boot-button — esp_timer_get_time() returns a microsecond
+ * timestamp. Tests prime the next call's value via
+ * mock_esp_timer_get_time_set_return (default 0). */
+void mock_esp_timer_get_time_set_return(int64_t now_us);
 
 /* ---------- call counters ---------- */
 int mock_esp_timer_create_call_count(void);
@@ -65,12 +69,18 @@ int mock_esp_timer_start_once_call_count(void);
 int mock_esp_timer_stop_call_count(void);
 int mock_esp_timer_restart_call_count(void);
 int mock_esp_timer_delete_call_count(void);
+/* Number of esp_timer_get_time() calls observed. */
+int mock_esp_timer_get_time_call_count(void);
 
 /* ---------- captured state ---------- */
 /* Last period_us passed to start_periodic / restart (last wins). */
 uint64_t mock_esp_timer_last_period_us(void);
 /* Last timeout_us passed to start_once. */
 uint64_t mock_esp_timer_last_period_us_oneshot(void);
+/* FW-07 — last now_us returned by esp_timer_get_time(). Tests
+ * use this to assert the button driver read the primed clock at
+ * the right moments (e.g. duration math). */
+int64_t mock_esp_timer_get_time_last_return(void);
 /* Number of timer handles created. Tests use this to look up
  * the handle from `mock_esp_timer_handle_at(index)`. */
 int mock_esp_timer_handle_count(void);
@@ -105,3 +115,7 @@ esp_err_t mock_esp_timer_stop(esp_timer_handle_t handle);
 esp_err_t mock_esp_timer_restart(esp_timer_handle_t handle,
                                     uint64_t timeout_us);
 esp_err_t mock_esp_timer_delete(esp_timer_handle_t handle);
+/* FW-07 boot-button — esp_timer_get_time() target. Returns
+ * whatever the test primed via
+ * mock_esp_timer_get_time_set_return() (default 0). */
+int64_t mock_esp_timer_get_time(void);

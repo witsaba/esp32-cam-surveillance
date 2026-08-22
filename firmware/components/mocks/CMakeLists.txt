@@ -11,7 +11,8 @@ idf_component_register(
          "mock_esp_system.c"
          "mock_gpio.c"
          "mock_esp_timer.c"
+         "mock_config.c"
     INCLUDE_DIRS "include"
-    REQUIRES nvs_flash boot softap driver esp_timer
+    REQUIRES nvs_flash boot softap driver esp_timer config
     WHOLE_ARCHIVE
 )

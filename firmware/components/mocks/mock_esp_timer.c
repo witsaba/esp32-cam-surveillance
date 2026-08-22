@@ -32,6 +32,8 @@ static esp_err_t g_start_once_return     = ESP_OK;
 static esp_err_t g_stop_return           = ESP_OK;
 static esp_err_t g_restart_return        = ESP_OK;
 static esp_err_t g_delete_return         = ESP_OK;
+/* FW-07 — esp_timer_get_time() returns the primed value. */
+static int64_t  g_get_time_return       = 0;
 
 static int g_create_count         = 0;
 static int g_start_periodic_count = 0;
@@ -39,9 +41,13 @@ static int g_start_once_count     = 0;
 static int g_stop_count           = 0;
 static int g_restart_count        = 0;
 static int g_delete_count         = 0;
+/* FW-07 — counter for esp_timer_get_time() calls. */
+static int g_get_time_count       = 0;
 
 static uint64_t g_last_period_us         = 0;
 static uint64_t g_last_period_us_oneshot = 0;
+/* FW-07 — last now_us value returned to the production caller. */
+static int64_t  g_get_time_last_return   = 0;
 
 void mock_esp_timer_create_set_return(esp_err_t r)         { g_create_return         = r; }
 void mock_esp_timer_start_periodic_set_return(esp_err_t r) { g_start_periodic_return = r; }
@@ -49,6 +55,8 @@ void mock_esp_timer_start_once_set_return(esp_err_t r)     { g_start_once_return
 void mock_esp_timer_stop_set_return(esp_err_t r)           { g_stop_return           = r; }
 void mock_esp_timer_restart_set_return(esp_err_t r)        { g_restart_return        = r; }
 void mock_esp_timer_delete_set_return(esp_err_t r)         { g_delete_return         = r; }
+/* FW-07 — prime the next esp_timer_get_time() return. */
+void mock_esp_timer_get_time_set_return(int64_t now_us)    { g_get_time_return       = now_us; }
 
 int mock_esp_timer_create_call_count(void)         { return g_create_count; }
 int mock_esp_timer_start_periodic_call_count(void) { return g_start_periodic_count; }
@@ -56,9 +64,13 @@ int mock_esp_timer_start_once_call_count(void)     { return g_start_once_count; 
 int mock_esp_timer_stop_call_count(void)           { return g_stop_count; }
 int mock_esp_timer_restart_call_count(void)        { return g_restart_count; }
 int mock_esp_timer_delete_call_count(void)         { return g_delete_count; }
+/* FW-07 — number of esp_timer_get_time() calls observed. */
+int mock_esp_timer_get_time_call_count(void)       { return g_get_time_count; }
 
 uint64_t mock_esp_timer_last_period_us(void)         { return g_last_period_us; }
 uint64_t mock_esp_timer_last_period_us_oneshot(void) { return g_last_period_us_oneshot; }
+/* FW-07 — last now_us value returned to the production caller. */
+int64_t mock_esp_timer_get_time_last_return(void)   { return g_get_time_last_return; }
 
 int mock_esp_timer_handle_count(void) { return g_create_count; }
 
@@ -88,14 +100,17 @@ void mock_esp_timer_reset(void)
     g_stop_return           = ESP_OK;
     g_restart_return        = ESP_OK;
     g_delete_return         = ESP_OK;
+    g_get_time_return       = 0;
     g_create_count          = 0;
     g_start_periodic_count  = 0;
     g_start_once_count      = 0;
     g_stop_count            = 0;
     g_restart_count         = 0;
     g_delete_count          = 0;
+    g_get_time_count        = 0;
     g_last_period_us        = 0;
     g_last_period_us_oneshot = 0;
+    g_get_time_last_return  = 0;
 }
 
 esp_err_t mock_esp_timer_create(const esp_timer_create_args_t *args,
@@ -172,6 +187,19 @@ esp_err_t mock_esp_timer_delete(esp_timer_handle_t handle)
         g_slots[idx].handle   = NULL;
     }
     return g_delete_return;
+}
+
+/* FW-07 boot-button — esp_timer_get_time() target. Returns
+ * whatever the test primed via mock_esp_timer_get_time_set_return()
+ * (default 0). Records call count + last-returned value so tests
+ * can assert duration math (e.g. rising-edge time minus
+ * falling-edge time). Mirrors how mock_esp_timer_start_periodic
+ * records last_period_us. */
+int64_t mock_esp_timer_get_time(void)
+{
+    g_get_time_count++;
+    g_get_time_last_return = g_get_time_return;
+    return g_get_time_return;
 }
 
 esp_err_t mock_esp_timer_fire_callback(esp_timer_handle_t handle)

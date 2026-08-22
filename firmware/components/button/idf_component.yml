@@ -1,0 +1,12 @@
+## button idf_component.yml — no managed-component deps.
+##
+## The button component requires driver + esp_timer + config
+## (project component); all three are declared via CMakeLists.txt
+## REQUIRES. No cJSON or other managed-component dependencies —
+## the button driver reads GPIO + esp_timer + config (factory-reset
+## helper at FW-07.3) only.
+
+## Deliberately NO `dependencies:` key — the idf_component.yml
+## validator rejects an empty dict (FW-06 fix at commit
+## 486eb7a). Leave the key out entirely when there are no
+## managed-component deps to declare.

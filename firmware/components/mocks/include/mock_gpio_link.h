@@ -17,5 +17,7 @@
 
 #define gpio_config(cfg)             mock_gpio_config(cfg)
 #define gpio_set_level(pin, level)   mock_gpio_set_level(pin, level)
+/* FW-07 boot-button — redirect gpio_get_level to the mock. */
+#define gpio_get_level(pin)          mock_gpio_get_level(pin)
 
 #endif  /* !MOCK_GPIO_USE_REAL */
