@@ -27,6 +27,20 @@
  * production source passed, but only inspects a small subset. */
 typedef int wifi_mode_t;
 typedef int wifi_interface_t;
+
+/* wifi_init_config_t — opaque stub for host. IDF's real struct has
+ * ~30 fields; on host the mock ignores them. We declare a typedef so
+ * the production source compiles unchanged on host. The macro
+ * WIFI_INIT_CONFIG_DEFAULT() zero-initializes the struct; IDF's real
+ * macro sets ~30 default values, but the host mock never reads them. */
+typedef struct {
+    int _placeholder;
+} wifi_init_config_t;
+
+#ifndef WIFI_INIT_CONFIG_DEFAULT
+#define WIFI_INIT_CONFIG_DEFAULT() ((wifi_init_config_t){ ._placeholder = 0 })
+#endif
+
 typedef struct {
     /* The capture inspects the SSID slot (wifi_config_t.ap.ssid[32])
      * for the FW-05.1 whoami S3 / bring-up assertions. Other slots
@@ -57,12 +71,14 @@ typedef struct {
 } wifi_config_t;
 
 /* ---------- primable return values (test helpers) ---------- */
+void mock_esp_wifi_init_return_set(esp_err_t r);
 void mock_esp_wifi_set_mode_return_set(esp_err_t r);
 void mock_esp_wifi_set_config_return_set(esp_err_t r);
 void mock_esp_wifi_start_return_set(esp_err_t r);
 void mock_esp_wifi_stop_return_set(esp_err_t r);
 
 /* ---------- call counters / captured state ---------- */
+int  mock_esp_wifi_init_call_count(void);
 int  mock_esp_wifi_set_mode_call_count(void);
 int  mock_esp_wifi_set_config_call_count(void);
 int  mock_esp_wifi_start_call_count(void);
@@ -74,6 +90,7 @@ int  mock_esp_wifi_set_config_capture_get_mode(wifi_interface_t *out);
 void mock_esp_wifi_reset(void);
 
 /* ---------- mock targets (called via the link-header redirect) ---------- */
+esp_err_t mock_esp_wifi_init(const wifi_init_config_t *cfg);
 esp_err_t mock_esp_wifi_set_mode(wifi_mode_t mode);
 esp_err_t mock_esp_wifi_set_config(wifi_interface_t iface, wifi_config_t *cfg);
 esp_err_t mock_esp_wifi_start(void);

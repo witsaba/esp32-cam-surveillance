@@ -123,6 +123,7 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_log.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_wifi.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_netif.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_event.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_http_server.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_system.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
@@ -219,6 +220,12 @@ ALL_TESTS = [
     "provision_accepts_missing_name [fw-05.4]",
     "provision_accepts_missing_description [fw-05.4]",
     "provision_accepts_well_formed_body [fw-05.4]",
+    # FW-05 regression: device flash caught missing esp_wifi_init
+    # (engram #3627). The host mock doesn't enforce the
+    # "init must precede set_mode" invariant; this test makes
+    # the dependency load-bearing so any future refactor that
+    # drops the init call would fail RED here too.
+    "softap_bringup_calls_esp_wifi_init_before_set_mode [fw-05][regression]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3

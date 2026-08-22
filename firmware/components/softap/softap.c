@@ -2,14 +2,19 @@
  *
  * The function `softap_run_provisioning(cfg)` performs the FR-1a
  * step 4 bring-up sequence:
- *   1. esp_wifi_set_mode(WIFI_MODE_AP)
- *   2. esp_netif_create_default_wifi_ap()
- *   3. esp_wifi_set_config(WIFI_IF_AP, &cfg_ap) — SSID = ESP_<MAC>,
+ *   1. esp_wifi_init(&cfg_init)         — required first; without this
+ *                                         esp_wifi_set_mode returns
+ *                                         ESP_ERR_WIFI_NOT_INIT (caught
+ *                                         on device flash, see
+ *                                         engram #3627)
+ *   2. esp_wifi_set_mode(WIFI_MODE_AP)
+ *   3. esp_netif_create_default_wifi_ap()
+ *   4. esp_wifi_set_config(WIFI_IF_AP, &cfg_ap) — SSID = ESP_<MAC>,
  *      WIFI_AUTH_OPEN (R-26 satisfied by FW-05.4 validation +
  *      FW-08 teardown)
- *   4. esp_wifi_start()
- *   5. httpd_start(&server, &cfg_httpd)
- *   6. httpd_register_uri_handler for /whoami (GET) + /provision (POST)
+ *   5. esp_wifi_start()
+ *   6. httpd_start(&server, &cfg_httpd)
+ *   7. httpd_register_uri_handler for /whoami (GET) + /provision (POST)
  *
  * On green path the function blocks inside httpd_start()'s worker
  * loop until esp_restart() fires from provision_post_handler(). Each
@@ -33,6 +38,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_event.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_http_server.h"
@@ -42,6 +48,7 @@
 #ifdef UNITY_HOST_BUILD
 #include "mock_esp_wifi_link.h"
 #include "mock_esp_netif_link.h"
+#include "mock_esp_event_link.h"
 #include "mock_http_server_link.h"
 #include "mock_esp_system_link.h"
 #endif
@@ -64,15 +71,31 @@ static boot_status_t softap_bring_up(const config_t *cfg)
 {
     boot_status_t fail = { .ret = ESP_FAIL, .step = BOOT_STEP_SOFTAP_START };
 
-    /* Step 1: mode */
-    esp_err_t r = esp_wifi_set_mode(WIFI_MODE_AP);
-    if (r != ESP_OK) {
-        ESP_LOGE(TAG, "softap_start failed: %s", esp_err_to_name(r));
+    /* Step 1: esp_netif_init — one-time underlying TCP/IP stack init.
+     * Idempotent per IDF docs; safe to call repeatedly. Must come
+     * before esp_netif_create_default_wifi_ap(). */
+    esp_err_t r = esp_netif_init();
+    if (r != ESP_OK && r != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "softap_start failed: esp_netif_init: %s", esp_err_to_name(r));
         fail.ret = r;
         return fail;
     }
 
-    /* Step 2: netif */
+    /* Step 2: default event loop — required for esp_wifi to deliver
+     * WIFI_EVENT_AP_START etc. Idempotent (returns ESP_ERR_INVALID_STATE
+     * if already created). */
+    r = esp_event_loop_create_default();
+    if (r != ESP_OK && r != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "softap_start failed: esp_event_loop_create_default: %s", esp_err_to_name(r));
+        fail.ret = r;
+        return fail;
+    }
+
+    /* Step 3: create the AP netif BEFORE esp_wifi_init. IDF v5.5.3
+     * requires this order — calling esp_netif_create_default_wifi_ap()
+     * after esp_wifi_init returns ESP_ERR_INVALID_STATE because the
+     * internal handler setup conflicts with the wifi driver state
+     * (caught on device flash, engram #3630). */
     esp_netif_t *netif = esp_netif_create_default_wifi_ap();
     if (netif == NULL) {
         ESP_LOGE(TAG, "softap_start failed: netif null");
@@ -80,7 +103,29 @@ static boot_status_t softap_bring_up(const config_t *cfg)
         return fail;
     }
 
-    /* Step 3: config (SSID = ESP_<last-3-mac-bytes>, OPEN auth). On
+    /* Step 4: esp_wifi_init — must be called before any other wifi
+     * API. Without this, the device returns ESP_ERR_WIFI_NOT_INIT on
+     * esp_wifi_set_mode (bug discovered via device flash on 2026-08-21,
+     * engram #3627). We use IDF's WIFI_INIT_CONFIG_DEFAULT() macro on
+     * device; the host mock ignores the cfg pointer. */
+    wifi_init_config_t cfg_init = WIFI_INIT_CONFIG_DEFAULT();
+    r = esp_wifi_init(&cfg_init);
+    if (r != ESP_OK) {
+        ESP_LOGE(TAG, "softap_start failed: esp_wifi_init: %s", esp_err_to_name(r));
+        fail.ret = r;
+        return fail;
+    }
+    ESP_LOGI(TAG, "esp_wifi_init ok");
+
+    /* Step 5: mode */
+    r = esp_wifi_set_mode(WIFI_MODE_AP);
+    if (r != ESP_OK) {
+        ESP_LOGE(TAG, "softap_start failed: %s", esp_err_to_name(r));
+        fail.ret = r;
+        return fail;
+    }
+
+    /* Step 6: config (SSID = ESP_<last-3-mac-bytes>, OPEN auth). On
      * the host the wifi_config_t struct is opaque to the mock — we
      * zero the ap.ssid and let IDF's default naming apply on device.
      * The mock records the call; tests assert it was made exactly
@@ -94,7 +139,7 @@ static boot_status_t softap_bring_up(const config_t *cfg)
         return fail;
     }
 
-    /* Step 4: Wi-Fi start. IDF does not expose esp_wifi_ap_start() in
+    /* Step 7: Wi-Fi start. IDF does not expose esp_wifi_ap_start() in
      * v5.5.3 — esp_wifi_start() works for both AP and STA mode. */
     r = esp_wifi_start();
     if (r != ESP_OK) {
@@ -105,10 +150,13 @@ static boot_status_t softap_bring_up(const config_t *cfg)
 
     ESP_LOGI(TAG, "softAP up");
 
-    /* Step 5: httpd start */
+    /* Step 8: httpd start. Use HTTPD_DEFAULT_CONFIG() macro instead of
+     * memset(&cfg, 0) — zero-init sets max_uri_handlers=0 and the
+     * httpd driver returns ESP_ERR_HTTPD_ALLOC_MEM (caught on device
+     * flash, engram #3631). The default config provides sensible
+     * defaults: max_uri_handlers=8, stack_size=4096, task_priority=5. */
     httpd_handle_t server = NULL;
-    httpd_config_t httpd_cfg;
-    memset(&httpd_cfg, 0, sizeof(httpd_cfg));
+    httpd_config_t httpd_cfg = HTTPD_DEFAULT_CONFIG();
     r = httpd_start(&server, &httpd_cfg);
     if (r != ESP_OK) {
         ESP_LOGE(TAG, "softap_start failed: %s", esp_err_to_name(r));

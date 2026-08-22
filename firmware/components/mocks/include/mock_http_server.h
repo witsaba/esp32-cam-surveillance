@@ -56,6 +56,33 @@ typedef struct {
     void *uri_match_fn;
 } httpd_config_t;
 
+/* HTTPD_DEFAULT_CONFIG() — IDF macro returns a struct with sensible
+ * defaults. On host we provide a minimal subset (max_uri_handlers=8
+ * is the load-bearing one — see engram #3631). The mock's
+ * httpd_start discards the config contents, so the other defaults
+ * are placeholders. */
+#ifndef HTTPD_DEFAULT_CONFIG
+#define HTTPD_DEFAULT_CONFIG() ((httpd_config_t){ \
+    .task_priority    = 5, \
+    .stack_size       = 4096, \
+    .core_id          = 0, \
+    .server_port      = 80, \
+    .ctrl_port        = 32768, \
+    .max_open_sockets = 7, \
+    .max_uri_handlers = 8, \
+    .max_resp_headers = 8, \
+    .backlog_conn     = 5, \
+    .lru_purge_enable = 0, \
+    .recv_wait_timeout = 5, \
+    .send_wait_timeout = 5, \
+    .global_user_ctx = NULL, \
+    .global_user_ctx_free = NULL, \
+    .open_fn = NULL, \
+    .close_fn = NULL, \
+    .uri_match_fn = NULL, \
+})
+#endif
+
 /* The IDF httpd_req_t is opaque. On host we provide our own
  * mock-friendly struct that the registered handler sees. Forward-
  * declare the struct + typedef alias so httpd_uri_t can reference

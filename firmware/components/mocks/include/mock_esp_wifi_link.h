@@ -14,6 +14,7 @@
 
 #ifndef MOCK_WIFI_USE_REAL
 
+#define esp_wifi_init(cfg)                   mock_esp_wifi_init(cfg)
 #define esp_wifi_set_mode(mode)              mock_esp_wifi_set_mode(mode)
 #define esp_wifi_set_config(iface, cfg)      mock_esp_wifi_set_config(iface, cfg)
 #define esp_wifi_start()                     mock_esp_wifi_start()

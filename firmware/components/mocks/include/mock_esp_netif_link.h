@@ -5,6 +5,7 @@
 
 #ifndef MOCK_NETIF_USE_REAL
 
+#define esp_netif_init()                                mock_esp_netif_init()
 #define esp_netif_create_default_wifi_ap()              mock_esp_netif_create_default_wifi_ap()
 #define esp_netif_destroy(h)                            mock_esp_netif_destroy(h)
 

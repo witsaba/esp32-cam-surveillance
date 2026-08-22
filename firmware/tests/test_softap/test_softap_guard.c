@@ -42,6 +42,7 @@
 #include "mock_nvs_flash_link.h"
 #include "mock_esp_wifi_link.h"
 #include "mock_esp_netif_link.h"
+#include "mock_esp_event_link.h"
 #include "mock_http_server_link.h"
 #include "mock_esp_system_link.h"
 

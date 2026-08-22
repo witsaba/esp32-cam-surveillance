@@ -24,6 +24,7 @@
 #include "mock_nvs_flash_link.h"
 #include "mock_esp_wifi_link.h"
 #include "mock_esp_netif_link.h"
+#include "mock_esp_event_link.h"
 #include "mock_http_server_link.h"
 #include "mock_esp_system_link.h"
 
@@ -304,4 +305,48 @@ TEST_CASE(
 
     cJSON_Delete(root);
     mock_httpd_req_free(req);
+}
+
+/* Regression test for engram #3627 — device flash caught missing
+ * esp_wifi_init() because the host mock doesn't enforce the
+ * "init must precede set_mode" invariant. Asserting the call
+ * count here makes the dependency a load-bearing assertion that
+ * would catch a future refactor that drops the init call. */
+TEST_CASE(
+    "softap_bringup_calls_esp_wifi_init_before_set_mode [fw-05][regression]",
+    "[softap][fw-05][regression]")
+{
+    mock_nvs_reset();
+    mock_esp_system_reset();
+    mock_esp_wifi_reset();
+    mock_esp_netif_reset();
+    mock_esp_event_reset();
+    mock_httpd_reset();
+    mock_log_reset();
+
+    config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.schema_version = CONFIG_SCHEMA_VERSION;
+
+    boot_status_t s = softap_run_provisioning(&cfg);
+    (void)s;
+
+    /* esp_wifi_init must have been called exactly once — before any
+     * other wifi API. The device returns ESP_ERR_WIFI_NOT_INIT
+     * otherwise. */
+    TEST_ASSERT_EQUAL_INT(1, mock_esp_wifi_init_call_count());
+    /* And the bring-up must have proceeded through the rest of the
+     * chain (init ok → set_mode ok → netif ok → set_config ok →
+     * start ok → httpd ok → 2 URI registers). */
+    TEST_ASSERT_EQUAL_INT(1, mock_esp_wifi_set_mode_call_count());
+    TEST_ASSERT_EQUAL_INT(1, mock_esp_wifi_set_config_call_count());
+    TEST_ASSERT_EQUAL_INT(1, mock_esp_wifi_start_call_count());
+
+    /* IDF v5.5.3 also requires esp_netif_init() + esp_event_loop_create_default()
+     * to be called BEFORE esp_wifi_init() — the device returns
+     * ESP_ERR_INVALID_STATE on esp_netif_create_default_wifi_ap()
+     * otherwise (caught on device flash, engram #3630). */
+    TEST_ASSERT_EQUAL_INT(1, mock_esp_netif_init_call_count());
+    TEST_ASSERT_EQUAL_INT(1, mock_esp_event_loop_create_default_call_count());
+    TEST_ASSERT_EQUAL_INT(1, mock_esp_netif_create_default_wifi_ap_call_count());
 }
