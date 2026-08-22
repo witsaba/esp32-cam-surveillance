@@ -1,7 +1,7 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 2 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016` — see amendment blockquote at the end of § FW-02).
-> **Next SDD to start**: FW-03 (`firmware-boot-orchestrator`).
+> **Status**: 4 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 PR #7 open for review — see amendment blockquote at the end of § FW-05).
+> **Next SDD to start**: FW-06 (`firmware-status-led`) — after FW-05 merges.
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
 > **Date**: 2026-08-21.
@@ -505,6 +505,45 @@ SDD change: `firmware-softap-provisioning` · Closes: R-10, R-11, R-12, R-26.
   - **Scenario: JSON missing required keys is rejected.** Given a `POST /provision` JSON body missing `wifi_ssid`, When the request is processed, Then the server returns a 4xx status naming the missing key.
   - **Scenario: well-formed request passes.** Given a well-formed `POST /provision` body, When the request is processed, Then the server returns a 2xx status and persists the fields.
 - **Depends on:** FW-05.2.
+
+> **Amendment 2026-08-21 (FW-05 PR #7 open for review).** The HTTP-server milestone closes R-10, R-11, R-12, and the inbound-validation half of R-26 across 4 work-unit commits on `feat/fw-05-softap-provisioning`:
+>
+> | SHA | Subject | Closes |
+> |---|---|---|
+> | `01b4cca` | feat(softap): bring up softAP + GET /whoami + POST /provision handlers (FW-05.1, FW-05.2) | FW-05.1 + FW-05.2 (initial commit landed all 8 FW-05.1 + FW-05.2 tests + 4 mocks + cJSON dep + softAP component) |
+> | `57ab8fe` | feat(softap): partial-update semantics + re-provisioning /whoami (FW-05.3) | FW-05.3 |
+> | `afb90ec` | test(softap): malformed-JSON guard with bite-proof (FW-05.4) | FW-05.4 |
+> | `2d72473` | fix(softap): relax guard to require only wifi_ssid+wifi_password (aligns with FW-05.3 partial update) | (reconciliation; no new node, fixes the spec ambiguity surfaced in batch 2) |
+> | `7eb7c01` | fix(softap): align softAP bring-up with IDF v5.5.3 init order (3 device-flash bugs) | engram #3627, #3630, #3631 (esp_wifi_init, netif init order, HTTPD_DEFAULT_CONFIG) |
+> | `9b91c62` | fix(softap): set max_connection=4 explicitly (was 0 from memset) | engram #3636 (user-reported: cannot connect to softAP) |
+> | `43d7fa4` | feat(softap): minimal provisioning home page (GET / with HTML form) | scope expansion 2026-08-22 (user-directed; no new R-id) |
+> | `71c0194` | fix(softap): own the cfg via module-static (was dangling on caller return) | engram #3639 (station-join LoadProhibited crash) |
+> | `17161ee` | fix(softap): call esp_netif_set_default_netif (was missing netif default) | engram #3640 (lwIP semaphore crash on DHCP ACK) |
+> | `37b1639` | fix(sdkconfig): bump HTTPD_TASK_STACK_SIZE 4096 → 8192 | (no-op — IDF v5.5.3 doesn't expose this symbol; reverted in `0c650ec`) |
+> | `0c650ec` | fix(softap): heap-allocate home page buffer (httpd stack overflows) | engram #3641 + #3642 (stack overflow → pthread crash on GET /) |
+>
+> **PR**: #7 (`feat/fw-05-softap-provisioning` → `main`, draft, awaiting user review and merge).
+> **Test results**: `idf.py test --target esp32` → 38/38 production tests PASS (16 FW-05 + 15 FW-03 + 7 FW-02). All 3 bite-proof stub-build passes fire as expected (`Pass 2` schema_version, `Pass 3` determinism, `Pass 4` validation with 3 fail + 3 pass — the optional-field tests no longer bite since name/description are not validation-rejected).
+> **Build**: `idf.py build` succeeds; `firmware.bin` = 569,888 bytes (0x8b220), 58 % of the 960 KB factory partition (`0xF0000`), 42 % free.
+> **Verify-report verdict**: PASS — all 4 milestone nodes CLOSED, 4/4 requirements closed, 16/16 scenarios closed.
+>
+> **5 documented design deviations** (verify-report #3623):
+>
+> 1. `esp_wifi_ap_start()` → `esp_wifi_start()` — IDF v5.5.3 does not expose `esp_wifi_ap_start()`; the function `esp_wifi_start()` works for AP mode.
+> 2. `esp_netif_destroy_default_netif()` → `esp_netif_destroy()` — IDF v5.5.3 takes an `esp_netif_t*` argument.
+> 3. cJSON include path: `<cjson/cJSON.h>` in docs but `<cJSON/cJSON.h>` in source — matches IDF examples.
+> 4. 5 host IDF header stubs added at `firmware/tests/host_include/` (constants + typedefs only) to avoid pulling in device-only transitive headers on host.
+> 5. **256 KB M0 evidence gate is outdated** — the factory partition was enlarged to `0xF0000` (960 KB) after FW-01. Current firmware.bin (569 KB) fits the 960 KB partition with 42 % free. The 256 KB wording should be amended in a follow-up doc PR (out of FW-05 scope).
+>
+> **1 spec reconciliation** (batch 3 fix, commit `2d72473`): the spec's req-softap-003 (partial-update: absent key preserves) and req-softap-004 (missing key → 400) are reconciled by interpreting "required keys" as `wifi_ssid` + `wifi_password` only. Name and Description are optional (per R-09 "Name + Description = advisory labels editable via config command"), so omitting them from the POST body preserves the current NVS values. This aligns the implementation with PRD § FR-1a L122-131 + FW-05.3 S2 ("user POSTs only `wifi_password`").
+>
+> **1 scope expansion** (commit `43d7fa4`, added after merge-candidate review on 2026-08-22): the user flagged that without a minimal provisioning home page, a phone user connecting to the softAP has no way to issue the JSON `POST /provision` body — phones don't ship with curl/Postman. The PRD's milestones doc L472 deferred captive-portal UX; the PRD L89 deferred the captive portal entirely; the PRD's `Out-of-scope` block listed "Provisioning mobile app / desktop captive-portal wizard — owner: provisioning tooling PRD (does not exist yet; deferred)." The user explicitly directed the orchestrator to ship a minimal `GET /` home page with an HTML form that posts to `/provision`. Scope expansion: the softAP now serves a third URI (`/`) returning a tiny embedded HTML page (~2 KB of source, ~2.8 KB rendered) with form fields for `wifi_ssid`, `wifi_password`, `name`, `description`, pre-filled with the current NVS identity for re-provisioning. The HTML is HTML-escaped for the user-controlled fields (XSS prevention). Deferred to a separate PRD / future work: captive-portal DNS rebinding (iOS/Android auto-open the portal), mDNS / DNS-SD advertisement, WPA2 PSK on the softAP, pre-filled SSID from a scanned network list. The provision tooling PRD (mobile app / desktop wizard) remains the proper home for these.
+>
+> **5 device-interaction bugs caught during end-to-end testing** (user tested the softAP from a phone on 2026-08-22 after each fix). These would NOT have been caught by host tests, `make build`, or `make smoke` — they required real-silicon + interactive use. The pattern: host mocks don't validate IDF state machines, struct-initialization correctness, lwIP internal pointer chains, or task stack depth. Every fix included a regression test that would fail RED on host if the bug regressed. Commits: `7eb7c01`, `9b91c62`, `17161ee`, `71c0194`, `0c650ec` (one revert of a no-op `CONFIG_HTTPD_TASK_STACK_SIZE` Kconfig attempt that the IDF doesn't expose; engram #3642). See engrams #3627 / #3630 / #3631 / #3636 / #3639 / #3640 / #3641 / #3642 for the full story.
+>
+> **Device-verified end-to-end success** (2026-08-22): user erased flash, flashed `0c650ec`, monitored. Phone connected to `ESP_9D5009`, fetched the 2881-byte home page, POSTed `/provision` with `{ssid:Liwaisi Wifi, name:Estudio}`, device saved the config and rebooted into normal mode. The softAP provisioning flow is the first FW-05 capability that has been device-verified end-to-end through every node — `/` (home page, FW-05 home-page scope expansion), `/whoami` (FW-05.1 + FW-05.3 round-trip), and `/provision` (FW-05.2 + FW-05.3 partial-update + FW-05.4 strict validation guard). The success of this flow validates the user's mandate to flash + monitor + interactively test every chip-code change.
+>
+> **1 SUGGESTION** (verify-report #3623): `firmware/scripts/smoke.sh` was not extended with FW-05-specific `grep` patterns (softAP up / URI /whoami registered / URI /provision registered). Smoke still passes via the FW-03 grep but does not catch FW-05 log-line regressions. Deferred to a follow-up doc PR or to FW-08 (which will exercise the softAP lifecycle end-to-end).
 
 ### FW-06 — Status LED reflects every boot and runtime state
 

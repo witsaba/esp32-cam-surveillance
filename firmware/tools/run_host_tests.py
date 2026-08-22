@@ -82,6 +82,7 @@ def _common_cflags(extra_defines):
     host_include = os.path.join(PROJECT_DIR, 'tests', 'host_include')
     esp_common_include = os.path.join(IDF_PATH, 'components', 'esp_common', 'include')
     log_include = os.path.join(IDF_PATH, 'components', 'log', 'include')
+    json_cjson_include = os.path.join(IDF_PATH, 'components', 'json', 'cJSON')
     flags = [
         '-std=c11',
         '-Wall', '-Wextra', '-Wno-unused-parameter',
@@ -91,9 +92,11 @@ def _common_cflags(extra_defines):
         f'-I{NVS_INCLUDE}',                       # nvs.h types
         f'-I{esp_common_include}',                # esp_err.h
         f'-I{log_include}',                       # esp_log.h
+        f'-I{json_cjson_include}',                # cJSON.h (IDF location)
         f'-I{PROJECT_DIR}/components/config/include',
         f'-I{PROJECT_DIR}/components/boot/include',
         f'-I{PROJECT_DIR}/components/mocks/include',
+        f'-I{PROJECT_DIR}/components/softap/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
     ]
@@ -109,12 +112,21 @@ def _build(basename, extra_defines, test_files, workdir):
     """
     all_sources = [
         UNITY_SRC,
+        os.path.join(IDF_PATH, 'components', 'json', 'cJSON', 'cJSON.c'),
         os.path.join(PROJECT_DIR, 'components', 'config', 'config.c'),
+        os.path.join(PROJECT_DIR, 'components', 'softap', 'softap.c'),
+        os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_handlers.c'),
+        os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_home.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_nvs_flash.cpp'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_boot_button.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_init_returns.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_supervision_record.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_log.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_wifi.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_netif.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_event.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_http_server.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_system.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
@@ -187,6 +199,40 @@ ALL_TESTS = [
     # FW-03.4 stability guard
     "boot_decide_provisioning is deterministic across calls [fw-03.4][guard][bite-proof]",
     "boot_decide_provisioning returns same value twice when stub absent [fw-03.4][green]",
+    # FW-05.1 /whoami identity (3 scenarios)
+    "whoami_returns_identity_json_fresh_device [fw-05.1]",
+    "whoami_response_is_application_json_and_parses [fw-05.1]",
+    "whoami_mac_is_12_char_lowercase_hex [fw-05.1]",
+    # FW-05.2 /provision writes + reboots (3 outline rows + 2 length-caps)
+    "provision_writes_nvs_and_reboots_home_2_4 [fw-05.2][row-1]",
+    "provision_writes_nvs_and_reboots_office_5g [fw-05.2][row-2]",
+    "provision_writes_nvs_and_reboots_guest [fw-05.2][row-3]",
+    "provision_rejects_ssid_over_32_chars [fw-05.2][length-cap]",
+    "provision_rejects_description_over_128_chars [fw-05.2][length-cap]",
+    # FW-05.3 round-trip + partial update
+    "whoami_round_trips_existing_name_and_description [fw-05.3]",
+    "provision_partial_update_preserves_name_and_description [fw-05.3]",
+    # FW-05.4 strict validation guard (wifi_ssid + wifi_password are
+    # REQUIRED; name + description are OPTIONAL per PRD § FR-1a +
+    # FW-05.3 partial-update semantics)
+    "provision_rejects_non_json_body [fw-05.4]",
+    "provision_rejects_missing_wifi_ssid [fw-05.4]",
+    "provision_rejects_missing_wifi_password [fw-05.4]",
+    "provision_accepts_missing_name [fw-05.4]",
+    "provision_accepts_missing_description [fw-05.4]",
+    "provision_accepts_well_formed_body [fw-05.4]",
+    # FW-05 regression: device flash caught missing esp_wifi_init
+    # (engram #3627). The host mock doesn't enforce the
+    # "init must precede set_mode" invariant; this test makes
+    # the dependency load-bearing so any future refactor that
+    # drops the init call would fail RED here too.
+    "softap_bringup_calls_esp_wifi_init_before_set_mode [fw-05][regression]",
+    # FW-05 home page (scope expansion 2026-08-22)
+    "home_get_serves_html_form_with_provision_action [fw-05][home-page]",
+    "home_get_prefills_existing_identity [fw-05][home-page][fw-05.3]",
+    "home_get_html_escapes_identity [fw-05][home-page][security]",
+    # FW-05 station-join crash regression (engram #3639)
+    "softap_owns_cfg_after_caller_returns [fw-05][regression][engram-3639]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -223,6 +269,12 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_fail_loud.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_decide.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_stability_guard.c'),
+    # FW-05 softAP provisioning
+    os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_whoami.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_provision.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_guard.c'),
+    # FW-05 home page (scope expansion 2026-08-22)
+    os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_home.c'),
 ]
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
@@ -231,6 +283,25 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
 # remains is exactly the determinism bite-proof, which MUST fail.
 FW03_4_GUARD_TEST_FILES = [
     os.path.join(PROJECT_DIR, 'tests', 'test_boot', 'test_boot_stability_guard.c'),
+]
+
+# Pass-4 stub build includes ONLY the FW-05.4 guard file. All 6
+# guard tests compile under -DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1:
+#   - The 3 required-key rejection tests (non-JSON, missing-
+#     wifi_ssid, missing-wifi_password) FAIL because the handler
+#     no longer enforces validation (it bypasses the parse +
+#     required-key checks and proceeds straight to merge + save +
+#     restart).
+#   - The 2 accepts-missing-* tests (missing name / description)
+#     continue to PASS — those keys are OPTIONAL, so they were
+#     always going to be merged-absent + preserved-from-cfg
+#     regardless of whether the validation block ran.
+#   - The 1 well-formed test continues to PASS.
+# So the runner expects 3 fail + 3 pass. Each failure message
+# contains the literal "validation" so the runner can verify the
+# bite-proof pattern.
+FW05_4_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_guard.c'),
 ]
 
 
@@ -337,8 +408,62 @@ def main():
     print(f"OK: FW-03.4 stub build → bite-proof test fails with "
           f"'determinism' message as expected.")
 
+    # ----- Pass 4: FW-05.4 strict-validation stub build -----
+    # Compile softap_handlers.c + test_softap_guard.c with
+    # -DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1 so the validation block
+    # in provision_post_handler_impl is macro-skipped. Under stub:
+    #   - 3 rejection tests FAIL (non-JSON, missing-wifi_ssid,
+    #     missing-wifi_password): they assert 400 + no NVS write +
+    #     no esp_restart, but the handler skips validation and
+    #     proceeds to merge + save + restart (200). Each failure
+    #     message contains the literal "validation".
+    #   - 2 acceptance tests PASS (accepts-missing-name,
+    #     accepts-missing-description): the handler reaches merge
+    #     with absent identity keys → preserves from cfg seed → test
+    #     asserts 200 + save + restart, all of which hold.
+    #   - 1 well-formed test PASSES (its assertions hold under
+    #     both builds).
+    # So Pass 4 expects exactly 3 FAIL + 3 PASS.
     print()
-    print("=== FW-02 + FW-03 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
+    print("=== Pass 4: FW-05.4 stub build (SOFTAP_TEST_STUB_ACCEPT_ALL_BODIES, guard file) ===")
+    fw05_4_bin = _build('fw05_4_tests_stub',
+                        ['-DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES=1'],
+                        FW05_4_GUARD_TEST_FILES, workdir)
+    fw05_4_rc, fw05_4_out = _run_binary(fw05_4_bin)
+    if fw05_4_rc == 0:
+        sys.exit(f"FAIL: FW-05.4 stub build returned 0; expected bite-proof "
+                 f"to fail. The stub gate didn't bypass the validation "
+                 f"path, so the rejection tests still passed. Output:\n{fw05_4_out}")
+    if "FAIL" not in fw05_4_out:
+        sys.exit(f"FAIL: FW-05.4 stub build rc != 0 but no FAIL line in "
+                 f"output:\n{fw05_4_out}")
+    # The failure messages must mention "validation" per the
+    # milestones doc bite-proof requirement — this is how the verify
+    # phase proves the guard surfaces the violated invariant.
+    if "validation" not in fw05_4_out:
+        sys.exit(f"FAIL: FW-05.4 stub build failure message does not "
+                 f"contain the literal 'validation':\n{fw05_4_out}")
+    # Exactly 3 tests should fail (non-JSON + missing-wifi_ssid +
+    # missing-wifi_password). The 2 accepts-missing-* tests +
+    # accepts-well-formed test must pass.
+    fail_count = sum(1 for line in fw05_4_out.splitlines() if line.startswith("FAIL ["))
+    pass_count = sum(1 for line in fw05_4_out.splitlines() if line.startswith("PASS ["))
+    if fail_count != 3:
+        sys.exit(f"FAIL: FW-05.4 stub build should have exactly 3 "
+                 f"failures (non-JSON + missing-wifi_ssid + "
+                 f"missing-wifi_password); got {fail_count}. "
+                 f"Output:\n{fw05_4_out}")
+    if pass_count != 3:
+        sys.exit(f"FAIL: FW-05.4 stub build should have exactly 3 "
+                 f"passes (accepts-missing-name + "
+                 f"accepts-missing-description + well-formed); got "
+                 f"{pass_count}. Output:\n{fw05_4_out}")
+    print(f"OK: FW-05.4 stub build → 3 rejection tests fail with "
+          f"'validation' message as expected; 3 green/partial tests "
+          f"still pass.")
+
+    print()
+    print("=== FW-02 + FW-03 + FW-05 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
     print(f"workdir kept at {workdir} for debugging; safe to rm -rf.")
 
 
