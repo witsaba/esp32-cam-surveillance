@@ -359,6 +359,9 @@ ALL_TESTS = [
     # STOP_ON_CONNECT` which IS defined in cflags, so S2 is
     # excluded).
     "test_fw08_4_ip_up_triggers_teardown_within_1s [fw-08.4][scenario-S1]",
+    # FW-08.5 — softAP alive during joining (T-08-F).
+    "test_fw08_5_pre_ip_up_keeps_softap_active_at_5s [fw-08.5][scenario-S1]",
+    "test_fw08_5_pre_ip_up_retries_do_not_affect_softap [fw-08.5][scenario-S2]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -467,6 +470,8 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # sdkconfig.defaults:36 default y) so S2 is excluded from
     # Pass 1.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_event_teardown.c'),
+    # FW-08.5 — softAP alive during STA joining (T-08-F).
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_event_joining.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard

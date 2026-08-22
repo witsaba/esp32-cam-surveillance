@@ -80,6 +80,20 @@ void on_sta_got_ip_handler(void *arg,
                             int32_t id,
                             void *data);
 
+/* Mode-selection helper (FW-08.5). When the softAP is active
+ * at init time (e.g. first-boot-after-factory-reset), the wifi
+ * component uses WIFI_MODE_APSTA so the softAP keeps serving
+ * HTTP endpoints during the STA joining window. Once the STA
+ * gets an IP, the IP-up handler in wifi_event.c calls
+ * wifi_stop() (T-08-E) which transitions to WIFI_MODE_STA.
+ * The helper is module-static and inline so tests can verify
+ * the selection logic via the mock_esp_wifi_set_mode_arg_at
+ * inspection without a separate export. */
+static inline wifi_mode_t wifi_select_mode(bool softap_active)
+{
+    return softap_active ? WIFI_MODE_APSTA : WIFI_MODE_STA;
+}
+
 uint32_t wifi_backoff_delay_ms(uint32_t consecutive_failures)
 {
     /* Clamp failures to the table's last index (the 30 s cap).
@@ -196,10 +210,11 @@ esp_err_t wifi_init(const config_t *cfg)
 
     /* Step 4: set mode. APSTA when softAP is active (FW-08.5
      * — softAP must stay alive during the joining window);
-     * STA otherwise. T-08-F fleshes out the APSTA branch with
-     * the softap_is_active() gate. */
-    wifi_mode_t mode = softap_is_active() ? WIFI_MODE_APSTA
-                                          : WIFI_MODE_STA;
+     * STA otherwise. The mode selection is extracted into a
+     * single inline helper for testability (FW-08.5 S1 asserts
+     * the LAST set_mode arg is APSTA when softap_is_active()
+     * is true). */
+    wifi_mode_t mode = wifi_select_mode(softap_is_active());
     r = esp_wifi_set_mode(mode);
     if (r != ESP_OK) return r;
 
