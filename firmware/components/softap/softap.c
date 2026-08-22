@@ -287,3 +287,14 @@ esp_err_t softap_stop(void)
     g_cfg_valid = false;
     return ESP_OK;
 }
+
+/* FW-08.5 — returns true while softap_run_provisioning() owns the
+ * cfg. Production reads the existing g_cfg_valid bool set by
+ * softap_run_provisioning() (line 268) and cleared by softap_stop()
+ * (line 287). On host, the link-header redirect routes this to
+ * mock_softap_is_active_get() so tests can prime the value via
+ * mock_softap_is_active_set_return(bool). */
+bool softap_is_active(void)
+{
+    return g_cfg_valid;
+}

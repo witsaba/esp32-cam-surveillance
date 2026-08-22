@@ -1,5 +1,5 @@
-/* stub_inits.c — stubs for the 3 init interfaces FW-03 owns as
- * call-sites only.
+/* stub_inits.c — stubs for the remaining init interfaces FW-03 owns
+ * as call-sites only.
  *
  * Each stub returns ESP_OK on the green path; on the host build
  * it consults `mock_init_returns_get(step)` first, so the
@@ -9,10 +9,12 @@
  * not create the FreeRTOS task the stub would otherwise spin up.
  *
  * Each stub logs `// FW-NN: real impl lands in <milestone>` so
- * the next reviewer can grep for the follow-up. FW-08 replaces
- * `wifi_init`, FW-10 replaces `camera_init`, FW-13 replaces
- * `ws_init` — when those land, the orchestrator's call-site
- * remains (one-line adaptations if signatures differ).
+ * the next reviewer can grep for the follow-up. FW-08 replaced
+ * `wifi_init` (the strong symbol now lives in firmware/components/
+ * wifi/wifi.c — the linker resolves to that body). FW-10 replaces
+ * `camera_init`, FW-13 replaces `ws_init` — when those land, the
+ * orchestrator's call-site remains (one-line adaptations if
+ * signatures differ).
  */
 #include "boot.h"
 
@@ -24,15 +26,9 @@
 
 static const char *TAG = "boot";
 
-esp_err_t wifi_init(const config_t *cfg) {
-    (void)cfg;
-#ifdef UNITY_HOST_BUILD
-    esp_err_t forced = mock_init_returns_get(BOOT_STEP_WIFI_INIT);
-    if (forced != ESP_OK) return forced;
-#endif
-    ESP_LOGI(TAG, "stub: wifi_init  // FW-08: real impl lands in wifi station-mode init");
-    return ESP_OK;
-}
+/* wifi_init moved to firmware/components/wifi/wifi.c — the strong
+ * symbol resolves there via the linker. See T-08-A for the wifi
+ * component skeleton commit. */
 
 esp_err_t camera_init(const config_t *cfg) {
     (void)cfg;

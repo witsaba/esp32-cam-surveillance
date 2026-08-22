@@ -1,0 +1,42 @@
+# Kconfig — wifi component tunables (FW-08).
+#
+# The three FIRMWARE_WIFI_BACKOFF_* symbols encode the 6-row
+# exponential backoff schedule (2s/4s/8s/16s/30s cap). The wifi
+# component owns its own Kconfig (not main/Kconfig.projbuild) so
+# future wifi tunables land here without growing the projbuild
+# file. sdkconfig.defaults mirrors these defaults at the build
+# level.
+
+menu "Wi-Fi Station"
+
+    config FIRMWARE_WIFI_BACKOFF_INITIAL_MS
+        int "Wi-Fi station first-retry delay (ms; failure 1)"
+        range 500 30000
+        default 2000
+        help
+            PRD § FR-4 L186-192 + milestones FW-08.1 charter
+            L742-748. The first reconnect after a wifi-association
+            failure waits this long. Default 2000 ms mirrors the WS
+            reconnect initial period (FIRMWARE_WS_RECONNECT_INITIAL_MS).
+
+    config FIRMWARE_WIFI_BACKOFF_CAP_MS
+        int "Wi-Fi station backoff cap (ms; failure 5+)"
+        range 5000 300000
+        default 30000
+        help
+            Maximum reconnect delay after exponential growth. The
+            6-row schedule is 2000/4000/8000/16000/CAP/CAP ms for
+            failures 1..6. Default 30000 ms matches the WS
+            reconnect cap.
+
+    config FIRMWARE_WIFI_BACKOFF_MAX_FAILS
+        int "Wi-Fi station max consecutive fails before giving up (-1 = infinite)"
+        range -1 1000
+        default -1
+        help
+            Reserved for FW-15 soft-recovery to consult; FW-08
+            itself uses infinite retries (per charter L734). Set to
+            a positive integer to bound retries — FW-15 will
+            surface an esp_restart decision at this count.
+
+endmenu

@@ -43,6 +43,15 @@ boot_status_t softap_run_provisioning(const config_t *cfg);
  * (does NOT unwind partial state). */
 esp_err_t softap_stop(void);
 
+/* FW-08.5 — returns true while softap_run_provisioning() owns the
+ * cfg and the softAP is still broadcasting. Returns false after
+ * softap_stop() clears g_cfg_valid. Idempotent getter used by
+ * the wifi component to decide whether to select WIFI_MODE_APSTA
+ * at init time (so the captive portal stays alive during the
+ * station-join window). On host, the link-header redirect routes
+ * this to mock_softap_is_active_get(). */
+bool softap_is_active(void);
+
 #ifdef __cplusplus
 }
 #endif

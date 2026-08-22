@@ -94,12 +94,32 @@ typedef struct {
 })
 #endif
 
+/* FW-08 — WIFI_MODE_APSTA / WIFI_MODE_STA constants matching
+ * IDF v5.5.3 (esp_wifi_types_generic.h:20-32). The wifi component
+ * uses WIFI_MODE_APSTA when softap_is_active() is true at init
+ * time (FW-08.5) and WIFI_MODE_STA otherwise (FW-08.6 + the
+ * post-IP-up teardown). */
+#ifndef WIFI_MODE_NULL
+#define WIFI_MODE_NULL   0
+#define WIFI_MODE_STA    1
+#define WIFI_MODE_AP     2
+#define WIFI_MODE_APSTA  3
+#endif
+
+/* WIFI_IF_STA matches IDF v5.5.3 (esp_wifi_types.h). */
+#ifndef WIFI_IF_STA
+#define WIFI_IF_STA      0
+#endif
+
 /* ---------- primable return values (test helpers) ---------- */
 void mock_esp_wifi_init_return_set(esp_err_t r);
 void mock_esp_wifi_set_mode_return_set(esp_err_t r);
 void mock_esp_wifi_set_config_return_set(esp_err_t r);
 void mock_esp_wifi_start_return_set(esp_err_t r);
 void mock_esp_wifi_stop_return_set(esp_err_t r);
+/* FW-08 — esp_wifi_connect / esp_wifi_disconnect return primes. */
+void mock_esp_wifi_connect_return_set(esp_err_t r);
+void mock_esp_wifi_disconnect_return_set(esp_err_t r);
 
 /* ---------- call counters / captured state ---------- */
 int  mock_esp_wifi_init_call_count(void);
@@ -107,6 +127,13 @@ int  mock_esp_wifi_set_mode_call_count(void);
 int  mock_esp_wifi_set_config_call_count(void);
 int  mock_esp_wifi_start_call_count(void);
 int  mock_esp_wifi_stop_call_count(void);
+/* FW-08 — connect/disconnect counters. */
+int  mock_esp_wifi_connect_call_count(void);
+int  mock_esp_wifi_disconnect_call_count(void);
+/* FW-08 — wifi_mode_t argument of the idx-th esp_wifi_set_mode
+ * call (0-indexed, newest-first via ring buffer of cap 32).
+ * Out-of-range returns WIFI_MODE_NULL (0). */
+wifi_mode_t mock_esp_wifi_set_mode_arg_at(size_t idx);
 void mock_esp_wifi_set_config_capture(wifi_config_t *out);
 int  mock_esp_wifi_set_config_capture_get_mode(wifi_interface_t *out);
 
@@ -119,3 +146,6 @@ esp_err_t mock_esp_wifi_set_mode(wifi_mode_t mode);
 esp_err_t mock_esp_wifi_set_config(wifi_interface_t iface, wifi_config_t *cfg);
 esp_err_t mock_esp_wifi_start(void);
 esp_err_t mock_esp_wifi_stop(void);
+/* FW-08 — station connect/disconnect. */
+esp_err_t mock_esp_wifi_connect(void);
+esp_err_t mock_esp_wifi_disconnect(void);
