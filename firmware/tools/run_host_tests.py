@@ -241,6 +241,9 @@ ALL_TESTS = [
     "booting_holds_level_on [fw-06.1]",
     "wifi_connecting_period_100ms [fw-06.1]",
     "ws_connecting_period_50ms [fw-06.1]",
+    # FW-06.2 connected (2 scenarios)
+    "idle_period_500ms [fw-06.2]",
+    "streaming_stops_periodic_holds_on [fw-06.2]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -285,6 +288,7 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_home.c'),
     # FW-06 status LED
     os.path.join(PROJECT_DIR, 'tests', 'test_led', 'test_led_boot_connecting.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_led', 'test_led_connected.c'),
 ]
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
