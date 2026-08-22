@@ -45,6 +45,8 @@
  * containing the literal "timer_fire" so the runner can verify
  * the guard is load-bearing.
  */
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "led.h"
@@ -202,11 +204,35 @@ esp_err_t led_set_state(led_state_t s)
          * already stopped) then `esp_timer_start_periodic`. This
          * makes the assertion `start_periodic_call_count >= 1`
          * hold on every transition into a blink state. */
+#ifdef LED_TEST_STUB_DISABLE_TIMER
+        /* FW-06.4 bite-proof guard: under stub build, no timer
+         * was created. Any transition into a blink state would
+         * leave the LED stuck in a stale period because no
+         * timer callback fires. Trip the guard with the literal
+         * "timer_fire" so the Pass-5 runner can grep for it.
+         *
+         * The guard is intentionally a printf + abort — it works
+         * on both host and device without needing the unity
+         * runtime linked into the production source. The Pass-5
+         * runner greps stdout for the literal "timer_fire" to
+         * verify the guard surfaced the violated invariant. */
+        if (!g_periodic_handle) {
+            printf("timer_fire invariant violated: "
+                   "led_set_state requires a running esp_timer "
+                   "on transition; under "
+                   "LED_TEST_STUB_DISABLE_TIMER the timer was "
+                   "never created and the LED would stick in "
+                   "the previous period.\n");
+            fflush(stdout);
+            abort();
+        }
+#else
         if (g_periodic_handle) {
             esp_timer_stop(g_periodic_handle);
             esp_err_t r = esp_timer_start_periodic(g_periodic_handle, cfg.period_us);
             if (r != ESP_OK) return r;
         }
+#endif
         /* Entry condition: LED starts ON at the beginning of each
          * blink cycle. */
         gpio_set_level(CONFIG_FIRMWARE_LED_GPIO, led_level_on());

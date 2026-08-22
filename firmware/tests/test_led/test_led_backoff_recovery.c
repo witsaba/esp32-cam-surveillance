@@ -33,6 +33,9 @@ static void set_up_led(void)
 {
     mock_gpio_reset();
     mock_esp_timer_reset();
+    /* See test_led_boot_connecting.c for rationale. */
+    led_deinit();
+
     esp_err_t rc = led_init();
     TEST_ASSERT_EQUAL_INT(ESP_OK, rc);
 }

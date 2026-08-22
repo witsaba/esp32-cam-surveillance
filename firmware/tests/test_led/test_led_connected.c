@@ -28,6 +28,9 @@ static void set_up_led(void)
 {
     mock_gpio_reset();
     mock_esp_timer_reset();
+    /* See test_led_boot_connecting.c for rationale. */
+    led_deinit();
+
     esp_err_t rc = led_init();
     TEST_ASSERT_EQUAL_INT(ESP_OK, rc);
 }
@@ -79,7 +82,10 @@ TEST_CASE(
 
     /* No NEW start_periodic on the streaming transition. */
     TEST_ASSERT_EQUAL_INT(1, mock_esp_timer_start_periodic_call_count());
-    /* GPIO set_level called one more time than before (entry ON). */
+    /* GPIO set_level called one more time than before (entry ON).
+     * led_init() may have added one for the initial OFF state;
+     * we just verify that the STREAMING transition called
+     * gpio_set_level at least once. */
     TEST_ASSERT_GREATER_THAN_INT(set_level_count_before,
                                  mock_gpio_set_level_call_count());
 }

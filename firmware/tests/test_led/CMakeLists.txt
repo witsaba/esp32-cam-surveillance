@@ -19,3 +19,7 @@ idf_component_register(
     INCLUDE_DIRS "."
     PRIV_REQUIRES led mocks unity
 )
+# Note: test_led_guard.c is compiled only by run_host_tests.py Pass 5
+# (with -DLED_TEST_STUB_DISABLE_TIMER=1). It is intentionally NOT
+# compiled into the production host build because the bite-proof
+# scenario requires the LED_TEST_STUB_DISABLE_TIMER gate.
