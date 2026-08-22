@@ -143,6 +143,7 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_system.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_gpio.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_timer.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_config.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
@@ -282,6 +283,20 @@ ALL_TESTS = [
     "boot_short_2s_does_not_assert [fw-07.2]",
     "strap_pin_transient_500ms_is_absorbed [fw-07.2]",
     "strap_grace_release_before_window_ends [fw-07.2]",
+    # FW-07.3 runtime factory-reset (5 scenarios). Phase D wires
+    # the RUNTIME-phase cb dispatch + the
+    # `config_factory_reset + esp_restart` cb body (registered
+    # by `boot_run_normal` on device). The test covers: S10
+    # 10 s runtime press fires the cb exactly once; S11 5 s
+    # press is ignored; S12 boundary (10001 ms vs 9999 ms);
+    # S13 runtime press does NOT touch the `camera_cfg` NVS
+    # namespace; S14 `config_factory_reset + esp_restart`
+    # called exactly once each.
+    "runtime_10s_press_wipes_and_restarts [fw-07.3][scenario-S10]",
+    "runtime_5s_press_is_ignored [fw-07.3][scenario-S11]",
+    "runtime_9990ms_does_not_trigger_10010ms_does [fw-07.3][scenario-S12]",
+    "runtime_press_does_not_touch_camera_cfg_namespace [fw-07.3][scenario-S13]",
+    "factory_reset_calls_once_each [fw-07.3][scenario-S14]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -342,6 +357,15 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # FW-07.2 boot-time long-press detection (5 scenarios).
     # Phase C lands the BOOT_TIME latch logic + these 5 tests.
     os.path.join(PROJECT_DIR, 'tests', 'test_button', 'test_button_boot_longpress.c'),
+    # FW-07.3 runtime factory-reset (5 scenarios). Phase D
+    # wires the RUNTIME-phase cb dispatch + the
+    # `config_factory_reset + esp_restart` cb body. Tests
+    # verify the button driver fires the registered cb
+    # exactly once when the press crosses
+    # RUNTIME_LONGPRESS_MS during RUNTIME, and that the
+    # cb body does NOT touch the `camera_cfg` NVS
+    # namespace.
+    os.path.join(PROJECT_DIR, 'tests', 'test_button', 'test_button_runtime_reset.c'),
 ]
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The

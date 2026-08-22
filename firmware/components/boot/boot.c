@@ -1,4 +1,5 @@
-/* boot.c — FR-1 boot orchestrator (FW-03).
+/* boot.c — FR-1 boot orchestrator (FW-03) + FW-07.3 runtime cb
+ * dispatch (Phase D).
  *
  * Owns `boot_run()`, `boot_run_provisioning()`, `boot_run_normal()`,
  * and `boot_decide_provisioning()`. The dispatcher (`boot_run`)
@@ -8,6 +9,14 @@
  *     wifi_init → camera_init → ws_init →
  *     health_task_start → capture_task_start →
  *     stream_task_start → control_task_start
+ *
+ * After all supervision tasks start, the orchestrator registers
+ * `boot_factory_reset_and_restart` as the button driver
+ * RUNTIME-phase long-press callback (FW-07.3). The callback is
+ * NOT registered on the provisioning branch — provisioning mode
+ * already drives the softAP + HTTP server, and a runtime reset
+ * on the provisioning branch would re-enter the boot orchestrator
+ * without ever touching the dispatcher's decision logic.
  *
  * On any non-OK return from a stub, the orchestrator wraps the
  * step in a tagged `boot_status_t { .step = failing step,
@@ -22,6 +31,7 @@
  */
 #include "boot.h"
 #include "boot_status.h"
+#include "button.h"
 #include "config.h"
 #include "softap.h"
 
@@ -30,11 +40,48 @@
 #ifdef UNITY_HOST_BUILD
 #include "mock_boot_link.h"
 #include "mock_nvs_flash_link.h"
+#include "mock_esp_system_link.h"
+#include "mock_config_link.h"
 #else
+#include "esp_system.h"
 #include "nvs_flash.h"
 #endif
 
 static const char *TAG = "boot";
+
+/* FW-07.3 — runtime factory-reset callback. Invoked by the
+ * button driver when the user holds the button for ≥
+ * RUNTIME_LONGPRESS_MS during the RUNTIME phase (FW-07.3
+ * contract; PRD § FR-7 L236). The callback wipes the NVS
+ * `config` namespace via config_factory_reset() and reboots via
+ * esp_restart(); if the wipe fails the callback logs the
+ * underlying error and returns WITHOUT rebooting — the user
+ * can retry by holding the button again.
+ *
+ * Registered by `boot_run_normal()` (NOT `boot_run_provisioning()`)
+ * because the provisioning branch already drives the softAP +
+ * HTTP server and a runtime reset there would re-enter the
+ * orchestrator without passing through the decision logic.
+ *
+ * On host, the production call sites `config_factory_reset()`
+ * and `esp_restart()` are macro-redirected to the FW-07.3 +
+ * FW-05 mocks via `mock_config_link.h` and
+ * `mock_esp_system_link.h` — see those headers for details.
+ */
+static void boot_factory_reset_and_restart(void)
+{
+    esp_err_t err = config_factory_reset();
+    if (err != ESP_OK) {
+        /* Do NOT restart if the wipe failed — the user can
+         * retry by holding the button again. The error is
+         * logged for greppability + post-mortem
+         * investigation. */
+        ESP_LOGE(TAG, "config_factory_reset failed: %s",
+                 esp_err_to_name(err));
+        return;
+    }
+    esp_restart();
+}
 
 /* Step-2 decision: empty SSID OR button-pressed → provisioning.
  *
@@ -63,7 +110,10 @@ bool boot_decide_provisioning(const config_t *cfg, bool button_pressed)
 }
 
 /* Provisioning branch. FW-05 owns the body (softAP + HTTP server).
- * MUST NOT start supervision tasks. */
+ * MUST NOT start supervision tasks. MUST NOT register the
+ * runtime factory-reset cb (the device is already in provisioning
+ * mode; a runtime reset there would re-enter the orchestrator
+ * and bypass the decision step). */
 boot_status_t boot_run_provisioning(const config_t *cfg)
 {
     ESP_LOGI(TAG, "fw: provisioning branch entered (softAP body)");
@@ -74,7 +124,15 @@ boot_status_t boot_run_provisioning(const config_t *cfg)
  * wrapped in a `boot_status_t` tagged with the failing `boot_step_t`,
  * and on non-OK the orchestrator emits an `ESP_LOGE("boot",
  * "step=%s err=%s", boot_step_str(step), esp_err_to_name(ret))` line
- * so the failing step is human-readable + greppable. */
+ * so the failing step is human-readable + greppable.
+ *
+ * FW-07.3 — after the supervision tasks start (system is
+ * running), initialize the button driver and register
+ * `boot_factory_reset_and_restart` as the runtime long-press cb.
+ * The registration is the LAST step — by then the system is
+ * fully initialized and the button driver is the only remaining
+ * subsystem to bring up before handing control back to the IDF
+ * event loop. */
 boot_status_t boot_run_normal(const config_t *cfg)
 {
     boot_status_t s = { .ret = ESP_OK, .step = BOOT_STEP_RETURN };
@@ -97,6 +155,32 @@ boot_status_t boot_run_normal(const config_t *cfg)
     BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_CAPTURE,  capture_task_start());
     BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_STREAM,   stream_task_start());
     BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_CONTROL,  control_task_start());
+
+    /* FW-07.3 — initialize the button driver and register the
+     * runtime factory-reset cb. The button driver is the last
+     * subsystem brought up; the cfg arg is currently unused
+     * (the button driver does not consume wifi credentials or
+     * identity). A future phase may consult cfg to suppress
+     * the cb in special operating modes (e.g. OTA in
+     * progress). */
+    (void)cfg;
+    esp_err_t bi_r = button_init();
+    if (bi_r != ESP_OK) {
+        s.ret = bi_r;
+        s.step = BOOT_STEP_BUTTON_INIT;
+        ESP_LOGE(TAG, "step=%s err=%s",
+                 boot_step_str(s.step), esp_err_to_name(s.ret));
+        return s;
+    }
+    esp_err_t cb_r = button_on_runtime_longpress_set(
+        boot_factory_reset_and_restart);
+    if (cb_r != ESP_OK) {
+        s.ret = cb_r;
+        s.step = BOOT_STEP_BUTTON_INIT;
+        ESP_LOGE(TAG, "step=%s err=%s",
+                 boot_step_str(s.step), esp_err_to_name(s.ret));
+        return s;
+    }
 
 #undef BOOT_CHECK_STEP
 
@@ -160,6 +244,7 @@ const char *boot_step_str(boot_step_t step)
         [BOOT_STEP_SUPERVISION_STREAM]      = "supervision_stream",
         [BOOT_STEP_SUPERVISION_CONTROL]     = "supervision_control",
         [BOOT_STEP_SOFTAP_START]            = "softap_start",
+        [BOOT_STEP_BUTTON_INIT]             = "button_init",
         [BOOT_STEP_RETURN]                  = "return",
     };
     if ((unsigned)step >= BOOT_STEP_COUNT) return "unknown";

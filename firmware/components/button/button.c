@@ -1,7 +1,8 @@
 /* button.c — FW-07 boot-button driver (R-03 measurement half + R-24
- * runtime factory reset). Phase C implementation: FW-07.2
+ * runtime factory reset). Phase D implementation: FW-07.2
  * boot-time long-press detection (latch + BOOT_TIME window +
- * strap-grace transient absorption).
+ * strap-grace transient absorption) + FW-07.3 runtime
+ * long-press callback dispatch.
  *
  * The driver owns 3 responsibilities per PRD § FR-1 step 2 L237 +
  * § FR-7 L234-238:
@@ -15,12 +16,14 @@
  *   2. **Runtime long-press → factory reset** (FW-07.3 — Phase D)
  *      — fires a user-registered callback exactly once when the
  *      user holds the button for ≥ RUNTIME_LONGPRESS_MS during
- *      the RUNTIME phase. Phase C declares
- *      `button_on_runtime_longpress_set()` to store the cb
- *      pointer; the actual dispatch lands in Phase D. The RUNTIME
- *      branch in `button_poll_once()` is a no-op in Phase C
- *      (state machine stays in whatever sub-state it had at the
- *      BOOT_TIME→RUNTIME transition; Phase D wires the cb fire).
+ *      the RUNTIME phase. `button_on_runtime_longpress_set()`
+ *      stores the cb pointer; each poll inside the RUNTIME+PRESSED
+ *      sub-state checks whether the press duration has crossed
+ *      RUNTIME_LONGPRESS_MS and fires the cb (gated by a
+ *      DEBOUNCE_MS*4 cooldown so the cb does not double-fire
+ *      while the user keeps holding past the threshold). Production
+ *      wires `config_factory_reset() + esp_restart()` into the
+ *      callback (registered in `boot.c::boot_run_normal()`).
  *
  *   3. **Strap-pin tolerance** (FW-07.1 — Phase B, this file) —
  *      the GPIO-0 ROM bootloader transient (~100 ms LOW after
@@ -28,7 +31,7 @@
  *      `button_init()`. Polls before the window expires return
  *      without state change.
  *
- * State machine (Phase C — FW-07.1 + FW-07.2):
+ * State machine (Phase C + D — FW-07.1 + FW-07.2 + FW-07.3):
  *
  *   phase: STRAP_GRACE → BOOT_TIME → RUNTIME
  *   state: IDLE → PRESSED → IDLE
@@ -37,27 +40,30 @@
  *   BOOT_TIME: measure boot-time press. Latch
  *     `g_boot_button_pressed_at_boot` when duration crosses
  *     BOOT_LONGPRESS_MS.
- *   RUNTIME: stop measuring boot-time (Phase C). Phase D wires
- *     the runtime long-press cb dispatch here.
+ *   RUNTIME: measure runtime press. Fire the registered cb when
+ *     duration crosses RUNTIME_LONGPRESS_MS (Phase D dispatch).
  *
- *   IDLE + falling edge → PRESSED; g_press_start_us = now_us
+ *   IDLE + falling edge → PRESSED; g_press_start_us = now_us;
+ *     g_runtime_cb_fired_at_us = 0 (fresh press: clear stale
+ *     cooldown).
  *   PRESSED + rising edge:
  *     duration = now_us - g_press_start_us
  *     if duration ≤ TAP_MAX_US:  → IDLE (TAP — ignore)
  *     else if phase == BOOT_TIME + duration ≥ BOOT_LONGPRESS_MS:
  *                                  latch g_boot_button_pressed_at_boot
  *                                  → IDLE
- *     else:                      → IDLE (qualified press;
- *                                  Phase D will dispatch the
- *                                  runtime cb in the RUNTIME
- *                                  branch before reaching this
- *                                  path)
- *   PRESSED + each poll (while held): check duration; if
- *     duration ≥ BOOT_LONGPRESS_MS and phase == BOOT_TIME, latch
- *     g_boot_button_pressed_at_boot (sticky; stays set until
- *     button_deinit). This handles the S6 scenario where the
- *     press continues past BOOT_LONGPRESS_MS without a rising
- *     edge inside BOOT_TIME.
+ *     else if phase == RUNTIME + duration ≥ RUNTIME_LONGPRESS_MS:
+ *                                  fire registered cb (cooldown
+ *                                  gated) → IDLE
+ *     else:                      → IDLE (qualified press)
+ *   PRESSED + each poll (while held in BOOT_TIME): check duration;
+ *     if ≥ BOOT_LONGPRESS_MS, latch `g_boot_button_pressed_at_boot`
+ *     sticky-true (handles S6 — press continues past threshold
+ *     without a rising edge inside BOOT_TIME).
+ *   PRESSED + each poll (while held in RUNTIME, Phase D): check
+ *     duration; if ≥ RUNTIME_LONGPRESS_MS and (cb cooldown
+ *     expired OR cb never fired), invoke the registered cb and
+ *     record the fire timestamp.
  *
  *   All polls while phase == STRAP_GRACE: return without state
  *   change.
@@ -129,6 +135,30 @@ static inline int64_t button_boot_time_window_us(void)
     return (int64_t)CONFIG_FIRMWARE_BOOT_BUTTON_BOOT_TIME_WINDOW_MS * 1000LL;
 }
 
+/* FW-07.3 — RUNTIME long-press threshold (microseconds).
+ * Compared against `now_us - g_press_start_us` while the state
+ * machine is in BUTTON_PHASE_RUNTIME and PRESSED. Crossing this
+ * threshold fires the registered runtime cb exactly once
+ * (cooldown DEBOUNCE_MS * 4 prevents double-fire while the user
+ * keeps holding past the threshold). Default 10000 ms per PRD
+ * § FR-7 L236. */
+static inline int64_t button_runtime_longpress_us(void)
+{
+    return (int64_t)CONFIG_FIRMWARE_BOOT_BUTTON_RUNTIME_LONGPRESS_MS * 1000LL;
+}
+
+/* FW-07.3 — DEBOUNCE_MS*4 cooldown (microseconds) suppresses
+ * the runtime cb fire while the user keeps holding past
+ * RUNTIME_LONGPRESS_MS. Without the cooldown, every poll after
+ * the threshold would fire the cb again on each tick. Default
+ * 20 ms * 4 = 80 ms — long enough to absorb the continuous-read
+ * race (one extra poll at the boundary) yet short enough to be
+ * transparent to a user who releases and re-presses. */
+static inline int64_t button_runtime_cooldown_us(void)
+{
+    return (int64_t)CONFIG_FIRMWARE_BOOT_BUTTON_DEBOUNCE_MS * 4 * 1000LL;
+}
+
 /* Phase / state storage — single-byte/8-byte volatile, atomic
  * write on Xtensa LX6. Matches FW-03 lock-free idiom in boot.c. */
 static volatile button_phase_t g_phase = BUTTON_PHASE_COUNT;  /* sentinel: uninit */
@@ -157,6 +187,39 @@ static volatile int64_t g_boot_time_end_us = 0;
 static volatile int64_t g_press_start_us    = 0;
 static volatile int64_t g_last_edge_us      = 0;
 static volatile bool    g_press_in_progress = false;
+
+/* FW-07.3 — runtime-press-window start timestamp. The runtime
+ * long-press check measures duration from
+ * `g_runtime_press_start_us`, NOT from `g_press_start_us`. This
+ * matters for the S6 scenario: a press that started in
+ * STRAP_GRACE and continues through BOOT_TIME into RUNTIME has
+ * `g_press_start_us = 0` (the original falling edge — used for
+ * the boot-time latch), but the runtime cb should only count
+ * the time elapsed after the state machine enters RUNTIME. If
+ * we measured from `g_press_start_us`, a 10 s press at
+ * BOOT_TIME (S6 scenario) would falsely fire the runtime cb on
+ * the rising edge (duration = 10 s ≥ RUNTIME_LONGPRESS_MS).
+ *
+ * `g_runtime_press_start_us` is set in two places:
+ *   1. On the BOOT_TIME → RUNTIME transition while PRESSED,
+ *      so the runtime counter starts from the transition
+ *      moment (S6 case: cb does NOT fire because the
+ *      remaining RUNTIME duration is below the threshold).
+ *   2. On a fresh falling edge in RUNTIME (when no press is
+ *      in progress), so a fresh press in RUNTIME also has a
+ *      clean timer start.
+ *
+ * Reset on `button_deinit()`. */
+static volatile int64_t g_runtime_press_start_us = 0;
+
+/* FW-07.3 — runtime-cb fire timestamp. `g_runtime_cb_fired_at_us
+ * = 0` means "never fired in this button_init() lifetime". After
+ * the registered cb fires, the timestamp is set to the now_us
+ * value of the firing poll; subsequent polls within the
+ * DEBOUNCE_MS*4 cooldown window check this timestamp and
+ * suppress re-fire. Clearing it on rising edge lets a fresh
+ * press fire a fresh cb. Reset on `button_deinit()`. */
+static volatile int64_t g_runtime_cb_fired_at_us = 0;
 
 /* BOOT_TIME long-press latch (FW-07.2 — Phase C). Sticky: once
  * asserted during BOOT_TIME (via the duration-crossing check
@@ -302,10 +365,11 @@ esp_err_t button_deinit(void)
     g_press_in_progress = false;
     g_boot_button_pressed_at_boot = false;
     g_runtime_longpress_cb = NULL;
+    g_runtime_cb_fired_at_us = 0;
+    g_runtime_press_start_us = 0;
     g_initialized    = 0;
     return ESP_OK;
 }
-
 /* Synchronous state-machine advance (host-test entry + the
  * esp_timer cb body). now_us MUST be the value returned by
  * esp_timer_get_time() (or its mock equivalent).
@@ -338,9 +402,26 @@ esp_err_t button_deinit(void)
  *         catch in case the in-POLL check missed it — e.g. the
  *         duration crossed exactly at the rising edge boundary).
  *         Return to IDLE.
- *       - Else: qualified press — return to IDLE. Phase D will
- *         dispatch the runtime cb in the RUNTIME branch before
- *         reaching this path. */
+ *       - Else: qualified press — return to IDLE.
+ *
+ * Phase D (FW-07.3) additions (RUNTIME cb dispatch):
+ *   - While state == PRESSED and phase == RUNTIME, check on
+ *     each poll whether the press duration has crossed
+ *     RUNTIME_LONGPRESS_MS; if so:
+ *       1. Compute the cooldown window: skip re-fire if
+ *          (now_us - g_runtime_cb_fired_at_us) < DEBOUNCE_MS*4.
+ *       2. Otherwise fire the registered cb (NULL = no-op) and
+ *          record the fire timestamp for the cooldown.
+ *   - On the rising edge in RUNTIME, clear the cooldown
+ *     timestamp (g_runtime_cb_fired_at_us = 0) so a fresh press
+ *     fires a fresh cb. Without this clear, a stale timestamp
+ *     would suppress the next cb if it lands inside the
+ *     cooldown window.
+ *   - If no cb is registered, the RUNTIME check is a no-op
+ *     (the cb pointer is NULL — see g_runtime_longpress_cb).
+ *     No log line, no crash. This is the "silent ignore"
+ *     contract.
+ */
 void button_poll_once(int64_t now_us)
 {
     if (!g_initialized) return;
@@ -388,15 +469,25 @@ void button_poll_once(int64_t now_us)
      * the boot-time latch is sticky (already-set stays set) and
      * no further boot-time measurement happens. Phase D wires
      * the runtime long-press cb dispatch on the RUNTIME
-     * branch. */
+     * branch.
+     *
+     * If a press is in flight at the transition (state ==
+     * PRESSED), seed `g_runtime_press_start_us = now_us` so
+     * the runtime duration counter starts from THIS moment
+     * — NOT from the original falling edge (which lives in
+     * `g_press_start_us` and is preserved for the boot-time
+     * latch). This is the Phase D correction that fixes S6:
+     * a 10 s press starting inside STRAP_GRACE has
+     * `g_press_start_us = 0` (the original falling edge), and
+     * the runtime cb should NOT fire when the rising edge
+     * lands at t=10000 — because only 4.5 s of that press
+     * happened DURING RUNTIME. */
     if (g_phase == BUTTON_PHASE_BOOT_TIME &&
         now_us >= g_boot_time_end_us) {
         g_phase = BUTTON_PHASE_RUNTIME;
-        /* Stay in the current sub-state (IDLE or PRESSED).
-         * A press that started in BOOT_TIME and crosses into
-         * RUNTIME while still held keeps g_press_start_us so
-         * Phase D can continue the duration measurement from
-         * the original falling edge. */
+        if (g_state == BUTTON_STATE_PRESSED) {
+            g_runtime_press_start_us = now_us;
+        }
     }
 
     int level = gpio_get_level(CONFIG_FIRMWARE_BOOT_BUTTON_GPIO);
@@ -410,11 +501,21 @@ void button_poll_once(int64_t now_us)
              * press started inside STRAP_GRACE,
              * g_press_in_progress + g_press_start_us were
              * already set there; if not (the press started
-             * inside BOOT_TIME), record it now. */
+             * inside BOOT_TIME), record it now. A fresh
+             * press also resets the runtime-cb fire
+             * timestamp so the next RUNTIME threshold
+             * crossing fires a fresh cb (Phase D). If we
+             * are in RUNTIME phase at the falling edge,
+             * seed g_runtime_press_start_us = now_us so
+             * the runtime duration counter starts fresh. */
             if (!g_press_in_progress) {
                 g_press_start_us = now_us;
                 g_press_in_progress = true;
+                if (g_phase == BUTTON_PHASE_RUNTIME) {
+                    g_runtime_press_start_us = now_us;
+                }
             }
+            g_runtime_cb_fired_at_us = 0;
             g_state         = BUTTON_STATE_PRESSED;
             g_last_edge_us   = now_us;
         }
@@ -433,10 +534,53 @@ void button_poll_once(int64_t now_us)
                 g_boot_button_pressed_at_boot = true;
             }
         }
+        /* Phase D (FW-07.3): while still held in RUNTIME,
+         * check whether the press duration has crossed
+         * RUNTIME_LONGPRESS_MS; if so, fire the registered cb
+         * exactly once (DEBOUNCE_MS*4 cooldown prevents
+         * double-fire on subsequent polls while the user
+         * keeps holding). The duration is measured from
+         * `g_runtime_press_start_us` (set on RUNTIME entry
+         * or fresh falling edge in RUNTIME), NOT from
+         * `g_press_start_us` — see the comment on the
+         * g_runtime_press_start_us declaration for the S6
+         * rationale. */
+        if (pressed_now && g_phase == BUTTON_PHASE_RUNTIME) {
+            int64_t held_us = now_us - g_runtime_press_start_us;
+            if (held_us >= button_runtime_longpress_us()) {
+                /* Cooldown: skip re-fire if the cb fired
+                 * recently (within DEBOUNCE_MS*4). The cb
+                 * itself may take longer than the cooldown
+                 * if it does heavy work (NVS erase + esp
+                 * restart), so the next poll AFTER the cb
+                 * returns will likely be inside the cooldown
+                 * — that is the expected double-fire
+                 * suppression path. */
+                int64_t since_fire = now_us - g_runtime_cb_fired_at_us;
+                if (g_runtime_longpress_cb != NULL &&
+                    (g_runtime_cb_fired_at_us == 0 ||
+                     since_fire >= button_runtime_cooldown_us())) {
+                    g_runtime_longpress_cb();
+                    g_runtime_cb_fired_at_us = now_us;
+                }
+            }
+        }
         if (!pressed_now) {
-            /* Rising edge: close the press window. */
-            int64_t duration_us = now_us - g_press_start_us;
-            if (duration_us > button_tap_max_us()) {
+            /* Rising edge: close the press window. Two
+             * duration measures are used below:
+             *   - `total_duration_us = now_us - g_press_start_us`
+             *     for the boot-time press check (preserves
+             *     Phase C semantics: count the duration from
+             *     the original falling edge, even if it
+             *     landed inside STRAP_GRACE).
+             *   - `runtime_duration_us = now_us - g_runtime_press_start_us`
+             *     for the runtime cb dispatch (Phase D
+             *     correction: count the duration only while
+             *     the state machine was in RUNTIME — see
+             *     g_runtime_press_start_us rationale). */
+            int64_t total_duration_us = now_us - g_press_start_us;
+            int64_t runtime_duration_us = now_us - g_runtime_press_start_us;
+            if (total_duration_us > button_tap_max_us()) {
                 /* Qualified press. If we're still in
                  * BOOT_TIME and the press crossed
                  * BOOT_LONGPRESS_MS, latch the boot-time
@@ -445,16 +589,42 @@ void button_poll_once(int64_t now_us)
                  * BOOT_LONGPRESS_MS exactly at the moment
                  * of release. */
                 if (g_phase == BUTTON_PHASE_BOOT_TIME &&
-                    duration_us >= button_boot_longpress_us()) {
+                    total_duration_us >= button_boot_longpress_us()) {
                     g_boot_button_pressed_at_boot = true;
                 }
-                /* Phase D will dispatch the runtime cb in
-                 * the RUNTIME branch before reaching this
-                 * path. */
+                /* Phase D rising-edge boundary: also fire
+                 * the runtime cb if the runtime duration
+                 * crossed RUNTIME_LONGPRESS_MS exactly at
+                 * the rising-edge boundary (in case the
+                 * in-POLL check missed it — e.g. the press
+                 * reached exactly the threshold at the
+                 * release moment). */
+                if (g_phase == BUTTON_PHASE_RUNTIME &&
+                    runtime_duration_us >= button_runtime_longpress_us()) {
+                    int64_t since_fire = now_us - g_runtime_cb_fired_at_us;
+                    if (g_runtime_longpress_cb != NULL &&
+                        (g_runtime_cb_fired_at_us == 0 ||
+                         since_fire >= button_runtime_cooldown_us())) {
+                        g_runtime_longpress_cb();
+                        g_runtime_cb_fired_at_us = now_us;
+                    }
+                }
             }
             g_state       = BUTTON_STATE_IDLE;
             g_press_in_progress = false;  /* close the press window */
             g_press_start_us = 0;
+            /* Clear the runtime-state timestamps so the
+             * NEXT press in RUNTIME can fire a fresh cb.
+             * Without this clear, a stale fire-timestamp
+             * could fall inside the cooldown window on
+             * the next press and suppress the cb even
+             * when the user had released between presses;
+             * a stale runtime_press_start_us would put
+             * the duration counter in a bogus state.
+             * Both timestamps are reset, mirroring the
+             * boot-time-press-in-progress reset. */
+            g_runtime_press_start_us = 0;
+            g_runtime_cb_fired_at_us = 0;
             g_last_edge_us = now_us;
         }
         break;
