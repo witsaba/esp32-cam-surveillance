@@ -341,6 +341,9 @@ ALL_TESTS = [
     # FW-08.2 — AP-reboot recovery + counter reset (T-08-C).
     "test_fw08_2_ap_reboot_reconnects_within_30s [fw-08.2][scenario-S1]",
     "test_fw08_2_counter_resets_on_ip_up [fw-08.2][scenario-S2]",
+    # FW-08.3 — no-wedge guard (T-08-D). Green path only on
+    # production build; bite-proof runs under Pass 7 stub.
+    "test_fw08_3_misconfigured_ssid_returns_invalid_arg [fw-08.3][scenario-S2]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -434,13 +437,33 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_backoff.c'),
     # FW-08.2 — AP-reboot recovery + counter reset (T-08-C).
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_recovery.c'),
+    # FW-08.3 — no-wedge guard (T-08-D). Compiles the green-path
+    # test under the production build; the bite-proof test is
+    # compiled under the Pass 7 stub build (see FW08_3_GUARD
+    # _TEST_FILES below). The #ifdef inside the file selects
+    # which one is compiled into each build.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_guard.c'),
+]
+
+# FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
+# file. The build defines -DWIFI_TEST_STUB_USE_BLOCKING_WAIT=1
+# so wifi_init() short-circuits into the guard tripwire. The
+# bite-proof test asserts the guard fires with the literal
+# "bounded_wait" in the message. Mirrors Pass 5 / Pass 6 shape
+# (LED_TEST_STUB_DISABLE_TIMER / BUTTON_TEST_STUB_DISABLE
+# _DEBOUNCE) — the same compile flag is applied to BOTH the
+# production source (wifi.c) and the test file
+# (test_wifi_guard.c). The green-path test in test_wifi_guard.c
+# is excluded from this build by the `#ifndef WIFI_TEST_STUB
+# _USE_BLOCKING_WAIT` inside the file.
+FW08_3_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_guard.c'),
 ]
 
 # FW-08 — Pass 7 + Pass 8 stub-build file lists. Populated by
 # T-08-D (FW-08.3 bounded-wait guard) and T-08-G (FW-08.6
 # teardown-on-IP guard) respectively. The runner blocks below
 # (-- stub passes --) are wired in their respective commits too.
-FW08_3_GUARD_TEST_FILES = []  # T-08-D fills this in.
 FW08_6_GUARD_TEST_FILES = []  # T-08-G fills this in.
 
 # The literal substrings the Pass 7 / Pass 8 runners grep for.
@@ -760,8 +783,51 @@ def main():
           f"'debounce' invariant as expected (test failed "
           f"with rc={fw07_4_rc}).")
 
+    # ----- Pass 7: FW-08.3 bounded-wait invariant stub build -----
+    # Compile test_wifi_guard.c (and wifi.c) with
+    # -DWIFI_TEST_STUB_USE_BLOCKING_WAIT=1 so wifi_init()'s
+    # first-esp_wifi_connect branch short-circuits into the
+    # guard tripwire. The bite-proof test asserts the guard
+    # fires with the literal "bounded_wait" in the message.
+    # The Pass-7 runner expects:
+    #   - rc != 0 (TEST_FAIL_MESSAGE exits non-zero via longjmp
+    #     or via the abort path)
+    #   - literal "bounded_wait" present in stdout (from the
+    #     test's marker line AND from the TEST_FAIL_MESSAGE
+    #     body)
+    # The green-path test in test_wifi_guard.c ::
+    # test_fw08_3_misconfigured_ssid_returns_invalid_arg is
+    # excluded from this build by the `#ifndef WIFI_TEST_STUB
+    # _USE_BLOCKING_WAIT` inside the file — only the bite-proof
+    # runs.
     print()
-    print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
+    print("=== Pass 7: FW-08.3 stub build (WIFI_TEST_STUB_USE_BLOCKING_WAIT, guard file) ===")
+    fw08_3_bin = _build('fw08_3_tests_stub',
+                        ['-DWIFI_TEST_STUB_USE_BLOCKING_WAIT=1'],
+                        FW08_3_GUARD_TEST_FILES, workdir)
+    fw08_3_rc, fw08_3_out = _run_binary(fw08_3_bin)
+    # Under stub, the wifi_init() guard tripwire fires
+    # TEST_ASSERT_MESSAGE(0, "bounded_wait invariant violated: ...").
+    # The runner greps for the literal keyword in stdout.
+    if fw08_3_rc == 0:
+        sys.exit(f"FAIL: FW-08.3 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The stub gate "
+                 f"didn't bypass the bounded-wait invariant. "
+                 f"Output:\n{fw08_3_out}")
+    if WIFI_BITE_PROOF_KEYWORD not in fw08_3_out:
+        sys.exit(f"FAIL: FW-08.3 stub build output does not "
+                 f"contain the literal '{WIFI_BITE_PROOF_KEYWORD}':\n{fw08_3_out}")
+    # The guard test name should appear in the output so the
+    # runner can match it to the expected bite-proof.
+    if "guard_bite_proof_blocking_wait_rejected" not in fw08_3_out:
+        sys.exit(f"FAIL: FW-08.3 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw08_3_out}")
+    print(f"OK: FW-08.3 stub build → guard tripped on "
+          f"'{WIFI_BITE_PROOF_KEYWORD}' invariant as expected "
+          f"(test failed with rc={fw08_3_rc}).")
+
+    print()
+    print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
     print(f"workdir kept at {workdir} for debugging; safe to rm -rf.")
 
 

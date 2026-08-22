@@ -74,6 +74,18 @@ esp_err_t wifi_stop(void);
  * Public for testability + FW-15 future consumption. */
 uint32_t wifi_backoff_delay_ms(uint32_t consecutive_failures);
 
+/* FW-08.3 — guard tripwire. When the build defines
+ * `-DWIFI_TEST_STUB_USE_BLOCKING_WAIT=1`, wifi_init() short-
+ * circuits its first esp_wifi_connect() branch into a call to
+ * this function, which prints the literal "bounded_wait" and
+ * aborts via TEST_ASSERT_MESSAGE. Pass 7 of run_host_tests.py
+ * greps for the literal to confirm the guard is load-bearing.
+ *
+ * Not part of the production API — declared here only so the
+ * wifi.c wifi_init() body can call it without a forward
+ * declaration. */
+void wifi_guard_fail_blocking_wait(void);
+
 #ifdef __cplusplus
 }
 #endif

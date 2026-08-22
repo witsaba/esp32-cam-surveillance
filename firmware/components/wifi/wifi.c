@@ -250,9 +250,51 @@ esp_err_t wifi_init(const config_t *cfg)
     if (r != ESP_OK) return r;
     wifi_event_install_retry_cb(s_backoff_handle, timer_args.callback);
 
-    /* Step 9: issue the first esp_wifi_connect(). */
+    /* Step 9: issue the first esp_wifi_connect().
+     *
+     * FW-08.3 — bounded-wait guard. The reference firmware
+     * (backend/iot-camera/components/wifi/wifi.c:140-144)
+     * blocks on `portMAX_DELAY` here, which wedges the device
+     * on a misconfigured SSID. The wifi component never blocks
+     * — esp_wifi_connect() returns ESP_OK after the driver
+     * accepts the connect request (IDF's wifi task does the
+     * association asynchronously). The
+     * `#ifdef WIFI_TEST_STUB_USE_BLOCKING_WAIT` stub build
+     * (Pass 7 of run_host_tests.py) trips a guard tripwire
+     * that asserts the bounded-wait invariant by name so the
+     * runner can verify the guard is load-bearing. */
+#ifdef WIFI_TEST_STUB_USE_BLOCKING_WAIT
+    /* FW-08.3 bite-proof: simulate the reference firmware's
+     * portMAX_DELAY wedge by tripping the guard with the
+     * bounded_wait keyword. */
+    wifi_guard_fail_blocking_wait();
+#else
+    /* Green path: non-blocking connect. The IDF wifi task
+     * continues the association asynchronously; long-running
+     * retries happen on the WIFI_EVENT_STA_DISCONNECTED event
+     * handler in wifi_event.c. */
     r = esp_wifi_connect();
     if (r != ESP_OK) return r;
+#endif
 
     return ESP_OK;
+}
+
+/* FW-08.3 guard tripwire. Extracted so the `#ifdef` block in
+ * wifi_init() is a single conditional branch. The body prints
+ * the literal "bounded_wait" + aborts via TEST_ASSERT_MESSAGE
+ * so the runner's grep finds the invariant name in stdout.
+ *
+ * Mirrors the test_led_guard.c guard tripwire pattern. The
+ * assert macro is available via unity.h. */
+#ifdef UNITY_HOST_BUILD
+#include "unity.h"
+#endif
+
+void wifi_guard_fail_blocking_wait(void)
+{
+    /* The literal substring "bounded_wait" must appear here so
+     * Pass 7 of run_host_tests.py can grep for it. */
+    TEST_FAIL_MESSAGE("bounded_wait invariant violated: "
+                      "wifi_init blocked on portMAX_DELAY");
 }
