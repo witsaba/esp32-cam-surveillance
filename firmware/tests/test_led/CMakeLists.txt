@@ -15,6 +15,7 @@
 idf_component_register(
     SRCS "test_led_boot_connecting.c"
          "test_led_connected.c"
+         "test_led_backoff_recovery.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES led mocks unity
 )
