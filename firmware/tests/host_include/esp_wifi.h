@@ -21,4 +21,15 @@
 #define WIFI_MODE_AP     2
 #define WIFI_IF_AP       1
 
+/* wifi_auth_mode_t enum values — needed by softap.c which sets
+ * .ap.authmode = WIFI_AUTH_OPEN directly. The mock's wifi_config_t
+ * typedef uses uint8_t for the authmode slot, so the integer value
+ * is sufficient (we don't need the full enum). */
+#define WIFI_AUTH_OPEN     0
+#define WIFI_AUTH_WEP      1
+#define WIFI_AUTH_WPA_PSK  2
+#define WIFI_AUTH_WPA2_PSK 3
+#define WIFI_AUTH_WPA_WPA2_PSK 4
+#define WIFI_AUTH_ENTERPRISE 5
+
 #endif /* HOST_ESP_WIFI_H */

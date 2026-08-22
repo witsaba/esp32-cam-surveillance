@@ -116,6 +116,7 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'config', 'config.c'),
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap.c'),
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_handlers.c'),
+        os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_home.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_nvs_flash.cpp'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_boot_button.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_init_returns.c'),
@@ -226,6 +227,10 @@ ALL_TESTS = [
     # the dependency load-bearing so any future refactor that
     # drops the init call would fail RED here too.
     "softap_bringup_calls_esp_wifi_init_before_set_mode [fw-05][regression]",
+    # FW-05 home page (scope expansion 2026-08-22)
+    "home_get_serves_html_form_with_provision_action [fw-05][home-page]",
+    "home_get_prefills_existing_identity [fw-05][home-page][fw-05.3]",
+    "home_get_html_escapes_identity [fw-05][home-page][security]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -266,6 +271,8 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_whoami.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_provision.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_guard.c'),
+    # FW-05 home page (scope expansion 2026-08-22)
+    os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_home.c'),
 ]
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The

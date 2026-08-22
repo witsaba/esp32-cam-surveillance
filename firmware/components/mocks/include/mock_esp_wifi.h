@@ -51,7 +51,9 @@ typedef struct {
         uint8_t ssid_len;
         uint8_t channel;
         uint8_t authmode;
+        uint8_t ssid_hidden;
         uint8_t max_connection;
+        uint16_t beacon_interval;
     } ap;
     struct {
         uint8_t ssid[32];

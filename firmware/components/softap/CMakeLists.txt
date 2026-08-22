@@ -9,6 +9,7 @@
 idf_component_register(
     SRCS "softap.c"
          "softap_handlers.c"
+         "softap_home.c"
     INCLUDE_DIRS "include"
     REQUIRES boot config esp_wifi esp_netif esp_http_server esp_event
 )

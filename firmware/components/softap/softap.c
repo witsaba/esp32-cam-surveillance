@@ -63,9 +63,10 @@ static const char *TAG = "softap";
  * handler; on device, IDF's httpd worker does the same. */
 static const config_t *g_active_cfg = NULL;
 
-/* Forward decls — implemented in softap_handlers.c. */
+/* Forward decls — implemented in softap_handlers.c and softap_home.c. */
 extern esp_err_t whoami_get_handler_impl(httpd_req_t *req);
 extern esp_err_t provision_post_handler_impl(httpd_req_t *req);
+extern esp_err_t home_get_handler_impl(httpd_req_t *req);
 
 static boot_status_t softap_bring_up(const config_t *cfg)
 {
@@ -211,6 +212,25 @@ static boot_status_t softap_bring_up(const config_t *cfg)
         return fail;
     }
     ESP_LOGI(TAG, "URI /provision registered");
+
+    /* Home page (FW-05 scope expansion, 2026-08-22): GET / serves a
+     * minimal HTML form that POSTs to /provision. Without this, a
+     * phone user connecting to the softAP has no way to issue the
+     * POST. The PRD explicitly deferred captive-portal UX; this is
+     * the smallest thing that ships the value. See softap_home.c. */
+    httpd_uri_t home_uri = {
+        .uri      = "/",
+        .method   = HTTP_GET,
+        .handler  = home_get_handler_impl,
+        .user_ctx = (void *)cfg,
+    };
+    r = httpd_register_uri_handler(server, &home_uri);
+    if (r != ESP_OK) {
+        ESP_LOGE(TAG, "softap_start failed: %s", esp_err_to_name(r));
+        fail.ret = r;
+        return fail;
+    }
+    ESP_LOGI(TAG, "URI / registered");
 
     /* Green path: on the device, the httpd worker loop blocks here
      * until esp_restart() fires from provision_post_handler(). On
