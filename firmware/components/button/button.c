@@ -1,10 +1,392 @@
-/* button.c — FW-07 boot-button driver skeleton.
+/* button.c — FW-07 boot-button driver (R-03 measurement half + R-24
+ * runtime factory reset). Phase B implementation: FW-07.1 tap-ignore
+ * state machine.
  *
- * Phase A (skeleton): the implementation lands across Phase B
- * (FW-07.1 tap-ignore state machine), Phase C (FW-07.2 boot-time
- * press), Phase D (FW-07.3 runtime factory-reset), and Phase E
- * (FW-07.4 bite-proof guard). For Phase A we ship only the
- * header-include so the component is a no-op translation unit
- * and `make build` continues to succeed.
+ * The driver owns 3 responsibilities per PRD § FR-1 step 2 L237 +
+ * § FR-7 L234-238:
+ *
+ *   1. **Boot-time press signal** (FW-07.2 — Phase C) —
+ *      `boot_button_pressed_at_boot()` returns true iff the user
+ *      held the button for ≥ BOOT_LONGPRESS_MS during the
+ *      BOOT_TIME phase. Phase B ships the strong symbol that
+ *      returns false always (no boot-time detection wired yet).
+ *
+ *   2. **Runtime long-press → factory reset** (FW-07.3 — Phase D)
+ *      — fires a user-registered callback exactly once when the
+ *      user holds the button for ≥ RUNTIME_LONGPRESS_MS during
+ *      the RUNTIME phase. Phase B declares
+ *      `button_on_runtime_longpress_set()` to store the cb
+ *      pointer; the actual dispatch lands in Phase D.
+ *
+ *   3. **Strap-pin tolerance** (FW-07.1 — Phase B, this file) —
+ *      the GPIO-0 ROM bootloader transient (~100 ms LOW after
+ *      reset) is absorbed by a STRAP_GRACE_MS window after
+ *      `button_init()`. Polls before the window expires return
+ *      without state change.
+ *
+ * State machine (Phase B — FW-07.1 only):
+ *
+ *   phase: STRAP_GRACE → BOOT_TIME → RUNTIME
+ *   state: IDLE → PRESSED → IDLE
+ *
+ *   IDLE + falling edge → PRESSED; g_press_start_us = now_us
+ *   PRESSED + rising edge:
+ *     duration = now_us - g_press_start_us
+ *     if duration ≤ TAP_MAX_US:  → IDLE (TAP — ignore)
+ *     else:                      → IDLE (qualified press;
+ *                                  Phase C/D handle the
+ *                                  BOOT_TIME / RUNTIME branch
+ *                                  logic)
+ *   All polls while phase == STRAP_GRACE: return without state
+ *   change.
+ *
+ * Concurrency: state storage is `volatile` (single-byte/8-byte
+ * atomic writes on Xtensa LX6). The periodic esp_timer callback
+ * runs from the esp_timer task (dispatch_method ESP_TIMER_TASK);
+ * the public setters (`button_on_runtime_longpress_set`) write
+ * the callback pointer atomically before the timer starts, so no
+ * read/write race on the cb.
+ *
+ * Test entry: `button_poll_once(int64_t now_us)` advances the
+ * state machine synchronously by one polling cycle. Production
+ * invokes it via the esp_timer periodic callback; host tests call
+ * it directly with a primed `mock_esp_timer_get_time()` value.
  */
 #include "button.h"
+
+#include <stddef.h>
+
+#include "esp_err.h"
+
+#ifdef UNITY_HOST_BUILD
+#include "mock_gpio_link.h"
+#include "mock_esp_timer_link.h"
+#else
+#include "driver/gpio.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#endif
+
+/* Polling period (microseconds). Fixed at 10 ms for the lifetime
+ * of the driver; matches the design's edge-latency budget (≤10
+ * ms is well below the 100 ms tap threshold). */
+#define BUTTON_POLL_PERIOD_US  (10 * 1000)
+
+/* Resolve CONFIG_FIRMWARE_BOOT_BUTTON_* into microseconds for
+ * the comparison. Done at init-time so the per-poll arithmetic
+ * is a single subtraction + comparison. */
+static inline int64_t button_tap_max_us(void)
+{
+    return (int64_t)CONFIG_FIRMWARE_BOOT_BUTTON_TAP_MAX_MS * 1000LL;
+}
+
+static inline int64_t button_strap_grace_us(void)
+{
+    return (int64_t)CONFIG_FIRMWARE_BOOT_BUTTON_STRAP_GRACE_MS * 1000LL;
+}
+
+/* Phase / state storage — single-byte/8-byte volatile, atomic
+ * write on Xtensa LX6. Matches FW-03 lock-free idiom in boot.c. */
+static volatile button_phase_t g_phase = BUTTON_PHASE_COUNT;  /* sentinel: uninit */
+static volatile button_state_t g_state = BUTTON_STATE_IDLE;
+
+/* Press-window timestamps. g_press_start_us is set on the
+ * falling edge (IDLE → PRESSED); g_press_end_us is the
+ * now_us of the most recent rising edge (PRESSED → IDLE).
+ * g_last_edge_us feeds the debounce filter (Phase E).
+ *
+ * g_strap_release_us is the absolute now_us threshold below
+ * which polls return without state change. Set once in
+ * button_init() to (now + STRAP_GRACE_MS). */
+static volatile int64_t g_strap_release_us = 0;
+static volatile int64_t g_press_start_us    = 0;
+static volatile int64_t g_last_edge_us      = 0;
+
+/* BOOT_TIME long-press latch (Phase C will set this when a
+ * ≥ BOOT_LONGPRESS_MS press is detected during BOOT_TIME).
+ * Phase B keeps it at false; `boot_button_pressed_at_boot()`
+ * reads this directly. */
+static volatile bool g_boot_button_pressed_at_boot = false;
+
+/* Initialization guard. button_init() is idempotent. */
+static volatile int g_initialized = 0;
+
+/* Runtime long-press callback. NULL until the production wiring
+ * (FW-07.3) registers one via button_on_runtime_longpress_set().
+ * Phase D invokes this; Phase B stores the pointer but does NOT
+ * invoke it (the tap-ignore state machine returns to IDLE on
+ * every rising edge without consulting the cb). */
+static volatile button_longpress_cb_t g_runtime_longpress_cb = NULL;
+
+/* Persistent timer handle (created once in button_init).
+ * Production: started in button_init(), stopped + deleted in
+ * button_deinit(). On host, the mock's handle-count resets
+ * via mock_esp_timer_reset() between tests. */
+static esp_timer_handle_t g_poll_handle = NULL;
+
+/* Forward declarations of the FreeRTOS / esp_timer callbacks
+ * implemented below. Both the production esp_timer cb and the
+ * FreeRTOS task wrapper are defined in the `#ifndef
+ * UNITY_HOST_BUILD` block at the bottom of the file; on host,
+ * stub definitions satisfy the linker so the test build links
+ * cleanly. The test never invokes the cb — it calls
+ * `button_poll_once()` directly to advance the state machine. */
+#ifdef UNITY_HOST_BUILD
+static void button_esp_timer_cb(void *arg);
+#else
+static void button_esp_timer_cb(void *arg);
+static void button_poll_task(void *arg);
+#endif
+
+/* Initialize the button driver: configures GPIO 0 as input with
+ * pull-up (active-LOW per PRD § FR-7 L234), creates the 10 ms
+ * periodic esp_timer handle, sets the strap-grace release time,
+ * and launches the polling task (production only).
+ *
+ * Idempotent — re-calling without an intervening
+ * `button_deinit()` is a no-op returning ESP_OK. */
+esp_err_t button_init(void)
+{
+    if (g_initialized) return ESP_OK;
+
+    /* Configure GPIO for input + pull-up + no interrupt. The
+     * PRG button on AI-THINKER ESP32-CAM is active-LOW with an
+     * external pull-up; the internal pull-up is enabled as a
+     * belt-and-braces measure for boards that omit the external
+     * resistor. Polling (no interrupt) keeps
+     * `gpio_install_isr_service` free for FW-08/FW-15. */
+    gpio_config_t cfg = {
+        .pin_bit_mask = (1ULL << (uint32_t)CONFIG_FIRMWARE_BOOT_BUTTON_GPIO),
+        .mode         = GPIO_MODE_INPUT,
+        .pull_up_en   = 1,  /* enable internal pull-up */
+        .pull_down_en = 0,
+        .intr_type    = GPIO_INTR_DISABLE,
+    };
+    esp_err_t r = gpio_config(&cfg);
+    if (r != ESP_OK) return r;
+
+    /* Strap-grace release time = now + STRAP_GRACE_MS. Polls
+     * arriving before this timestamp return without state
+     * change. esp_timer_get_time() is microsecond resolution. */
+    int64_t now_us = esp_timer_get_time();
+    g_strap_release_us = now_us + button_strap_grace_us();
+    g_last_edge_us    = now_us;
+
+    /* Create the 10 ms periodic esp_timer handle. The callback
+     * is `button_esp_timer_cb`; it forwards to button_poll_once
+     * with the esp_timer_get_time() value. */
+    esp_timer_create_args_t poll_args = {
+        .callback        = button_esp_timer_cb,
+        .arg             = NULL,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name            = "button_poll",
+    };
+    r = esp_timer_create(&poll_args, &g_poll_handle);
+    if (r != ESP_OK) {
+        g_poll_handle = NULL;
+        return r;
+    }
+    r = esp_timer_start_periodic(g_poll_handle, (uint64_t)BUTTON_POLL_PERIOD_US);
+    if (r != ESP_OK) {
+        esp_timer_delete(g_poll_handle);
+        g_poll_handle = NULL;
+        return r;
+    }
+
+    g_phase = BUTTON_PHASE_STRAP_GRACE;
+    g_state = BUTTON_STATE_IDLE;
+    g_press_start_us      = 0;
+    g_boot_button_pressed_at_boot = false;
+    g_initialized         = 1;
+
+#ifndef UNITY_HOST_BUILD
+    /* Production: launch the polling task as well. On host
+     * (UNITY_HOST_BUILD), the test calls button_poll_once()
+     * directly so no task is needed. The FreeRTOS task wraps
+     * the same esp_timer_cb → button_poll_once path; on
+     * device the esp_timer task is the actual call site. */
+    BaseType_t tr = xTaskCreate(button_poll_task, "button_poll",
+                                 4096, NULL, 5, NULL);
+    if (tr != pdPASS) {
+        esp_timer_stop(g_poll_handle);
+        esp_timer_delete(g_poll_handle);
+        g_poll_handle = NULL;
+        g_initialized = 0;
+        return ESP_ERR_NO_MEM;
+    }
+#endif
+
+    return ESP_OK;
+}
+
+/* Tear down the button driver: stops + deletes the periodic
+ * esp_timer handle, resets state to IDLE, clears the runtime
+ * callback. Idempotent. */
+esp_err_t button_deinit(void)
+{
+    if (!g_initialized) return ESP_OK;
+    if (g_poll_handle) {
+        esp_timer_stop(g_poll_handle);
+        esp_timer_delete(g_poll_handle);
+        g_poll_handle = NULL;
+    }
+    g_phase          = BUTTON_PHASE_COUNT;  /* sentinel: uninit */
+    g_state          = BUTTON_STATE_IDLE;
+    g_press_start_us = 0;
+    g_last_edge_us   = 0;
+    g_strap_release_us = 0;
+    g_boot_button_pressed_at_boot = false;
+    g_runtime_longpress_cb = NULL;
+    g_initialized    = 0;
+    return ESP_OK;
+}
+
+/* Synchronous state-machine advance (host-test entry + the
+ * esp_timer cb body). now_us MUST be the value returned by
+ * esp_timer_get_time() (or its mock equivalent).
+ *
+ * Phase B (FW-07.1) logic:
+ *   - If now_us < g_strap_release_us: return (strap grace).
+ *   - Phase transition: STRAP_GRACE → BOOT_TIME on the first
+ *     poll after the grace window. (Phase C will add the
+ *     BOOT_TIME → RUNTIME transition.)
+ *   - Read the GPIO level (mocked on host).
+ *   - Detect edges: falling (HIGH→LOW) opens a press window;
+ *     rising (LOW→HIGH) closes it.
+ *   - On the rising edge, compute duration. If duration ≤
+ *     TAP_MAX_US, the press is a TAP — reset to IDLE without
+ *     any side effect (no cb fire, no boot-time latch). Longer
+ *     presses return to IDLE too; the BOOT_TIME / RUNTIME
+ *     branch logic lands in Phases C and D. */
+void button_poll_once(int64_t now_us)
+{
+    if (!g_initialized) return;
+
+    /* Strap-grace window: ignore everything until now_us
+     * crosses g_strap_release_us. After crossing, transition
+     * to BOOT_TIME exactly once. */
+    if (g_phase == BUTTON_PHASE_STRAP_GRACE) {
+        if (now_us < g_strap_release_us) return;
+        g_phase = BUTTON_PHASE_BOOT_TIME;
+        g_state = BUTTON_STATE_IDLE;
+        /* Don't return — process this same poll as the first
+         * BOOT_TIME poll so the strap-grace release doesn't
+         * drop one edge. */
+    }
+
+    int level = gpio_get_level(CONFIG_FIRMWARE_BOOT_BUTTON_GPIO);
+    /* active-LOW: level == 0 means pressed. */
+    bool pressed_now = (level == 0);
+
+    switch (g_state) {
+    case BUTTON_STATE_IDLE:
+        if (pressed_now) {
+            /* Falling edge: open a press window. */
+            g_state         = BUTTON_STATE_PRESSED;
+            g_press_start_us = now_us;
+            g_last_edge_us   = now_us;
+        }
+        break;
+    case BUTTON_STATE_PRESSED:
+        if (!pressed_now) {
+            /* Rising edge: close the press window. The
+             * tap-ignore filter is the entire FW-07.1
+             * contract — any press whose duration is
+             * ≤ TAP_MAX_US is discarded (return to IDLE
+             * without side effects). Longer presses also
+             * return to IDLE here; Phases C/D will latch
+             * the boot-time signal + dispatch the runtime
+             * cb before reaching this branch.
+             *
+             * We compute the duration explicitly even
+             * though Phase B discards it — keeping the
+             * arithmetic visible makes the FW-07.1
+             * contract audit-trivial for the next
+             * maintainer (no risk of accidentally
+             * forgetting to compare against TAP_MAX_US
+             * when Phase C lands). */
+            int64_t duration_us = now_us - g_press_start_us;
+            if (duration_us > button_tap_max_us()) {
+                /* Qualified press — Phase C will latch
+                 * the boot-time signal + Phase D will
+                 * dispatch the runtime cb. For now,
+                 * reset to IDLE. */
+            }
+            g_state       = BUTTON_STATE_IDLE;
+            g_last_edge_us = now_us;
+        }
+        break;
+    case BUTTON_STATE_RELEASED:
+    default:
+        /* Defensive: RELEASED is unused in Phase B (rising
+         * edge collapses to IDLE). Reset to IDLE on any
+         * unexpected state. */
+        g_state = BUTTON_STATE_IDLE;
+        break;
+    }
+}
+
+/* Register the runtime long-press callback. Phase B stores
+ * the pointer only; Phase D invokes it from the rising-edge
+ * branch when a qualified ≥ RUNTIME_LONGPRESS_MS press
+ * completes during the RUNTIME phase. cb == NULL returns
+ * ESP_ERR_INVALID_ARG. */
+esp_err_t button_on_runtime_longpress_set(button_longpress_cb_t cb)
+{
+    if (!cb) return ESP_ERR_INVALID_ARG;
+    g_runtime_longpress_cb = cb;
+    return ESP_OK;
+}
+
+/* STRONG SYMBOL — overrides the weak default in
+ * `boot_button_stub.c` via standard linker precedence. On
+ * host, `mock_boot_link.h` redirects this to
+ * `mock_boot_button_pressed_at_boot_impl` so the boot orchestrator
+ * tests keep their existing shape (the mock wins on host).
+ *
+ * Phase B always returns false (Phase C will latch the
+ * g_boot_button_pressed_at_boot flag during BOOT_TIME long-
+ * press detection). */
+bool boot_button_pressed_at_boot(void)
+{
+    return g_boot_button_pressed_at_boot;
+}
+
+#ifndef UNITY_HOST_BUILD
+/* Production-only: the esp_timer periodic callback that
+ * advances the state machine. Reads the wall clock from
+ * esp_timer_get_time() and forwards to the synchronous
+ * button_poll_once() entry. */
+static void button_esp_timer_cb(void *arg)
+{
+    (void)arg;
+    int64_t now_us = esp_timer_get_time();
+    button_poll_once(now_us);
+}
+
+/* Production-only: the FreeRTOS task wrapper. The actual
+ * state-machine driver is the esp_timer periodic callback
+ * (above); the task exists so the firmware exposes a
+ * `ps`-visible "button_poll" thread per FW-23 conventions.
+ * Priority 5, stack 4096. The task body just calls
+ * vTaskDelay in a loop; the esp_timer task does the real
+ * work. */
+static void button_poll_task(void *arg)
+{
+    (void)arg;
+    while (g_initialized) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    vTaskDelete(NULL);
+}
+#else
+/* Host stub: the mock esp_timer records this as a registered
+ * callback, but the test never fires it. The test calls
+ * button_poll_once() directly to advance the state machine.
+ * The body is a no-op so the linker resolves the symbol. */
+static void button_esp_timer_cb(void *arg)
+{
+    (void)arg;
+}
+#endif

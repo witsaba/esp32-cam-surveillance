@@ -42,6 +42,13 @@ typedef int gpio_pulldown_t;
 #define GPIO_MODE_OUTPUT 1
 #endif
 
+/* FW-07 — input mode for the boot-button GPIO. The host mock
+ * records the call (same as GPIO_MODE_OUTPUT); production
+ * passes this constant to gpio_config(). */
+#ifndef GPIO_MODE_INPUT
+#define GPIO_MODE_INPUT 0
+#endif
+
 #ifndef GPIO_INTR_DISABLE
 #define GPIO_INTR_DISABLE 0
 #endif

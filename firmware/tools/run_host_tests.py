@@ -108,6 +108,7 @@ def _common_cflags(extra_defines):
         f'-I{PROJECT_DIR}/components/mocks/include',
         f'-I{PROJECT_DIR}/components/softap/include',
         f'-I{PROJECT_DIR}/components/led/include',
+        f'-I{PROJECT_DIR}/components/button/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
     ]
@@ -129,6 +130,7 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_handlers.c'),
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_home.c'),
         os.path.join(PROJECT_DIR, 'components', 'led', 'led.c'),
+        os.path.join(PROJECT_DIR, 'components', 'button', 'button.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_nvs_flash.cpp'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_boot_button.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_init_returns.c'),
@@ -261,6 +263,14 @@ ALL_TESTS = [
     # FW-06.4 timer-fire guard (green path only; bite-proof is
     # Pass 5 below and uses -DLED_TEST_STUB_DISABLE_TIMER=1)
     "set_state_rearms_timer [fw-06.4][green]",
+    # FW-07.1 tap-ignore state machine (4 boundary scenarios).
+    # Presses ≤ TAP_MAX_MS (100 ms default) are absorbed by the
+    # state machine without firing the runtime cb or asserting
+    # boot_button_pressed_at_boot().
+    "tap_50ms_is_ignored [fw-07.1]",
+    "tap_99ms_is_ignored [fw-07.1]",
+    "tap_100ms_is_ignored [fw-07.1]",
+    "tap_101ms_is_ignored [fw-07.1]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -313,6 +323,11 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # #ifdef LED_TEST_STUB_DISABLE_TIMER inside the file selects
     # which one is compiled into each build.
     os.path.join(PROJECT_DIR, 'tests', 'test_led', 'test_led_guard.c'),
+    # FW-07.1 tap-ignore state machine (4 boundary scenarios).
+    # Phase B lands the tap-ignore logic + these 4 tests; the
+    # full FW-07 surface (boot-time + runtime + debounce guard)
+    # arrives in Phases C/D/E.
+    os.path.join(PROJECT_DIR, 'tests', 'test_button', 'test_button_tap_ignore.c'),
 ]
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
