@@ -342,6 +342,16 @@ TEST_CASE(
     TEST_ASSERT_EQUAL_INT(1, mock_esp_wifi_set_config_call_count());
     TEST_ASSERT_EQUAL_INT(1, mock_esp_wifi_start_call_count());
 
+    /* The wifi_config_t passed to esp_wifi_set_config must have
+     * max_connection > 0 — IDF rejects every client with "max
+     * connection, deauth!" when max_connection=0 (caught on device
+     * interaction, engram #3636). The mock captures the struct
+     * via mock_esp_wifi_set_config_capture. */
+    wifi_config_t captured;
+    memset(&captured, 0, sizeof(captured));
+    mock_esp_wifi_set_config_capture(&captured);
+    TEST_ASSERT_GREATER_THAN(0, captured.ap.max_connection);
+
     /* IDF v5.5.3 also requires esp_netif_init() + esp_event_loop_create_default()
      * to be called BEFORE esp_wifi_init() — the device returns
      * ESP_ERR_INVALID_STATE on esp_netif_create_default_wifi_ap()

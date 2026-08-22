@@ -125,13 +125,29 @@ static boot_status_t softap_bring_up(const config_t *cfg)
         return fail;
     }
 
-    /* Step 6: config (SSID = ESP_<last-3-mac-bytes>, OPEN auth). On
-     * the host the wifi_config_t struct is opaque to the mock — we
-     * zero the ap.ssid and let IDF's default naming apply on device.
-     * The mock records the call; tests assert it was made exactly
-     * once with WIFI_IF_AP. */
-    wifi_config_t wifi_cfg;
-    memset(&wifi_cfg, 0, sizeof(wifi_cfg));
+    /* Step 6: config. Set max_connection explicitly to 4 — a memset(&cfg, 0)
+     * sets max_connection=0 and the wifi driver rejects every client
+     * with "max connection, deauth!" (caught on device interaction,
+     * engram #3636). authmode=WIFI_AUTH_OPEN satisfies R-26; channel=1
+     * is the canonical provisioning channel. SSID is left empty so
+     * IDF auto-generates "ESP_<last-3-MAC>" (the boot log confirms
+     * "wifi:mode : softAP (c8:f0:9e:9d:50:09)").
+     *
+     * Note: IDF v5.5.3 does NOT expose WIFI_AP_DEFAULT_CONFIG() as a
+     * macro; the IDF example uses direct designated initializers. We
+     * follow the example pattern verbatim. */
+    wifi_config_t wifi_cfg = {
+        .ap = {
+            .ssid            = {0},
+            .password        = {0},
+            .ssid_len        = 0,
+            .channel         = 1,
+            .authmode        = WIFI_AUTH_OPEN,
+            .ssid_hidden     = 0,
+            .max_connection  = 4,
+            .beacon_interval = 100,
+        },
+    };
     r = esp_wifi_set_config(WIFI_IF_AP, &wifi_cfg);
     if (r != ESP_OK) {
         ESP_LOGE(TAG, "softap_start failed: %s", esp_err_to_name(r));

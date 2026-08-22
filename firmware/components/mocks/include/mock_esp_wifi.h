@@ -70,6 +70,28 @@ typedef struct {
     } sta;
 } wifi_config_t;
 
+/* WIFI_AP_DEFAULT_CONFIG() — IDF macro returns a wifi_config_t with
+ * the .ap field populated with sensible defaults. On host we provide
+ * a minimal subset that matches the device side:
+ *   max_connection = 4 (load-bearing — caught on device interaction,
+ *     engram #3636)
+ *   authmode = 0 (WIFI_AUTH_OPEN)
+ *   channel = 1, beacon_interval = 100
+ * The mock's esp_wifi_set_config discards the struct contents, so
+ * the other defaults are placeholders. */
+#ifndef WIFI_AP_DEFAULT_CONFIG
+#define WIFI_AP_DEFAULT_CONFIG() ((wifi_config_t){ \
+    .ap = { \
+        .ssid = {0}, \
+        .password = {0}, \
+        .ssid_len = 0, \
+        .channel = 1, \
+        .authmode = 0, \
+        .max_connection = 4, \
+    }, \
+})
+#endif
+
 /* ---------- primable return values (test helpers) ---------- */
 void mock_esp_wifi_init_return_set(esp_err_t r);
 void mock_esp_wifi_set_mode_return_set(esp_err_t r);
