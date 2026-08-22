@@ -15,3 +15,4 @@ idf_component_register(
 add_subdirectory(test_config)
 add_subdirectory(test_boot)
 add_subdirectory(test_softap)
+add_subdirectory(test_led)

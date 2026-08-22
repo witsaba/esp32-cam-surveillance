@@ -49,4 +49,71 @@ menu "ESP32-CAM Surveillance Firmware"
         bool "Power down the softAP once station mode joins a network"
         default y
 
+    # FW-06 status LED (R-23). GPIO + active-LOW polarity per PRD §
+    # FR-7 L222-232: AI-THINKER ESP32-CAM onboard LED is wired from
+    # VCC → resistor → GPIO 4 → LED → GND, so driving the GPIO LOW
+    # turns the LED ON (active-LOW). The 5 period constants encode
+    # the half-period (in ms) the esp_timer toggles the level for
+    # each state; full blink period = 2 × half-period.
+    config FIRMWARE_LED_GPIO
+        int "Status LED GPIO number (AI-THINKER onboard LED = GPIO 4)"
+        range 0 39
+        default 4
+        help
+            The AI-THINKER ESP32-CAM onboard LED is on GPIO 4 per PRD
+            L222. Override this only for non-AI-THINKER boards.
+
+    config FIRMWARE_LED_ACTIVE_LOW
+        bool "Status LED is active-LOW (default for AI-THINKER onboard LED)"
+        default y
+        help
+            AI-THINKER hardware: VCC → resistor → GPIO 4 → LED → GND.
+            Driving the GPIO LOW sinks current and turns the LED ON.
+            Disable for boards where LED is wired VCC-side to GPIO.
+
+    config FIRMWARE_LED_PERIOD_WIFI_CONNECTING_MS
+        int "WiFi-connecting blink period (ms; esp_timer period = half)"
+        range 50 1000
+        default 200
+        help
+            PRD § FR-7 L227: WiFi connecting = 200 ms blink.
+
+    config FIRMWARE_LED_PERIOD_WS_CONNECTING_MS
+        int "WS-connecting blink period (ms; esp_timer period = half)"
+        range 50 1000
+        default 100
+        help
+            PRD § FR-7 L228: WS connecting = 100 ms blink.
+
+    config FIRMWARE_LED_PERIOD_IDLE_HEARTBEAT_MS
+        int "Idle heartbeat period (ms; esp_timer period = half)"
+        range 200 5000
+        default 1000
+        help
+            PRD § FR-7 L229: idle (no stream) = 1 s heartbeat.
+
+    config FIRMWARE_LED_PERIOD_BACKOFF_MS
+        int "Reconnect-backoff blink period (ms; esp_timer period = half)"
+        range 500 10000
+        default 2000
+        help
+            PRD § FR-7 L231: reconnect backoff active = 2 s blink.
+
+    config FIRMWARE_LED_PERIOD_RECOVERY_MS
+        int "Soft-recovery rapid-blink period (ms; esp_timer period = half)"
+        range 50 1000
+        default 100
+        help
+            PRD § FR-7 L232: 5 Hz rapid blink during the 3 s sustained
+            recovery window before reboot. 100 ms = 5 Hz.
+
+    config FIRMWARE_LED_RECOVERY_DURATION_MS
+        int "Soft-recovery sustained duration before recovery-cb fires (ms)"
+        range 500 10000
+        default 3000
+        help
+            PRD § FR-7 L232: rapid blink sustained for 3 s before reboot.
+            The one-shot esp_timer fires the recovery-complete cb at
+            this elapsed time.
+
 endmenu

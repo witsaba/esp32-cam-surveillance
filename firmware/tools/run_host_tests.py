@@ -1,29 +1,39 @@
 #!/usr/bin/env python3
-"""run_host_tests.py — FW-02 host-side Unity test runner.
+"""run_host_tests.py — host-side Unity test runner for FW-02, FW-03,
+FW-05, and FW-06.
 
-Builds and runs the FW-02 host tests against the in-memory NVS mock.
-Two compile passes:
+Builds and runs the in-tree host tests against the in-memory
+mock surface. Five compile passes:
 
-  1. Without `-DCONFIG_TEST_STUB_VERSION_CHECK`: the production
-     schema-version guard is active. ALL tests must pass.
+  Pass 1 — production build (no stub flags): all FW-02/FW-03/FW-05
+           + FW-06 tests must pass (current count: 52).
 
-  2. With `-DCONFIG_TEST_STUB_VERSION_CHECK`: the guard is stubbed
-     out. The FW-02.3 bite-proof test MUST FAIL — that failure
-     proves the guard is load-bearing. All other tests must pass.
+  Pass 2 — stub build (-DCONFIG_TEST_STUB_VERSION_CHECK): the FW-02.3
+           bite-proof MUST FAIL with 'schema_version' in the message.
 
-Exits 0 only when both passes satisfy their expected outcomes.
+  Pass 3 — stub build (-DBOOT_TEST_STUB_FLIP_DECISION): the FW-03.4
+           bite-proof MUST FAIL with 'determinism' in the message.
+
+  Pass 4 — stub build (-DSOFTAP_TEST_STUB_ACCEPT_ALL_BODIES): the
+           FW-05.4 bite-proof MUST FAIL with 'validation' in the
+           message (3 fail + 3 pass).
+
+  Pass 5 — stub build (-DLED_TEST_STUB_DISABLE_TIMER): the FW-06.4
+           bite-proof MUST FAIL with 'timer_fire' in the message
+           (process aborts via the guard tripwire).
+
+Exits 0 only when all 5 passes satisfy their expected outcomes.
 Exits 1 on any unexpected pass/fail pattern (regression in either
 direction).
 
 Why this exists: ESP-IDF v5.5.3's stock `idf.py` does not ship a
 host-side Unity test runner for the esp32 target — the canonical
 host test pattern uses a separate linux-targeted Catch2 project
-under each component's `host_test/`/` directory. For FW-02 we keep
-the tests inside the firmware project (per the orchestrator's plan)
-and compile them on the host via plain gcc. The
-`mock_nvs_flash_link.h` macro-override header means `config.c`'s
-`nvs_*` calls redirect to the in-memory mock — no real flash
-required.
+under each component's `host_test/`/` directory. We keep the
+tests inside the firmware project and compile them on the host
+via plain gcc. The macro-override link headers (mock_*_link.h)
+mean production source's IDF calls redirect to the in-memory
+mocks — no real flash required.
 
 Usage:
     python3 tools/run_host_tests.py [firmware/project/dir]
@@ -97,6 +107,7 @@ def _common_cflags(extra_defines):
         f'-I{PROJECT_DIR}/components/boot/include',
         f'-I{PROJECT_DIR}/components/mocks/include',
         f'-I{PROJECT_DIR}/components/softap/include',
+        f'-I{PROJECT_DIR}/components/led/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
     ]
@@ -117,6 +128,7 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap.c'),
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_handlers.c'),
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_home.c'),
+        os.path.join(PROJECT_DIR, 'components', 'led', 'led.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_nvs_flash.cpp'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_boot_button.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_init_returns.c'),
@@ -127,6 +139,8 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_event.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_http_server.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_system.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_gpio.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_timer.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
@@ -233,6 +247,20 @@ ALL_TESTS = [
     "home_get_html_escapes_identity [fw-05][home-page][security]",
     # FW-05 station-join crash regression (engram #3639)
     "softap_owns_cfg_after_caller_returns [fw-05][regression][engram-3639]",
+    # FW-06.1 boot + connecting (3 scenarios)
+    "booting_holds_level_on [fw-06.1]",
+    "wifi_connecting_period_100ms [fw-06.1]",
+    "ws_connecting_period_50ms [fw-06.1]",
+    # FW-06.2 connected (2 scenarios)
+    "idle_period_500ms [fw-06.2]",
+    "streaming_stops_periodic_holds_on [fw-06.2]",
+    # FW-06.3 backoff + recovery (3 scenarios)
+    "backoff_period_1000ms [fw-06.3]",
+    "recovery_period_50ms_and_oneshot_3000ms [fw-06.3]",
+    "recovery_fires_callback_after_3000ms [fw-06.3]",
+    # FW-06.4 timer-fire guard (green path only; bite-proof is
+    # Pass 5 below and uses -DLED_TEST_STUB_DISABLE_TIMER=1)
+    "set_state_rearms_timer [fw-06.4][green]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -275,6 +303,16 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_guard.c'),
     # FW-05 home page (scope expansion 2026-08-22)
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_home.c'),
+    # FW-06 status LED
+    os.path.join(PROJECT_DIR, 'tests', 'test_led', 'test_led_boot_connecting.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_led', 'test_led_connected.c'),
+    os.path.join(PROJECT_DIR, 'tests', 'test_led', 'test_led_backoff_recovery.c'),
+    # test_led_guard.c compiles both the green-path test (under
+    # production build, no LED_TEST_STUB_DISABLE_TIMER) and the
+    # bite-proof test (under Pass 5 stub build). The
+    # #ifdef LED_TEST_STUB_DISABLE_TIMER inside the file selects
+    # which one is compiled into each build.
+    os.path.join(PROJECT_DIR, 'tests', 'test_led', 'test_led_guard.c'),
 ]
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
@@ -302,6 +340,22 @@ FW03_4_GUARD_TEST_FILES = [
 # bite-proof pattern.
 FW05_4_GUARD_TEST_FILES = [
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_guard.c'),
+]
+
+# Pass-5 stub build includes ONLY the FW-06.4 guard file. The
+# build defines -DLED_TEST_STUB_DISABLE_TIMER=1 so led.c skips
+# esp_timer_create (the periodic handle stays NULL). On any
+# led_set_state() into a blink state, the guard trips with a
+# message containing the literal "timer_fire" and aborts the
+# process. The runner expects:
+#   - rc != 0 (process aborted)
+#   - literal "timer_fire" in stdout (the guard's printf + the
+#     test's "bite-proof stub build entered" marker)
+# The guard test is the ONLY test in test_led_guard.c under the
+# stub flag (the green-path test is guarded by #ifndef
+# LED_TEST_STUB_DISABLE_TIMER).
+FW06_4_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'test_led', 'test_led_guard.c'),
 ]
 
 
@@ -460,10 +514,49 @@ def main():
                  f"{pass_count}. Output:\n{fw05_4_out}")
     print(f"OK: FW-05.4 stub build → 3 rejection tests fail with "
           f"'validation' message as expected; 3 green/partial tests "
-          f"still pass.")
+          "still pass.")
+
+    # ----- Pass 5: FW-06.4 timer-fire invariant stub build -----
+    # Compile test_led_guard.c (and led.c) with
+    # -DLED_TEST_STUB_DISABLE_TIMER=1 so the timer-create body in
+    # led_init() is short-circuited. The guard tripwire in
+    # led_set_state() fires when any blink state is requested
+    # without a running timer, printing the literal "timer_fire"
+    # and aborting the process. The Pass-5 runner expects:
+    #   - rc != 0 (SIGABRT from the guard's abort())
+    #   - literal "timer_fire" present in stdout (from the guard's
+    #     printf AND from the test's marker line)
+    # The green-path test (test_led_guard.c::set_state_rearms_timer)
+    # is excluded from this build by the #ifndef
+    # LED_TEST_STUB_DISABLE_TIMER inside the test file.
+    print()
+    print("=== Pass 5: FW-06.4 stub build (LED_TEST_STUB_DISABLE_TIMER, guard file) ===")
+    fw06_4_bin = _build('fw06_4_tests_stub',
+                        ['-DLED_TEST_STUB_DISABLE_TIMER=1'],
+                        FW06_4_GUARD_TEST_FILES, workdir)
+    fw06_4_rc, fw06_4_out = _run_binary(fw06_4_bin)
+    # Under stub, the guard abort()s the process. Pass 5 expects
+    # rc != 0 + literal "timer_fire" in stdout. Mirrors the
+    # behavior of Pass 2 (schema_version) and Pass 3 (determinism).
+    if fw06_4_rc == 0:
+        sys.exit(f"FAIL: FW-06.4 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The stub gate "
+                 f"didn't bypass the timer-fire invariant. "
+                 f"Output:\n{fw06_4_out}")
+    if "timer_fire" not in fw06_4_out:
+        sys.exit(f"FAIL: FW-06.4 stub build output does not "
+                 f"contain the literal 'timer_fire':\n{fw06_4_out}")
+    # The guard test name should appear in the output so the
+    # runner can match it to the expected bite-proof.
+    if "guard_bite_proof_timer_fire_disabled" not in fw06_4_out:
+        sys.exit(f"FAIL: FW-06.4 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw06_4_out}")
+    print(f"OK: FW-06.4 stub build → guard tripped on "
+          f"'timer_fire' invariant as expected (process aborted "
+          f"with rc={fw06_4_rc}).")
 
     print()
-    print("=== FW-02 + FW-03 + FW-05 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
+    print("=== FW-02 + FW-03 + FW-05 + FW-06 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
     print(f"workdir kept at {workdir} for debugging; safe to rm -rf.")
 
 
