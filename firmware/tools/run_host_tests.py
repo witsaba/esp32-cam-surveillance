@@ -127,6 +127,16 @@ def _common_cflags(extra_defines):
         f'-I{PROJECT_DIR}/components/wifi/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
+        # FW-08 — Kconfig mirrors for the host build (the device
+        # build resolves these via sdkconfig; the host has no
+        # sdkconfig.h so we set the defaults that mirror
+        # Kconfig.projbuild:48-50). CONFIG_FIRMWARE_PROVISIONING
+        # _AP_STOP_ON_CONNECT=y enables the FW-08.4 softAP teardown
+        # branch. The test_wifi_event_teardown.c file's S2 is
+        # gated by `#ifndef CONFIG_FIRMWARE_PROVISIONING_AP_STOP
+        # _ON_CONNECT` so it does not compile under the default
+        # Pass 1 build.
+        '-DCONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=1',
     ]
     flags.extend(extra_defines)
     return flags
@@ -344,6 +354,11 @@ ALL_TESTS = [
     # FW-08.3 — no-wedge guard (T-08-D). Green path only on
     # production build; bite-proof runs under Pass 7 stub.
     "test_fw08_3_misconfigured_ssid_returns_invalid_arg [fw-08.3][scenario-S2]",
+    # FW-08.4 — softAP teardown (T-08-E). S1 only under Pass 1
+    # (S2 gated by `#ifndef CONFIG_FIRMWARE_PROVISIONING_AP_
+    # STOP_ON_CONNECT` which IS defined in cflags, so S2 is
+    # excluded).
+    "test_fw08_4_ip_up_triggers_teardown_within_1s [fw-08.4][scenario-S1]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -443,6 +458,15 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # _TEST_FILES below). The #ifdef inside the file selects
     # which one is compiled into each build.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_guard.c'),
+    # FW-08.4 — softAP teardown within 1s of IP_EVENT_STA_GOT_IP
+    # (T-08-E). Two scenarios: S1 (Kconfig=y → teardown fires)
+    # + S2 (Kconfig=n → no teardown). S2 is gated by `#ifndef
+    # CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT` so it
+    # only compiles when the symbol is NOT defined. The
+    # production build passes the symbol via cflags (mirroring
+    # sdkconfig.defaults:36 default y) so S2 is excluded from
+    # Pass 1.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_event_teardown.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
