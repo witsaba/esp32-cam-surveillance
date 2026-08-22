@@ -20,11 +20,13 @@ typedef void *esp_netif_t;
 /* ---------- primable return values ---------- */
 void mock_esp_netif_init_return_set(esp_err_t r);
 void mock_esp_netif_create_default_wifi_ap_return_set(esp_netif_handle_t h);
+void mock_esp_netif_set_default_netif_return_set(esp_err_t r);
 void mock_esp_netif_destroy_return_set(esp_err_t r);
 
 /* ---------- call counters ---------- */
 int  mock_esp_netif_init_call_count(void);
 int  mock_esp_netif_create_default_wifi_ap_call_count(void);
+int  mock_esp_netif_set_default_netif_call_count(void);
 int  mock_esp_netif_destroy_call_count(void);
 
 /* ---------- reset ---------- */
@@ -33,4 +35,5 @@ void mock_esp_netif_reset(void);
 /* ---------- mock targets ---------- */
 esp_err_t          mock_esp_netif_init(void);
 esp_netif_handle_t mock_esp_netif_create_default_wifi_ap(void);
+esp_err_t          mock_esp_netif_set_default_netif(esp_netif_t *netif);
 esp_err_t          mock_esp_netif_destroy(esp_netif_t *netif);

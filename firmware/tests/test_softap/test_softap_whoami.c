@@ -349,6 +349,10 @@ TEST_CASE(
     TEST_ASSERT_EQUAL_INT(1, mock_esp_netif_init_call_count());
     TEST_ASSERT_EQUAL_INT(1, mock_esp_event_loop_create_default_call_count());
     TEST_ASSERT_EQUAL_INT(1, mock_esp_netif_create_default_wifi_ap_call_count());
+    /* Also: esp_netif_set_default_netif() must be called or lwIP
+     * panics with a NULL-semaphore assert when the station-join
+     * event fires (caught on device interaction, engram #3640). */
+    TEST_ASSERT_EQUAL_INT(1, mock_esp_netif_set_default_netif_call_count());
 
     /* The wifi_config_t passed to esp_wifi_set_config must have
      * max_connection > 0 — IDF rejects every client with "max

@@ -111,6 +111,14 @@ static boot_status_t softap_bring_up(const config_t *cfg)
         return fail;
     }
 
+    /* Step 3b: mark this netif as the default for outgoing traffic.
+     * Without this, lwIP's default-route lookups produce NULL
+     * semaphores and panic when the station-join event fires
+     * (engram #3640). The IDF softAP example relies on the
+     * default-netif side-effect of create_default_wifi_ap() in
+     * older IDF versions; v5.5.3 requires the explicit call. */
+    esp_netif_set_default_netif(netif);
+
     /* Step 4: esp_wifi_init — must be called before any other wifi
      * API. Without this, the device returns ESP_ERR_WIFI_NOT_INIT on
      * esp_wifi_set_mode (bug discovered via device flash on 2026-08-21,
