@@ -57,11 +57,18 @@
 
 static const char *TAG = "softap";
 
-/* The current cfg pointer is passed via the httpd uri's user_ctx when
- * the URI is registered. On host, the mock_httpd_invoke_registered_handler
- * helper copies the user_ctx into req->user_ctx before invoking the
- * handler; on device, IDF's httpd worker does the same. */
-static const config_t *g_active_cfg = NULL;
+/* The active config is COPIED into this module-static on entry to
+ * softap_run_provisioning(). The previous design borrowed the
+ * caller's pointer (which was a stack-local config_t in boot_run()) —
+ * that broke the moment boot_run() returned, because the httpd URI
+ * handlers' user_ctx + g_active_cfg both pointed to a dead stack
+ * frame. The wifi driver's station-join event triggered a handler
+ * deref of user_ctx ~700ms after URI registration and crashed with
+ * LoadProhibited at a wild address (engram #3639). The static owns
+ * the cfg for the lifetime of the softAP bring-up; softap_stop()
+ * clears it. */
+static config_t g_active_cfg_storage = {0};
+static bool     g_cfg_valid = false;
 
 /* Forward decls — implemented in softap_handlers.c and softap_home.c. */
 extern esp_err_t whoami_get_handler_impl(httpd_req_t *req);
@@ -189,7 +196,7 @@ static boot_status_t softap_bring_up(const config_t *cfg)
         .uri      = "/whoami",
         .method   = HTTP_GET,
         .handler  = whoami_get_handler_impl,
-        .user_ctx = (void *)cfg,
+        .user_ctx = (void *)&g_active_cfg_storage,
     };
     r = httpd_register_uri_handler(server, &whoami_uri);
     if (r != ESP_OK) {
@@ -203,7 +210,7 @@ static boot_status_t softap_bring_up(const config_t *cfg)
         .uri      = "/provision",
         .method   = HTTP_POST,
         .handler  = provision_post_handler_impl,
-        .user_ctx = (void *)cfg,
+        .user_ctx = (void *)&g_active_cfg_storage,
     };
     r = httpd_register_uri_handler(server, &provision_uri);
     if (r != ESP_OK) {
@@ -222,7 +229,7 @@ static boot_status_t softap_bring_up(const config_t *cfg)
         .uri      = "/",
         .method   = HTTP_GET,
         .handler  = home_get_handler_impl,
-        .user_ctx = (void *)cfg,
+        .user_ctx = (void *)&g_active_cfg_storage,
     };
     r = httpd_register_uri_handler(server, &home_uri);
     if (r != ESP_OK) {
@@ -245,8 +252,13 @@ boot_status_t softap_run_provisioning(const config_t *cfg)
         boot_status_t s = { .ret = ESP_ERR_INVALID_ARG, .step = BOOT_STEP_SOFTAP_START };
         return s;
     }
-    g_active_cfg = cfg;
-    return softap_bring_up(cfg);
+    /* Own the cfg: copy into the module-static storage. After this
+     * point, the caller is free to drop its stack-local config_t —
+     * the URI handlers and g_active_cfg_storage outlive the caller.
+     * See engram #3639 for the dangling-pointer crash this prevents. */
+    g_active_cfg_storage = *cfg;
+    g_cfg_valid = true;
+    return softap_bring_up(&g_active_cfg_storage);
 }
 
 esp_err_t softap_stop(void)
@@ -261,5 +273,9 @@ esp_err_t softap_stop(void)
     if (r != ESP_OK) return r;
     /* esp_netif_destroy returns void in IDF v5.5.3. */
     esp_netif_destroy(NULL);
+    /* Clear the cfg snapshot so a subsequent softap_run_provisioning()
+     * doesn't accidentally inherit stale identity data. */
+    g_active_cfg_storage = (config_t){0};
+    g_cfg_valid = false;
     return ESP_OK;
 }

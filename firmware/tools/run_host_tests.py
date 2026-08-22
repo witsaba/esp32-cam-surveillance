@@ -231,6 +231,8 @@ ALL_TESTS = [
     "home_get_serves_html_form_with_provision_action [fw-05][home-page]",
     "home_get_prefills_existing_identity [fw-05][home-page][fw-05.3]",
     "home_get_html_escapes_identity [fw-05][home-page][security]",
+    # FW-05 station-join crash regression (engram #3639)
+    "softap_owns_cfg_after_caller_returns [fw-05][regression][engram-3639]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3

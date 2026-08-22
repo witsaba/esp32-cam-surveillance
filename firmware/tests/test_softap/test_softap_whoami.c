@@ -342,6 +342,14 @@ TEST_CASE(
     TEST_ASSERT_EQUAL_INT(1, mock_esp_wifi_set_config_call_count());
     TEST_ASSERT_EQUAL_INT(1, mock_esp_wifi_start_call_count());
 
+    /* IDF v5.5.3 also requires esp_netif_init() + esp_event_loop_create_default()
+     * to be called BEFORE esp_wifi_init() — the device returns
+     * ESP_ERR_INVALID_STATE on esp_netif_create_default_wifi_ap()
+     * otherwise (caught on device flash, engram #3630). */
+    TEST_ASSERT_EQUAL_INT(1, mock_esp_netif_init_call_count());
+    TEST_ASSERT_EQUAL_INT(1, mock_esp_event_loop_create_default_call_count());
+    TEST_ASSERT_EQUAL_INT(1, mock_esp_netif_create_default_wifi_ap_call_count());
+
     /* The wifi_config_t passed to esp_wifi_set_config must have
      * max_connection > 0 — IDF rejects every client with "max
      * connection, deauth!" when max_connection=0 (caught on device
@@ -351,12 +359,77 @@ TEST_CASE(
     memset(&captured, 0, sizeof(captured));
     mock_esp_wifi_set_config_capture(&captured);
     TEST_ASSERT_GREATER_THAN(0, captured.ap.max_connection);
+}
 
-    /* IDF v5.5.3 also requires esp_netif_init() + esp_event_loop_create_default()
-     * to be called BEFORE esp_wifi_init() — the device returns
-     * ESP_ERR_INVALID_STATE on esp_netif_create_default_wifi_ap()
-     * otherwise (caught on device flash, engram #3630). */
-    TEST_ASSERT_EQUAL_INT(1, mock_esp_netif_init_call_count());
-    TEST_ASSERT_EQUAL_INT(1, mock_esp_event_loop_create_default_call_count());
-    TEST_ASSERT_EQUAL_INT(1, mock_esp_netif_create_default_wifi_ap_call_count());
+/* Regression test for engram #3639 — device crashed with
+ * LoadProhibited when a station joined the softAP. The cause:
+ * softap_run_provisioning() borrowed the caller's config_t pointer
+ * (which was a stack-local in boot_run()). After boot_run() returned
+ * to app_main(), the stack frame was gone, but the httpd URI
+ * handlers' user_ctx + g_active_cfg still pointed to it. When the
+ * wifi driver fired WIFI_EVENT_AP_STACONNECTED (the moment a phone
+ * joins), the httpd worker dereferenced user_ctx → panic.
+ *
+ * This test simulates the bug by:
+ *   1. Bringing up softap with a stack-local cfg that has identity.
+ *   2. Forcibly clearing the stack frame (write a poison pattern).
+ *   3. Invoking the /whoami handler via the mock — the handler
+ *      must still see the original identity, NOT the poison.
+ *
+ * If softap still borrows the caller's pointer, the test FAILS
+ * (handler reads poison); if softap owns the cfg via a module
+ * static (the fix), the test PASSES (handler reads the copy). */
+TEST_CASE(
+    "softap_owns_cfg_after_caller_returns [fw-05][regression][engram-3639]",
+    "[softap][fw-05][regression]")
+{
+    mock_nvs_reset();
+    mock_esp_system_reset();
+    mock_esp_wifi_reset();
+    mock_esp_netif_reset();
+    mock_esp_event_reset();
+    mock_httpd_reset();
+    mock_log_reset();
+    seed_whoami_mocks();
+
+    /* Bring up the softap with a stack-local cfg carrying identity. */
+    config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.schema_version = CONFIG_SCHEMA_VERSION;
+    strncpy(cfg.identity.name, "front-door",
+            sizeof(cfg.identity.name) - 1);
+    strncpy(cfg.identity.description, "covers main entrance",
+            sizeof(cfg.identity.description) - 1);
+
+    boot_status_t s = softap_run_provisioning(&cfg);
+    (void)s;
+
+    /* Now simulate the bug scenario: caller returns, stack frame is
+     * reused. Write a poison pattern over the caller's stack-local cfg
+     * so any subsequent read of the caller's pointer (instead of
+     * softap's internal copy) returns garbage. */
+    memset(&cfg, 0xAA, sizeof(cfg));
+
+    /* Invoke the /whoami handler. The handler reads identity.name +
+     * identity.description from req->user_ctx (which is the URI's
+     * user_ctx pointer). If softap borrowed the caller's pointer,
+     * the read returns 0xAA bytes. If softap owns the cfg (the fix),
+     * the read returns the original "front-door" / "covers main
+     * entrance". */
+    mock_httpd_req_t *req = mock_httpd_req_new();
+    TEST_ASSERT_NOT_NULL(req);
+    esp_err_t rc = mock_httpd_invoke_registered_handler("/whoami", 0, req);
+    TEST_ASSERT_EQUAL_INT(ESP_OK, rc);
+
+    TEST_ASSERT_NOT_NULL(req->captured_response_buffer);
+    const char *body = req->captured_response_buffer;
+    /* The fix is verified by these assertions: the seeded identity
+     * must appear in the response even though the caller's stack
+     * frame has been poisoned. */
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(body, "front-door"),
+        "handler read poisoned caller stack — softap must own cfg");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(body, "covers main entrance"),
+        "handler read poisoned caller stack — softap must own cfg");
+
+    mock_httpd_req_free(req);
 }
