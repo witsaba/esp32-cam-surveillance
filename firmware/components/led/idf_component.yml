@@ -4,4 +4,3 @@
 ## both are declared via CMakeLists.txt REQUIRES. No cJSON or other
 ## managed-component dependencies — the LED driver writes GPIO +
 ## timer only.
-dependencies:
