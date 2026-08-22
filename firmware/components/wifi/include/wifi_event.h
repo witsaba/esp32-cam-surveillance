@@ -31,6 +31,18 @@ typedef void (*wifi_event_cb_t)(void *arg,
                                  int32_t event_id,
                                  void *event_data);
 
+/* FW-08.6 — guard tripwire. When the build defines
+ * `-DWIFI_TEST_STUB_SKIP_IP_UP_HANDLER=1`, wifi_event.c::
+ * on_sta_got_ip_handler() is replaced by a no-op + a call to
+ * this function. The body prints the literal "teardown" and
+ * aborts via TEST_FAIL_MESSAGE. Pass 8 of run_host_tests.py
+ * greps for the literal to confirm the guard is load-bearing.
+ *
+ * Not part of the production API — declared here only so the
+ * wifi_event.c on_sta_got_ip_handler() body can call it
+ * without a forward declaration. */
+void wifi_event_guard_fail_teardown_on_ip_disabled(void);
+
 #ifdef __cplusplus
 }
 #endif

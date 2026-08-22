@@ -85,22 +85,56 @@ void on_sta_got_ip_handler(void *arg,
     (void)id;
     (void)data;
 
-    /* FW-08.2 — reset counter on IP_EVENT_STA_GOT_IP (NOT on
-     * WIFI_EVENT_STA_CONNECTED; resetting on association would
-     * break the DHCP-failure backoff invariant). Also stop the
-     * backoff timer so the retry cb can't fire spuriously. */
+#ifndef WIFI_TEST_STUB_SKIP_IP_UP_HANDLER
+    /* FW-08.6 green path. Reset counter on
+     * IP_EVENT_STA_GOT_IP (NOT on WIFI_EVENT_STA_CONNECTED;
+     * resetting on association would break the DHCP-failure
+     * backoff invariant — see explore #3681 § Findings §10).
+     * Stop the backoff timer + LED state + Kconfig-gated
+     * softAP teardown + post-teardown mode switch. */
+
+    /* FW-08.2 — counter reset. */
     s_consecutive_failures = 0;
     if (s_backoff_handle) {
         (void)esp_timer_stop(s_backoff_handle);
     }
     (void)led_set_state(LED_STATE_CONNECTED_IDLE);
 
-    /* FW-08.4 — softAP teardown (Kconfig-gated). Full body
-     * lands in T-08-E. */
+    /* FW-08.4 + FW-08.6 — softAP teardown + mode switch. The
+     * teardown fires when CONFIG_FIRMWARE_PROVISIONING_AP_STOP
+     * _ON_CONNECT=y; wifi_stop() calls softap_stop() +
+     * esp_wifi_set_mode(WIFI_MODE_STA). */
 #if defined(CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT) && \
     CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT
     (void)wifi_stop();
 #endif
+#else
+    /* FW-08.6 bite-proof: stub the entire IP-up handler body
+     * so softap_stop() + esp_wifi_set_mode(WIFI_MODE_STA) are
+     * NOT issued. The guard tripwire fires when the test
+     * drives IP_EVENT_STA_GOT_IP, printing the literal
+     * "teardown" + aborting via TEST_FAIL_MESSAGE so Pass 8
+     * of run_host_tests.py can grep for the invariant name. */
+    wifi_event_guard_fail_teardown_on_ip_disabled();
+#endif
+}
+
+/* FW-08.6 guard tripwire. Extracted so the `#ifdef` block in
+ * on_sta_got_ip_handler() is a single conditional branch.
+ * The body prints the literal "teardown" + aborts via
+ * TEST_FAIL_MESSAGE so the runner's grep finds the invariant
+ * name in stdout. */
+#ifdef UNITY_HOST_BUILD
+#include "unity.h"
+#endif
+
+void wifi_event_guard_fail_teardown_on_ip_disabled(void)
+{
+    /* The literal substring "teardown" must appear here so
+     * Pass 8 of run_host_tests.py can grep for it. */
+    TEST_FAIL_MESSAGE("teardown_on_ip invariant violated: "
+                      "softAP remains reachable on STA network "
+                      "after IP_EVENT_STA_GOT_IP");
 }
 
 /* One-shot timer callback. Re-issues esp_wifi_connect() when

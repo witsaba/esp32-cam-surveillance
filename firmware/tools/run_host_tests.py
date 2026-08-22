@@ -362,6 +362,10 @@ ALL_TESTS = [
     # FW-08.5 — softAP alive during joining (T-08-F).
     "test_fw08_5_pre_ip_up_keeps_softap_active_at_5s [fw-08.5][scenario-S1]",
     "test_fw08_5_pre_ip_up_retries_do_not_affect_softap [fw-08.5][scenario-S2]",
+    # FW-08.6 — no-AP-after-tear-down guard (T-08-G). Green path
+    # only on production build; bite-proof runs under Pass 8
+    # stub.
+    "test_fw08_6_green_path_closes_attack_window [fw-08.6][scenario-S2]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -472,6 +476,12 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_event_teardown.c'),
     # FW-08.5 — softAP alive during STA joining (T-08-F).
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_event_joining.c'),
+    # FW-08.6 — no-AP-after-tear-down guard (T-08-G). Compiles
+    # the green-path test under the production build; the
+    # bite-proof test is compiled under the Pass 8 stub build
+    # (see FW08_6_GUARD_TEST_FILES below). The #ifdef inside
+    # the file selects which one is compiled into each build.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_event_guard.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
@@ -489,11 +499,20 @@ FW08_3_GUARD_TEST_FILES = [
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_guard.c'),
 ]
 
-# FW-08 — Pass 7 + Pass 8 stub-build file lists. Populated by
-# T-08-D (FW-08.3 bounded-wait guard) and T-08-G (FW-08.6
-# teardown-on-IP guard) respectively. The runner blocks below
-# (-- stub passes --) are wired in their respective commits too.
-FW08_6_GUARD_TEST_FILES = []  # T-08-G fills this in.
+# FW-08.6 — Pass 8 stub build includes ONLY the FW-08.6 guard
+# file. The build defines -DWIFI_TEST_STUB_SKIP_IP_UP_HANDLER=1
+# so on_sta_got_ip_handler() is replaced by a no-op + the
+# guard tripwire. The bite-proof test asserts the guard fires
+# with the literal "teardown" in the message. Mirrors Pass 7
+# shape (WIFI_TEST_STUB_USE_BLOCKING_WAIT) — the same compile
+# flag is applied to BOTH the production source (wifi_event.c)
+# and the test file (test_wifi_event_guard.c). The green-path
+# test in test_wifi_event_guard.c is excluded from this build
+# by the `#ifndef WIFI_TEST_STUB_SKIP_IP_UP_HANDLER` inside
+# the file.
+FW08_6_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_event_guard.c'),
+]
 
 # The literal substrings the Pass 7 / Pass 8 runners grep for.
 # Mirrors the LED_TEST_STUB_DISABLE_TIMER ("timer_fire") and
@@ -854,6 +873,43 @@ def main():
     print(f"OK: FW-08.3 stub build → guard tripped on "
           f"'{WIFI_BITE_PROOF_KEYWORD}' invariant as expected "
           f"(test failed with rc={fw08_3_rc}).")
+
+    # ----- Pass 8: FW-08.6 teardown-on-IP invariant stub build -----
+    # Compile test_wifi_event_guard.c (and wifi_event.c) with
+    # -DWIFI_TEST_STUB_SKIP_IP_UP_HANDLER=1 so on_sta_got_ip
+    # _handler() is replaced by a no-op + guard tripwire. The
+    # bite-proof test asserts the guard fires with the literal
+    # "teardown" in the message. The Pass-8 runner expects:
+    #   - rc != 0 (TEST_FAIL_MESSAGE exits non-zero)
+    #   - literal "teardown" present in stdout (from the test's
+    #     marker line AND from the TEST_FAIL_MESSAGE body)
+    #   - "guard_bite_proof_teardown_on_ip_disabled" test name
+    #     in stdout
+    # Mirrors the FW-06.4 LED_TEST_STUB_DISABLE_TIMER +
+    # FW-07.4 BUTTON_TEST_STUB_DISABLE_DEBOUNCE + FW-08.3
+    # WIFI_TEST_STUB_USE_BLOCKING_WAIT pattern exactly.
+    print()
+    print("=== Pass 8: FW-08.6 stub build (WIFI_TEST_STUB_SKIP_IP_UP_HANDLER, guard file) ===")
+    fw08_6_bin = _build('fw08_6_tests_stub',
+                        ['-DWIFI_TEST_STUB_SKIP_IP_UP_HANDLER=1'],
+                        FW08_6_GUARD_TEST_FILES, workdir)
+    fw08_6_rc, fw08_6_out = _run_binary(fw08_6_bin)
+    if fw08_6_rc == 0:
+        sys.exit(f"FAIL: FW-08.6 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The stub gate "
+                 f"didn't bypass the teardown-on-IP invariant. "
+                 f"Output:\n{fw08_6_out}")
+    if WIFI_EVENT_BITE_PROOF_KEYWORD not in fw08_6_out:
+        sys.exit(f"FAIL: FW-08.6 stub build output does not "
+                 f"contain the literal '{WIFI_EVENT_BITE_PROOF_KEYWORD}':\n{fw08_6_out}")
+    # The guard test name should appear in the output so the
+    # runner can match it to the expected bite-proof.
+    if "guard_bite_proof_teardown_on_ip_disabled" not in fw08_6_out:
+        sys.exit(f"FAIL: FW-08.6 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw08_6_out}")
+    print(f"OK: FW-08.6 stub build → guard tripped on "
+          f"'{WIFI_EVENT_BITE_PROOF_KEYWORD}' invariant as expected "
+          f"(test failed with rc={fw08_6_rc}).")
 
     print()
     print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
