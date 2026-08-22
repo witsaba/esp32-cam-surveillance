@@ -1,7 +1,7 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 7 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07).
-> **Next SDD to start**: FW-08 (Wi-Fi station).
+> **Status**: 8 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; **FW-08 closed by PR #10 (pending — worktree `feat/fw-08-wifi-station-backoff`, 8 work-unit commits, see amendment blockquote at the end of § FW-08)**).
+> **Next SDD to start**: FW-09 (WS reconnect) or FW-10 (camera init) per dependency graph — FW-08 closed unblocks FW-13; FW-09 / FW-10 are independent.
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
 > **Date**: 2026-08-21.
@@ -781,6 +781,35 @@ SDD change: `firmware-wifi-station-backoff` · Closes: R-04, R-05, R-26 (softAP-
   - **Scenario: missing teardown is rejected.** Given the softAP teardown handler stubbed out (scratch violation), When the station interface receives an IP, Then the guard fails naming the teardown-on-IP invariant (the AP would remain reachable on the STA network, re-opening the captive-portal attack window).
   - **Scenario: green path closes the attack window.** Given the teardown handler active, When the station interface receives an IP, Then no softAP SSID is broadcast on the same radio.
 - **Depends on:** FW-08.4, FW-08.5.
+
+> **Amended 2026-08-22 (closure).** FW-08 closed on `feat/fw-08-wifi-station-backoff` against `main@aea79ab` — 8 work-unit commits land; single PR with `size:exception` per preflight #3676 (~1760 lines, 1000-line budget + extend-if-needed). Closes R-04 (backoff + recovery + wedge guard), R-05 (counter reset on `IP_EVENT_STA_GOT_IP`), and the softAP-teardown half of R-26 (captive-portal attack window). Unblocks FW-13 (WS client needs station IP-up to start handshake).
+>
+> **Work-unit commit ledger** (8 commits; SHAs from the `feat/fw-08-wifi-station-backoff` branch):
+>
+> | # | Commit SHA | Title | Files | Lines |
+> |---|---|---|---|---|
+> | 1 | `8f62b00` | feat(wifi): add component skeleton + extend mock_esp_wifi/esp_event/esp_netif + Kconfig symbols | new wifi/ scaffold + 3 mock deltas + softap_is_active() + mock_softap + sdkconfig defaults + smoke test | +875/-34 |
+> | 2 | `b4da7a2` | feat(wifi): FW-08.1 backoff schedule 2/4/8/16/30s cap | wifi.c refactor (WIFI_BACKOFF_TABLE_LEN constant) + test_wifi_backoff.c (6 tests) | +114/-8 |
+> | 3 | `9b79b9d` | feat(wifi): FW-08.2 30s AP-reboot recovery + counter reset on IP_EVENT_STA_GOT_IP | wifi_init full body (SSID validation, LED + WIFI_CONNECTING, STA netif, APSTA/STA mode via softap_is_active, subscribe DISCONNECTED+GOT_IP, esp_timer_create backoff, first esp_wifi_connect) + wifi_event.c (s_consecutive_failures, on_sta_disconnected, on_sta_got_ip) + wifi_event_install_retry_cb seam + idempotency guard + WIFI_EVT_*/IDF event_id mapping fix + test_wifi_recovery.c (2 tests) | +450/-38 |
+> | 4 | `8ef1a9f` | test(wifi): FW-08.3 no-wedge guard with bite-proof (-DWIFI_TEST_STUB_USE_BLOCKING_WAIT=1) | test_wifi_guard.c (S2 green + S1 bite-proof) + wifi_guard_fail_blocking_wait tripwire + Pass 7 wiring | +283/-3 |
+> | 5 | `827935c` | feat(wifi-event): FW-08.4 softAP teardown within 1s of IP_EVENT_STA_GOT_IP | wifi_stop() body (softap_stop + WIFI_MODE_STA) + test_wifi_event_teardown.c (S1 Kconfig=y, S2 Kconfig=n via `#ifndef` gate) + -DCONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=1 cflag | +195/-4 |
+> | 6 | `e687081` | feat(wifi-event): FW-08.5 softAP alive during STA joining (WIFI_MODE_APSTA) | wifi_select_mode(bool) inline helper + test_wifi_event_joining.c (S1 + S2) | +170/-4 |
+> | 7 | `dc4a220` | test(wifi-event): FW-08.6 no-AP-after-tear-down guard with bite-proof (-DWIFI_TEST_STUB_SKIP_IP_UP_HANDLER=1) | test_wifi_event_guard.c (S2 green + S1 bite-proof) + wifi_event_guard_fail_teardown_on_ip_disabled tripwire + Pass 8 wiring | +300/-11 |
+> | 8 | this commit | docs(milestones): amend FW-08 charter + mark closed + fill closure ledger | docs/firmware-milestones.md | (this commit) |
+>
+> **Test results** (host-side Unity + 8-pass build matrix):
+> - Pass 1 (production build): **82 tests GREEN** — 68 baseline (FW-02/FW-03/FW-05/FW-06/FW-07) + 14 FW-08 production tests + 0 FW-08 bite-proofs (compiled via `#ifndef`).
+> - Pass 2 (FW-02.3 schema_version stub): bite-proof fires with `schema_version` literal.
+> - Pass 3 (FW-03.4 determinism stub): bite-proof fires with `determinism` literal.
+> - Pass 4 (FW-05.4 validation stub): 3 reject tests fail with `validation` literal; 3 accept tests still pass.
+> - Pass 5 (FW-06.4 timer_fire stub): bite-proof fires with `timer_fire` literal (process aborts).
+> - Pass 6 (FW-07.4 debounce stub): bite-proof fires with `debounce` literal.
+> - Pass 7 (FW-08.3 bounded_wait stub): bite-proof fires with `bounded_wait` literal (test failed rc=1).
+> - Pass 8 (FW-08.6 teardown stub): bite-proof fires with `teardown` literal (test failed rc=1).
+>
+> **Build size**: not measured on host (the host build links against mocks, not real IDF); device-side `idf.py build` + `make size-components` is the verify-phase gate. Forecast: ~5-10 KB post-FW-06's 92% of 960 KB factory partition baseline.
+>
+> **Verify-report verdict**: pending `sdd-verify` (orchestrator will run idf.py build + size check + on-device smoke).
 
 ## Wave 3 — Camera
 
