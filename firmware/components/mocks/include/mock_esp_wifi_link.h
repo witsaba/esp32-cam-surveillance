@@ -19,5 +19,8 @@
 #define esp_wifi_set_config(iface, cfg)      mock_esp_wifi_set_config(iface, cfg)
 #define esp_wifi_start()                     mock_esp_wifi_start()
 #define esp_wifi_stop()                      mock_esp_wifi_stop()
+/* FW-08 — station connect/disconnect. */
+#define esp_wifi_connect()                   mock_esp_wifi_connect()
+#define esp_wifi_disconnect()                mock_esp_wifi_disconnect()
 
 #endif  /* !MOCK_WIFI_USE_REAL */

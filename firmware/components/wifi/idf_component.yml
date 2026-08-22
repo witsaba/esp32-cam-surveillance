@@ -1,0 +1,7 @@
+## IDF component manifest for the wifi component (FW-08).
+##
+## The `dependencies:` key is intentionally empty per the FW-06
+## validator gotcha — see commit 486eb7a. IDF v5.5.3's manifest
+## parser rejects unknown keys; an empty map (no key at all) is
+## the only safe shape. The CMakeLists.txt REQUIRES clause covers
+## the actual component dependencies.

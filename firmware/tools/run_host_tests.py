@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """run_host_tests.py — host-side Unity test runner for FW-02, FW-03,
-FW-05, FW-06, and FW-07.
+FW-05, FW-06, FW-07, and FW-08.
 
 Builds and runs the in-tree host tests against the in-memory
-mock surface. Six compile passes:
+mock surface. Eight compile passes:
 
   Pass 1 — production build (no stub flags): all FW-02/FW-03/FW-05
-           + FW-06 + FW-07 tests must pass (current count: 68).
+           + FW-06 + FW-07 + FW-08 tests must pass (current count:
+           69 — 68 baseline + 1 FW-08 smoke after T-08-A lands).
 
   Pass 2 — stub build (-DCONFIG_TEST_STUB_VERSION_CHECK): the FW-02.3
            bite-proof MUST FAIL with 'schema_version' in the message.
@@ -27,7 +28,15 @@ mock surface. Six compile passes:
            message (test fires via TEST_FAIL_MESSAGE on jitter-
            induced phantom edges).
 
-Exits 0 only when all 6 passes satisfy their expected outcomes.
+  Pass 7 — stub build (-DWIFI_TEST_STUB_USE_BLOCKING_WAIT): the
+           FW-08.3 bite-proof MUST FAIL with 'bounded_wait' in
+           the message. Wired in T-08-D.
+
+  Pass 8 — stub build (-DWIFI_TEST_STUB_SKIP_IP_UP_HANDLER): the
+           FW-08.6 bite-proof MUST FAIL with 'teardown' in the
+           message. Wired in T-08-G.
+
+Exits 0 only when all passes satisfy their expected outcomes.
 Exits 1 on any unexpected pass/fail pattern (regression in either
 direction).
 
@@ -114,6 +123,8 @@ def _common_cflags(extra_defines):
         f'-I{PROJECT_DIR}/components/softap/include',
         f'-I{PROJECT_DIR}/components/led/include',
         f'-I{PROJECT_DIR}/components/button/include',
+        # FW-08 — wifi component public headers.
+        f'-I{PROJECT_DIR}/components/wifi/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
     ]
@@ -136,6 +147,9 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_home.c'),
         os.path.join(PROJECT_DIR, 'components', 'led', 'led.c'),
         os.path.join(PROJECT_DIR, 'components', 'button', 'button.c'),
+        # FW-08 — wifi component (connect driver + event handlers).
+        os.path.join(PROJECT_DIR, 'components', 'wifi', 'wifi.c'),
+        os.path.join(PROJECT_DIR, 'components', 'wifi', 'wifi_event.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_nvs_flash.cpp'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_boot_button.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_init_returns.c'),
@@ -149,6 +163,8 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_gpio.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_timer.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_config.c'),
+        # FW-08 — softap mock (mirrors mock_esp_wifi shape).
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_softap.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
@@ -312,6 +328,9 @@ ALL_TESTS = [
     # -DBUTTON_TEST_STUB_DISABLE_DEBOUNCE=1.
     "debounce_filters_jitter_phantom_press [fw-07.4]",
     "debounce_does_not_swallow_clean_tap [fw-07.4]",
+    # FW-08 — wifi component smoke (T-08-A only). Full 18-test
+    # surface (16 prod + 2 bite-proofs) lands across T-08-B..T-08-G.
+    "test_wifi_init_succeeds [fw-08][smoke][build-infra]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -389,7 +408,30 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # Pass 6 stub build below. The #ifdef inside the file
     # selects which one is compiled into each build.
     os.path.join(PROJECT_DIR, 'tests', 'test_button', 'test_button_guard.c'),
+    # FW-08 — wifi component smoke (T-08-A only). Full test
+    # files (test_wifi_backoff.c, test_wifi_recovery.c,
+    # test_wifi_guard.c, test_wifi_event_teardown.c,
+    # test_wifi_event_joining.c, test_wifi_event_guard.c)
+    # land in T-08-B..T-08-G and get added to this list as each
+    # commit lands. The bite-proof test files are compiled only
+    # under their respective Pass 7 / Pass 8 stub builds (mirrors
+    # the LED_TEST_STUB_DISABLE_TIMER / BUTTON_TEST_STUB_DISABLE
+    # _DEBOUNCE pattern).
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_main.c'),
 ]
+
+# FW-08 — Pass 7 + Pass 8 stub-build file lists. Populated by
+# T-08-D (FW-08.3 bounded-wait guard) and T-08-G (FW-08.6
+# teardown-on-IP guard) respectively. The runner blocks below
+# (-- stub passes --) are wired in their respective commits too.
+FW08_3_GUARD_TEST_FILES = []  # T-08-D fills this in.
+FW08_6_GUARD_TEST_FILES = []  # T-08-G fills this in.
+
+# The literal substrings the Pass 7 / Pass 8 runners grep for.
+# Mirrors the LED_TEST_STUB_DISABLE_TIMER ("timer_fire") and
+# BUTTON_TEST_STUB_DISABLE_DEBOUNCE ("debounce") patterns.
+WIFI_BITE_PROOF_KEYWORD = "bounded_wait"
+WIFI_EVENT_BITE_PROOF_KEYWORD = "teardown"
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
 # green-path test in that file is guarded by `#ifndef
