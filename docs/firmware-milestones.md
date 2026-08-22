@@ -782,9 +782,9 @@ SDD change: `firmware-wifi-station-backoff` · Closes: R-04, R-05, R-26 (softAP-
   - **Scenario: green path closes the attack window.** Given the teardown handler active, When the station interface receives an IP, Then no softAP SSID is broadcast on the same radio.
 - **Depends on:** FW-08.4, FW-08.5.
 
-> **Amended 2026-08-22 (closure).** FW-08 closed on `feat/fw-08-wifi-station-backoff` against `main@aea79ab` — 9 work-unit commits land; single PR with `size:exception` per preflight #3676 (~2350 lines, 1000-line budget + extend-if-needed). Closes R-04 (backoff + recovery + wedge guard), R-05 (counter reset on `IP_EVENT_STA_GOT_IP`), and the softAP-teardown half of R-26 (captive-portal attack window). Unblocks FW-13 (WS client needs station IP-up to start handshake).
+> **Amended 2026-08-22 (closure).** FW-08 closed on `feat/fw-08-wifi-station-backoff` against `main@aea79ab` — 12 work-unit commits land; single PR with `size:exception` per preflight #3676 (~2400 lines, 1000-line budget + extend-if-needed). Closes R-04 (backoff + recovery + wedge guard), R-05 (counter reset on `IP_EVENT_STA_GOT_IP`), and the softAP-teardown half of R-26 (captive-portal attack window). Unblocks FW-13 (WS client needs station IP-up to start handshake). **Device-verified end-to-end on AI-Thinker ESP32-CAM at /dev/cu.usbserial-130 (2026-08-22)**: erase-flash → flash → monitor shows clean boot to softAP bring-up (`wifi:mode : softAP (c8:f0:9e:9d:50:09)` + `/whoami` + `/provision` + `/` URI handlers registered + DHCP server started on `192.168.4.1`).
 >
-> **Work-unit commit ledger** (9 commits; SHAs from the `feat/fw-08-wifi-station-backoff` branch):
+> **Work-unit commit ledger** (12 commits; SHAs from the `feat/fw-08-wifi-station-backoff` branch):
 >
 > | # | Commit SHA | Title | Files | Lines |
 > |---|---|---|---|---|
@@ -797,8 +797,13 @@ SDD change: `firmware-wifi-station-backoff` · Closes: R-04, R-05, R-26 (softAP-
 > | 7 | `dc4a220` | test(wifi-event): FW-08.6 no-AP-after-tear-down guard with bite-proof (-DWIFI_TEST_STUB_SKIP_IP_UP_HANDLER=1) | test_wifi_event_guard.c (S2 green + S1 bite-proof) + wifi_event_guard_fail_teardown_on_ip_disabled tripwire + Pass 8 wiring | +300/-11 |
 > | 8 | `e9f40a5` | docs(milestones): amend FW-08 charter + mark closed + fill closure ledger | docs/firmware-milestones.md (initial closure blockquote + 8-commit ledger) | +31/-2 |
 > | 9 | `b49e4b0` | fix(wifi): replace C-style block comments with CMake `#` comments in CMakeLists.txt | firmware/components/wifi/CMakeLists.txt (post-verify DEV-1: C block comments broke `idf.py build`; host test runner compiles .c directly via `cc` and does not parse CMakeLists) | +11/-12 |
+> | 10 | `0eb76bd` | fix(wifi): device-build fixes — ssid_len removal, real IDF 6-arg register, guard tripwire host-only | wifi.c, wifi_event.c, boot/CMakeLists.txt (post-merge device-build verification — three real bugs that host tests could not catch: `wifi_sta_config_t` has no `ssid_len` field on v5.5.3; the mock `esp_event_handler_instance_register_with` is 5-arg but real IDF is 6-arg; `TEST_FAIL_MESSAGE` is unity-only and must not leak into production; plus boot CMakeLists needed `wifi` in REQUIRES) | +42/-8 |
+> | 11 | `19acf27` | docs(milestones): correct FW-08 closure ledger to 9 commits (include post-verify DEV-1 fix b49e4b0) | docs/firmware-milestones.md (ledger update after 0eb76bd fix) | +7/-4 |
+> | 12 | `ce88b6b` | fix(wifi): add missing netif_init / event_loop_create_default / wifi_init calls before STA netif create | firmware/components/wifi/wifi.c (post-merge device-flash verification: boot #2 after `esp_restart()` from POST /provision crashed at `esp_netif_create_default_wifi_sta()` with `ESP_ERR_INVALID_STATE` because softAP's prior init state was wiped; fix adds the three idempotent init calls inside `wifi_init()` itself, mirroring the softAP bring-up sequence) | +31/-7 |
 >
-> **Docs amendment (post-archive correction)**: the original ledger in commit `e9f40a5` listed 8 rows; commit `b49e4b0` landed during the verify-phase DEV-1 fix and was retroactively added to the ledger in this docs edit (no commit amended; docs-only correction).
+> **Device-verified end-to-end success** (2026-08-22): user erased flash, flashed `ce88b6b`, monitored. Clean boot: `W (1032) config: schema_version mismatch: stored=0 compiled=1 — restoring defaults` → `I (1032) boot: fw: provisioning branch entered (softAP body)` → `I (1212) wifi:mode : softAP (c8:f0:9e:9d:50:09)` → `I (1222) esp_netif_lwip: DHCP server started on interface WIFI_AP_DEF with IP: 192.168.4.1` → `I (1232) softap: URI /whoami registered` → `I (1232) softap: URI /provision registered` → `I (1232) softap: URI / registered` → `I (1242) main_task: Returned from app_main()`. No crash, no abort, app_main returns to event loop with softAP serving.
+>
+> **Ledger corrections**: original `e9f40a5` listed 8 rows; each subsequent device-verify fix added a row (now 12). All corrections are docs-only; no commits amended.
 >
 > **Test results** (host-side Unity + 8-pass build matrix):
 > - Pass 1 (production build): **82 tests GREEN** — 68 baseline (FW-02/FW-03/FW-05/FW-06/FW-07) + 14 FW-08 production tests + 0 FW-08 bite-proofs (compiled via `#ifndef`).
