@@ -68,13 +68,21 @@ typedef struct {
 /* ---------- primable return values (test helpers) ---------- */
 void mock_gpio_config_set_return(esp_err_t r);
 void mock_gpio_set_level_set_return(esp_err_t r);
+/* FW-07 boot-button driver reads GPIO via gpio_get_level(pin).
+ * Mirror of the mock_gpio_set_level triplet. */
+void mock_gpio_get_level_set_return(int level);
 
 /* ---------- call counters ---------- */
 int mock_gpio_config_call_count(void);
 int mock_gpio_set_level_call_count(void);
+/* Number of gpio_get_level(pin) calls observed. */
+int mock_gpio_get_level_call_count(void);
 
 /* ---------- captured state ---------- */
 void mock_gpio_set_level_capture(int *out_pin, int *out_level);
+/* Last (pin, level) seen by gpio_get_level — pin from the call,
+ * level from the most-recent mock_gpio_get_level_set_return. */
+void mock_gpio_get_level_capture_last(int *out_pin, int *out_level);
 
 /* ---------- reset ---------- */
 void mock_gpio_reset(void);
@@ -82,3 +90,7 @@ void mock_gpio_reset(void);
 /* ---------- mock targets (link-header redirects) ---------- */
 esp_err_t mock_gpio_config(const gpio_config_t *cfg);
 esp_err_t mock_gpio_set_level(gpio_num_t pin, uint32_t level);
+/* FW-07 — returns the value primed via
+ * mock_gpio_get_level_set_return() (default 0 = not pressed for
+ * active-LOW GPIO 0). */
+int mock_gpio_get_level(gpio_num_t pin);

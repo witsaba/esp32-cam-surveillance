@@ -21,5 +21,7 @@
 #define esp_timer_stop(h)                       mock_esp_timer_stop(h)
 #define esp_timer_restart(h, us)                mock_esp_timer_restart(h, us)
 #define esp_timer_delete(h)                     mock_esp_timer_delete(h)
+/* FW-07 boot-button — redirect esp_timer_get_time() to the mock. */
+#define esp_timer_get_time()                    mock_esp_timer_get_time()
 
 #endif  /* !MOCK_ESP_TIMER_USE_REAL */

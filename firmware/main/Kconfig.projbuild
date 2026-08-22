@@ -116,4 +116,93 @@ menu "ESP32-CAM Surveillance Firmware"
             The one-shot esp_timer fires the recovery-complete cb at
             this elapsed time.
 
+    # FW-07 boot button (R-03 measurement half + R-24 runtime
+    # factory reset). Reads GPIO 0 (AI-THINKER ESP32-CAM onboard
+    # PRG button, active-LOW per PRD § FR-7 L234-238). The driver
+    # owns the BOOT_TIME→RUNTIME phase machine + debounce + the
+    # 500 ms strap-grace window that absorbs the ROM bootloader's
+    # GPIO-0 transient. Separate pin from the FW-06 status LED
+    # (GPIO 4, OUTPUT) — see the FW-06 charter amendment at
+    # commits 048a3cf + d0942e5.
+    config FIRMWARE_BOOT_BUTTON
+        bool "Enable the boot-button driver (FW-07)"
+        default y
+        help
+            When disabled the button component compiles to a no-op
+            TU and boot_button_pressed_at_boot() resolves only the
+            weak default in boot_button_stub.c. Enable for normal
+            provisioning + runtime factory-reset support.
+
+if FIRMWARE_BOOT_BUTTON
+
+    config FIRMWARE_BOOT_BUTTON_GPIO
+        int "Boot button GPIO number (AI-THINKER ESP32-CAM PRG button = GPIO 0)"
+        range 0 39
+        default 0
+        help
+            The AI-THINKER ESP32-CAM onboard PRG button is on GPIO 0
+            per PRD § FR-7 L234. Override only for non-AI-THINKER
+            boards. GPIO 0 is the strapping pin — the driver applies
+            a FIRMWARE_BOOT_BUTTON_STRAP_GRACE_MS grace window
+            after button_init() to absorb the ROM bootloader
+            transient.
+
+    config FIRMWARE_BOOT_BUTTON_TAP_MAX_MS
+        int "Press duration threshold below which a tap is ignored (ms)"
+        range 50 500
+        default 100
+        help
+            Presses shorter than this are treated as tap-jitter and
+            discarded by the FW-07.1 tap-ignore state machine. The
+            boundary is tested at 99/100/101 ms (acceptance +
+            rejection on either side).
+
+    config FIRMWARE_BOOT_BUTTON_BOOT_LONGPRESS_MS
+        int "Minimum continuous press during BOOT_TIME phase to assert provisioning signal (ms)"
+        range 1000 30000
+        default 3000
+        help
+            FW-07.2: a held press of at least this duration during
+            the BOOT_TIME phase sets boot_button_pressed_at_boot()
+            to true. Consumed at boot.c:124 (FW-03.3). Default 3 s
+            matches PRD § FR-7 L237.
+
+    config FIRMWARE_BOOT_BUTTON_RUNTIME_LONGPRESS_MS
+        int "Minimum continuous press during RUNTIME phase to trigger factory reset (ms)"
+        range 5000 60000
+        default 10000
+        help
+            FW-07.3: a held press of at least this duration during
+            the RUNTIME phase fires the registered callback exactly
+            once (production wires config_factory_reset() +
+            esp_restart()). The DEBOUNCE_MS * 4 (= 80 ms) cooldown
+            prevents double-fire while the user keeps holding.
+            Default 10 s matches PRD § FR-7 L237.
+
+    config FIRMWARE_BOOT_BUTTON_DEBOUNCE_MS
+        int "Minimum time between consecutive edges to debounce (ms)"
+        range 5 100
+        default 20
+        help
+            Edges that arrive within this window of the previous
+            edge are dropped (FW-07.1). Smallest + simplest
+            debounce strategy (matches PRD "press jitter" wording).
+            The bite-proof (-DBUTTON_TEST_STUB_DISABLE_DEBOUNCE=1)
+            short-circuits this filter so the guard tripwire can
+            verify it is load-bearing.
+
+    config FIRMWARE_BOOT_BUTTON_STRAP_GRACE_MS
+        int "Grace window after button_init() during which GPIO reads are ignored (ms)"
+        range 100 2000
+        default 500
+        help
+            GPIO 0 is the strapping pin; the ROM bootloader holds
+            it LOW for ~100 ms after reset. Without a grace window,
+            a "long press" would be falsely detected from the very
+            first poll. The driver enters BOOT_TIME only after this
+            window elapses. Default 500 ms is well above the
+            transient envelope.
+
+endif  # FIRMWARE_BOOT_BUTTON
+
 endmenu
