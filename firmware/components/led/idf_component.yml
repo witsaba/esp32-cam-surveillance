@@ -1,0 +1,7 @@
+## led idf_component.yml — no managed-component deps.
+##
+## The led component requires driver + esp_timer (IDF built-ins);
+## both are declared via CMakeLists.txt REQUIRES. No cJSON or other
+## managed-component dependencies — the LED driver writes GPIO +
+## timer only.
+dependencies:

@@ -97,6 +97,7 @@ def _common_cflags(extra_defines):
         f'-I{PROJECT_DIR}/components/boot/include',
         f'-I{PROJECT_DIR}/components/mocks/include',
         f'-I{PROJECT_DIR}/components/softap/include',
+        f'-I{PROJECT_DIR}/components/led/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
     ]
@@ -117,6 +118,7 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap.c'),
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_handlers.c'),
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_home.c'),
+        os.path.join(PROJECT_DIR, 'components', 'led', 'led.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_nvs_flash.cpp'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_boot_button.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_init_returns.c'),
@@ -127,6 +129,8 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_event.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_http_server.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_system.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_gpio.c'),
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_timer.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
