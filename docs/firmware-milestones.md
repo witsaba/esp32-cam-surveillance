@@ -1,7 +1,7 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 4 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 PR #7 open for review — see amendment blockquote at the end of § FW-05).
-> **Next SDD to start**: FW-06 (`firmware-status-led`) — after FW-05 merges.
+> **Status**: 5 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71` — see amendment blockquote at the end of § FW-05).
+> **Next SDD to start**: FW-06 (`firmware-status-led`).
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
 > **Date**: 2026-08-21.
@@ -506,7 +506,7 @@ SDD change: `firmware-softap-provisioning` · Closes: R-10, R-11, R-12, R-26.
   - **Scenario: well-formed request passes.** Given a well-formed `POST /provision` body, When the request is processed, Then the server returns a 2xx status and persists the fields.
 - **Depends on:** FW-05.2.
 
-> **Amendment 2026-08-21 (FW-05 PR #7 open for review).** The HTTP-server milestone closes R-10, R-11, R-12, and the inbound-validation half of R-26 across 4 work-unit commits on `feat/fw-05-softap-provisioning`:
+> **Amendment 2026-08-22 (FW-05 PR #7 merged, merge commit `ccd8f71`).** The HTTP-server milestone closes R-10, R-11, R-12, and the inbound-validation half of R-26 across 13 work-unit commits on `feat/fw-05-softap-provisioning` (4 feature commits for FW-05.1–FW-05.4, 1 spec-reconciliation fix for the partial-update vs strict-guard contradiction, 1 home-page scope expansion the user directed, and 7 device-interaction bug fixes — see the commit ledger below):
 >
 > | SHA | Subject | Closes |
 > |---|---|---|
