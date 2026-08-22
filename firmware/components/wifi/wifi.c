@@ -135,11 +135,25 @@ esp_err_t wifi_event_subscribe(wifi_event_id_t id,
         default:
             return ESP_ERR_INVALID_ARG;
     }
-    return esp_event_handler_instance_register_with(
+#ifdef UNITY_HOST_BUILD
+    /* Host: mock capture. The mock signature drops the leading
+     * `esp_event_loop_handle_t event_loop` parameter (host tests
+     * use the default event loop; see mock_esp_event_link.h). */
+    return mock_esp_event_handler_instance_register_with(
         base, event_id,
         (esp_event_handler_t)cb,
         arg,
         NULL /* instance */);
+#else
+    /* Device: real IDF signature is 6-arg (event_loop, base, id,
+     * handler, arg, instance). Pass NULL for the default loop. */
+    return esp_event_handler_instance_register_with(
+        NULL /* event_loop: default */,
+        base, event_id,
+        (esp_event_handler_t)cb,
+        arg,
+        NULL /* instance */);
+#endif
 }
 
 esp_err_t wifi_stop(void)
@@ -225,7 +239,10 @@ esp_err_t wifi_init(const config_t *cfg)
         wifi_cfg.sta.ssid[i] = (uint8_t)cfg->wifi.ssid[i];
     }
     wifi_cfg.sta.ssid[i] = 0;
-    wifi_cfg.sta.ssid_len = (uint8_t)i;
+    /* Note: ESP-IDF v5.5.3 wifi_sta_config_t has no `ssid_len`
+     * field — the SSID is read as a zero-terminated byte string
+     * (the driver walks the buffer until it sees 0x00). This is
+     * a v5.x simplification; v4.x had an explicit length. */
     for (i = 0; i < sizeof(wifi_cfg.sta.password) - 1 && cfg->wifi.password[i] != '\0'; ++i) {
         wifi_cfg.sta.password[i] = (uint8_t)cfg->wifi.password[i];
     }
@@ -306,14 +323,15 @@ esp_err_t wifi_init(const config_t *cfg)
 
 /* FW-08.3 guard tripwire. Extracted so the `#ifdef` block in
  * wifi_init() is a single conditional branch. The body prints
- * the literal "bounded_wait" + aborts via TEST_ASSERT_MESSAGE
- * so the runner's grep finds the invariant name in stdout.
+ * the literal "bounded_wait" + aborts via TEST_FAIL_MESSAGE so
+ * the runner's grep finds the invariant name in stdout.
  *
  * Mirrors the test_led_guard.c guard tripwire pattern. The
- * assert macro is available via unity.h. */
+ * assert macro is available via unity.h. Host-only body;
+ * device build has a no-op stub to keep the linker happy when
+ * the stub-build flag forces a call into it. */
 #ifdef UNITY_HOST_BUILD
 #include "unity.h"
-#endif
 
 void wifi_guard_fail_blocking_wait(void)
 {
@@ -322,3 +340,10 @@ void wifi_guard_fail_blocking_wait(void)
     TEST_FAIL_MESSAGE("bounded_wait invariant violated: "
                       "wifi_init blocked on portMAX_DELAY");
 }
+#else
+void wifi_guard_fail_blocking_wait(void)
+{
+    /* Device: unreachable — production wifi_init does not call
+     * this. Kept as a stub to satisfy the linker. */
+}
+#endif

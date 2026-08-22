@@ -123,10 +123,11 @@ void on_sta_got_ip_handler(void *arg,
  * on_sta_got_ip_handler() is a single conditional branch.
  * The body prints the literal "teardown" + aborts via
  * TEST_FAIL_MESSAGE so the runner's grep finds the invariant
- * name in stdout. */
+ * name in stdout. Host-only body; device build has a no-op stub
+ * to keep the linker happy when the stub-build flag forces a
+ * call into it. */
 #ifdef UNITY_HOST_BUILD
 #include "unity.h"
-#endif
 
 void wifi_event_guard_fail_teardown_on_ip_disabled(void)
 {
@@ -136,6 +137,14 @@ void wifi_event_guard_fail_teardown_on_ip_disabled(void)
                       "softAP remains reachable on STA network "
                       "after IP_EVENT_STA_GOT_IP");
 }
+#else
+void wifi_event_guard_fail_teardown_on_ip_disabled(void)
+{
+    /* Device: unreachable — production code path does not call
+     * this on a correctly-configured build. The function exists
+     * only to keep the linker satisfied. */
+}
+#endif
 
 /* One-shot timer callback. Re-issues esp_wifi_connect() when
  * the backoff window elapses. The IDF event loop continues to
