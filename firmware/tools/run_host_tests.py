@@ -532,6 +532,15 @@ ALL_TESTS = [
     "test_status_payload_full_fields [fw-13.6][status-payload][scenario-S1]",
     "test_status_reconnects_zero_in_fw13 [fw-13.6][status-payload][scenario-S2]",
     "test_status_rssi_reflects_mock [fw-13.6][status-payload][scenario-S3]",
+    # FW-14.1 — exponential backoff schedule (R-19, FR-4). 6-row
+    # table: 2000/4000/8000/16000/30000/30000 via the ws_backoff
+    # module surface + setter capture + one-shot arming + WARN log.
+    "test_fw14_1_backoff_failures_1 [fw-14.1][row-1]",
+    "test_fw14_1_backoff_failures_2 [fw-14.1][row-2]",
+    "test_fw14_1_backoff_failures_3 [fw-14.1][row-3]",
+    "test_fw14_1_backoff_failures_4 [fw-14.1][row-4]",
+    "test_fw14_1_backoff_failures_5 [fw-14.1][row-5][cap-reached]",
+    "test_fw14_1_backoff_failures_6 [fw-14.1][row-6][cap-holds]",
     # FW-05.5 — always-on /whoami listener on the STA interface.
     # 4 scenarios covering install, IP-up, disconnect, idempotency.
     "test_fw05_5_install_subscribes_both_events [fw-05.5][install][scenario-S1]",
@@ -712,6 +721,10 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # FW-13.6 — status frame payload (T-13-H). 3 scenarios:
     # full 8-field payload, reconnects == 0, rssi_dbm reflects mock.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_status_payload.c'),
+    # FW-14 — ws_backoff module (reconnect loop owner). Leaf tests:
+    # 6-row FR-4 backoff table + counter lifecycle + event wiring +
+    # latch orderings land across the FW-14 apply commits.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_reconnect_backoff.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
