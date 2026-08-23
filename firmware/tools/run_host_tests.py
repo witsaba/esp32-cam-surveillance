@@ -173,6 +173,20 @@ def _common_cflags(extra_defines):
         # (no sdkconfig.h on host).
         '-DCONFIG_FIRMWARE_IDENTITY_NAME_MAX_LEN=32',
         '-DCONFIG_FIRMWARE_IDENTITY_DESCRIPTION_MAX_LEN=64',
+        # FW-13 — ws component Kconfig mirrors (T-13-D). Mirror
+        # components/ws/Kconfig defaults so the host runner's
+        # -D cflag set matches the device sdkconfig.defaults
+        # (no sdkconfig.h on host). The URI + path strings are
+        # string literals in the C source, so we use #define
+        # with double-quoted string values.
+        '-DCONFIG_FIRMWARE_WS_URI_DEFAULT="ws://example.local:9000"',
+        '-DCONFIG_FIRMWARE_WS_PATH="/cams"',
+        '-DCONFIG_FIRMWARE_WS_BUFFER_SIZE=16384',
+        '-DCONFIG_FIRMWARE_WS_PING_INTERVAL_SEC=10',
+        '-DCONFIG_FIRMWARE_WS_PINGPONG_TIMEOUT_SEC=30',
+        '-DCONFIG_FIRMWARE_WS_NETWORK_TIMEOUT_MS=5000',
+        '-DCONFIG_FIRMWARE_WS_TASK_STACK=8192',
+        '-DCONFIG_FIRMWARE_WS_STATUS_PERIOD_MS=30000',
     ]
     flags.extend(extra_defines)
     return flags
@@ -478,6 +492,12 @@ ALL_TESTS = [
     "test_mac_hex_format [fw-13][identity][mac-hex]",
     "test_mac_hex_zero [fw-13][identity][mac-hex][boundary]",
     "test_mac_hex_overflow [fw-13][identity][mac-hex][overflow]",
+    # FW-13.1 — URI = /cams, TCP transport, no MAC substring (T-13-D).
+    # Three scenarios from REQ-WS-001 S1+S2+S3. Brings Pass 1 to
+    # 111 (was 108).
+    "test_uri_path_is_cams [fw-13.1][uri-no-mac][scenario-S1]",
+    "test_transport_is_tcp [fw-13.1][uri-no-mac][scenario-S2]",
+    "test_no_mac_in_uri [fw-13.1][uri-no-mac][scenario-S3]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -631,6 +651,9 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # covering canonical MAC, all-zero MAC, and overflow
     # rejection. Pure helper (no IDF mocks needed).
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_identity_mac_hex.c'),
+    # FW-13.1 — URI exactly /cams, TCP transport, no MAC substring
+    # (T-13-D). 3 scenarios from REQ-WS-001 S1+S2+S3.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_uri_no_mac.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard

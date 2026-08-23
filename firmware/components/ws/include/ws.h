@@ -24,10 +24,13 @@
  */
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "config.h"
 #include "esp_err.h"
+#include "identity.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -81,6 +84,101 @@ typedef struct {
  * BOOT_STEP_WS_INIT), returns the forced error (mirrors the
  * stub_inits.c behaviour; T-13-J replaces that stub). */
 esp_err_t ws_init(const config_t *cfg);
+
+/* ---------- FW-13.1 text-frame URI helpers ----------
+ *
+ * These live here so host tests can call them (the test surface
+ * for FW-13.1 asserts on URI parsing + URI composition; the
+ * runtime callers are ws.c::ws_init (compose) + the WS event
+ * handlers (parse, future-proof)). */
+
+/* Compose the WS URI from CONFIG_FIRMWARE_WS_URI_DEFAULT +
+ * CONFIG_FIRMWARE_WS_PATH (both Kconfig-mirrored via -D cflags
+ * on host). Writes at most `out_len` bytes to `out` (NUL-
+ * terminated on success). The FW-13.4 URL-no-MAC guard
+ * asserts no MAC substring appears in the composed URI.
+ *
+ * Returns:
+ *   - ESP_OK on success (NUL-terminated in `out`).
+ *   - ESP_ERR_INVALID_ARG if `out` is NULL or `out_len == 0`.
+ *   - ESP_ERR_INVALID_SIZE if the composed URI would not fit
+ *     in `out_len` bytes.
+ *
+ * Real impl lands in T-13-D GREEN. The T-13-C skeleton returns
+ * ESP_OK + empty string. */
+esp_err_t ws_url_build(char *out, size_t out_len);
+
+/* Parse the URI's path component into `path_out` (NUL-
+ * terminated on success). Accepts the `ws://host:port/path`
+ * shape from IDF v5.5.3's esp_websocket_client_config_t.uri.
+ *
+ * Returns:
+ *   - ESP_OK on success.
+ *   - ESP_ERR_INVALID_ARG if `uri` or `path_out` is NULL.
+ *   - ESP_ERR_INVALID_SIZE if `path_len` would not fit the
+ *     parsed path.
+ *
+ * Real impl lands in T-13-D GREEN. The T-13-C skeleton returns
+ * ESP_OK + empty string. */
+esp_err_t ws_text_frame_parse_uri_path(const char *uri,
+                                        char *path_out,
+                                        size_t path_len);
+
+/* ---------- FW-13.2 hello builder ---------- */
+
+/* Build the hello frame JSON into `out`. Returns the number of
+ * bytes written excluding the NUL terminator, or 0 if the buffer
+ * was too small / identity is unparseable.
+ *
+ * Schema (per REQ-WS-002 + R-27):
+ *   {"type":"hello","mac":"<12-hex>","name":"<nvs>",
+ *    "description":"<nvs>","fw":"<version>",
+ *    "caps":["jpeg","stream","identify"]}
+ *
+ * Real impl lands in T-13-E GREEN. The T-13-C skeleton returns 0
+ * (no frame emitted). */
+size_t ws_text_frame_build_hello(const device_identity_t *id,
+                                  char *out, size_t out_len);
+
+/* ---------- FW-13.6 status builder ---------- */
+
+/* Build the status frame JSON into `out`. Returns the number of
+ * bytes written excluding the NUL terminator, or 0 if the buffer
+ * was too small.
+ *
+ * Schema (per REQ-WS-006 + R-27):
+ *   {"type":"status","mac":"<12-hex>","name":"<nvs>",
+ *    "uptime_s":<int>,"rssi_dbm":<int>,"free_heap":<int>,
+ *    "fb_drops":<int>,"reconnects":<int>}
+ *
+ * Real impl lands in T-13-I GREEN. The T-13-C skeleton returns 0. */
+size_t ws_text_frame_build_status(const ws_runtime_metrics_t *m,
+                                   const device_identity_t *id,
+                                   char *out, size_t out_len);
+
+/* ---------- FW-13.5 status timer (T-13-H GREEN) ---------- */
+
+/* Initialize the periodic 30 s status timer. Returns ESP_OK on
+ * success. The timer is NOT started here — start happens on the
+ * WEBSOCKET_EVENT_CONNECTED event handler. */
+esp_err_t ws_status_timer_init(void);
+
+/* Arm the periodic timer (start firing every
+ * CONFIG_FIRMWARE_WS_STATUS_PERIOD_MS ms). */
+esp_err_t ws_status_timer_start(void);
+
+/* Disarm the periodic timer. */
+esp_err_t ws_status_timer_stop(void);
+
+/* Expose the timer handle so tests can advance it via
+ * mock_esp_timer_advance_periodic(). Returns NULL before init. */
+void *ws_status_timer_handle_get(void);
+
+/* ---------- FW-13.6 runtime metrics (T-13-I GREEN) ---------- */
+
+/* Populate `out` from the current runtime (timer + wifi rssi +
+ * free heap + capture fb_drops + ws reconnects). */
+void ws_runtime_metrics_collect(ws_runtime_metrics_t *out);
 
 #ifdef __cplusplus
 }
