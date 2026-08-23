@@ -157,6 +157,13 @@ def _common_cflags(extra_defines):
         # firmware/sdkconfig.defaults:28-29 + Kconfig.projbuild:6,14.
         '-DCONFIG_FIRMWARE_CAMERA_JPEG_QUALITY=18',
         '-DCONFIG_FIRMWARE_CAMERA_FRAME_SIZE=5',
+        # FW-10 follow-up (commit 9188c31) — camera.c:181 references
+        # the IDF-side `CAMERA_FB_IN_PSRAM` constant directly (not
+        # via a CONFIG_* Kconfig symbol). The host mock declares
+        # `camera_config_t.fb_location` as `int` but does not
+        # provide this IDF constant, so we mirror its value here.
+        # Value 2 per esp_camera.h (IDF v5.5.3).
+        '-DCAMERA_FB_IN_PSRAM=2',
     ]
     flags.extend(extra_defines)
     return flags
