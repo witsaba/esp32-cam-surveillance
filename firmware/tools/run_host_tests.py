@@ -419,9 +419,10 @@ ALL_TESTS = [
     "test_fw11_1_five_fps_five_iterations_yield_five_frames [fw-11.1][scenario-S1][green]",
     "test_fw11_1_one_fps_single_iteration_yields_one_frame [fw-11.1][scenario-S2]",
     # FW-11.2 — drop-on-overflow + counter. S3 (full queue drop)
-    # + S4 (100 frames no stall).
+    # + S4 (100 frames no stall) + S5 (getters return values).
     "test_fw11_2_full_queue_drops_frame_and_returns_buffer [fw-11.2][scenario-S3]",
     "test_fw11_2_one_hundred_frames_no_stall [fw-11.2][scenario-S4]",
+    "test_fw11_2_getters_return_counter_values [fw-11.2][getters]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3

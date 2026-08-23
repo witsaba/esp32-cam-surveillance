@@ -151,3 +151,27 @@ TEST_CASE(
     TEST_ASSERT_EQUAL_UINT32(2, c.frames_captured);
     TEST_ASSERT_EQUAL_UINT32(98, c.fb_drops);
 }
+
+/* ---------- S5 — getters return the latest counter values ---------- */
+TEST_CASE(
+    "test_fw11_2_getters_return_counter_values [fw-11.2][getters]",
+    "[capture][fw-11.2][getters]")
+{
+    capture_with_mocks();
+
+    /* Pre-condition: counters start at 0. */
+    TEST_ASSERT_EQUAL_UINT32(0, capture_fb_drops_get());
+    TEST_ASSERT_EQUAL_UINT32(0, capture_frames_captured_get());
+
+    /* Run the loop 5 times; capture_loop_iteration mirrors
+     * its writes to the module-static counters consumed by
+     * the FW-13.6 getters. After 5 iterations: 2 captured
+     * (queue depth-2) + 3 drops. */
+    capture_queue_t q = {0};
+    capture_counters_t c = {0};
+    for (int i = 0; i < 5; i++) {
+        capture_loop_iteration(&q, &c);
+    }
+    TEST_ASSERT_EQUAL_UINT32(2, capture_frames_captured_get());
+    TEST_ASSERT_EQUAL_UINT32(3, capture_fb_drops_get());
+}

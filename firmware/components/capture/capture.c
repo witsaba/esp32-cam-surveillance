@@ -111,9 +111,11 @@ void capture_loop_iteration(capture_queue_t *q, capture_counters_t *c)
     if (!capture_queue_send_drop_on_full(q, fb)) {
         esp_camera_fb_return(fb);
         c->fb_drops++;
+        g_capture_counters.fb_drops++; /* mirror to module-static for FW-13.6 */
         return;
     }
     c->frames_captured++;
+    g_capture_counters.frames_captured++; /* mirror to module-static */
 }
 
 #ifndef UNITY_HOST_BUILD
