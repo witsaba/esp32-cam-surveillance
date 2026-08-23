@@ -1,7 +1,7 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 9 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; FW-08 closed by PR #10, merge commit `9133aeb` — see amendment blockquote at the end of § FW-08; **FW-10 closed by PR #11 (pending — worktree `feat/fw-10-camera-init`, 7 work-unit commits, see amendment blockquote at the end of § FW-10)**).
-> **Next SDD to start**: FW-09 (WS reconnect) or FW-11 (frame capture task) per dependency graph — FW-10 closed unblocks FW-11 (capture task) and FW-20 (camera_settings module); FW-09 is independent.
+> **Status**: 10 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; FW-08 closed by PR #10, merge commit `9133aeb` — see amendment blockquote at the end of § FW-08; FW-10 closed by PR #11, merge commit `b05288d` — see amendment blockquote at the end of § FW-10; **FW-11 closed (pending PR — worktree `feat/fw-11-frame-capture-task`, 6 work-unit commits, see amendment blockquote at the end of § FW-11)**).
+> **Next SDD to start**: FW-09 (WS reconnect) per dependency graph — FW-11 closed unblocks FW-15 (stream task → WS binary) and FW-13.6 (status payload reading capture_fb_drops_get).
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
 > **Date**: 2026-08-21.
@@ -1030,6 +1030,26 @@ SDD change: `firmware-frame-capture-task` · Closes: R-16, R-25 (5 fps loopback 
 
 - **Closing check:** a runtime heap report shows the frame buffer allocated in PSRAM (not internal SRAM) — verified by inspecting the allocator metadata at runtime.
 - **Depends on:** FW-10.2, FW-11.4.
+
+> **FW-11 closure amendment (2026-08-23)** — single-PR delivery on worktree `feat/fw-11-frame-capture-task` based on `main@b05288d`. 6 work-unit commits implementing the frame-capture task per the SDD artifacts (#3730 explore, #3732 proposal, #3733 spec, #3734 design, #3735 tasks):
+>
+> - **WU-1** `ee7fe4b` — `feat(capture): component skeleton + mock_esp_camera fb extension + capture_task_start (FW-11.1)` + stub deletion at `boot/stub_supervision.c` (FW-10 lesson — strong symbol + stub = link error; stub body MUST move to WU-1). New `firmware/components/capture/` single-TU component (capture.c + include/capture.h + CMakeLists.txt + idf_component.yml). Pure `capture_loop_iteration()` + thin FreeRTOS wrapper split (no `mock_freertos` needed). `mock_esp_camera` triplet extended with `camera_fb_t` typedef + `fb_get` / `fb_return` + `heap_caps_get_free_size` mock. 4 new scenarios in `test_capture_loop.c` (5 fps sustained, 1 fps sustained, full-queue drop, 100 frames no stall).
+> - **WU-2** `e9e9419` — `feat(capture): drop-on-overflow + fb_drops counter + frames_captured counter (FW-11.2)`. `capture_loop_iteration()` mirrors its writes to the module-static `g_capture_counters` so the cross-task getters (`capture_fb_drops_get()` / `capture_frames_captured_get()`) reflect the latest loop state for FW-13.6 status payload consumption. 1 new getter scenario + 1 mock-state reset helper (`capture_counters_reset_for_test()`).
+> - **WU-3** `e60feaa` — `test(capture): single_owner_guard + Pass 10 wiring (FW-11.3)`. `#ifdef CAPTURE_TEST_STUB_SECOND_CALLER` guard in `capture.c` trips `capture_guard_fail_single_owner()` with the literal `"single_owner"` in `TEST_FAIL_MESSAGE`. New `test_capture_guard.c` with green + bite-proof scenarios. Pass 10 wired in `run_host_tests.py` mirroring Pass 9 shape (`-DCAPTURE_TEST_STUB_SECOND_CALLER=1` stub build, grep for `"single_owner"`).
+> - **WU-4** `64d6591` — `test(capture): 30 s soak loop-count test (FW-11.4)`. 2 scenarios: 150 iterations at 5 fps → 2 captured + 148 dropped, `fb_drops` non-zero. Heap-bounded: `psram_before >= psram_after` (no leak).
+> - **WU-5** `a51806a` — `feat(capture): PSRAM heap-metrics closing-check log (FW-11.5)`. At the first successful frame, `capture.c` logs `ESP_LOGI("capture", "psram_before=%u psram_after=%u", ...)`. New `test_capture_heap.c` asserts PSRAM decreased by exactly 11520 bytes (g_fb_size default) after the first `fb_get()` — frame buffer in PSRAM, not internal SRAM.
+> - **WU-6** (this commit) — `chore(capture): closure — docs amendment + status update`.
+>
+> **Closing evidence**:
+> - Production build: 105/105 PASS (89 baseline + 7 FW-10 + 9 FW-11 across 4 new test files: `test_capture_loop.c`, `test_capture_guard.c`, `test_capture_soak.c`, `test_capture_heap.c`).
+> - Pass 10 (FW-11.3 bite-proof) trips with literal `"single_owner"` from `TEST_FAIL_MESSAGE` + marker line.
+> - All prior bite-proofs (Pass 2/3/4/5/6/7/8/9) still trip with their literal substrings (`schema_version`, `determinism`, `validation`, `timer_fire`, `debounce`, `bounded_wait`, `teardown`, `no_reinit`) — no regressions.
+> - Factory partition (0x110000) unchanged — capture component adds ~2 KB to firmware.bin (well within the 114 KB free headroom from FW-10).
+> - `idf.py build` status: not run on device in this PR (FW-10 already verified AI-Thinker build fits; capture component is a pure add with no NVS schema change). To be confirmed by the verify phase's device-flash smoke.
+>
+> **Design deviations**: none at the architecture level. One implementation note: the host `capture_queue_t` is a thin ring buffer (`slots[2] + head/tail/count`) rather than the device `xQueueHandle` — the device wrapper uses the same shape but writes to a real FreeRTOS queue through the link-header redirect. The pure function's queue parameter is intentionally abstract so the test surface stays host-friendly without `mock_freertos`.
+>
+> **Verify-report verdict**: pending — sdd-verify phase will run the 12/12 spec-scenario compliance matrix + Pass 10 bite-proof verification.
 
 ## Wave 4 — WebSocket + Recovery
 
