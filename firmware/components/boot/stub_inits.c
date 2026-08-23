@@ -11,10 +11,10 @@
  * Each stub logs `// FW-NN: real impl lands in <milestone>` so
  * the next reviewer can grep for the follow-up. FW-08 replaced
  * `wifi_init` (the strong symbol now lives in firmware/components/
- * wifi/wifi.c — the linker resolves to that body). FW-10 replaces
- * `camera_init`, FW-13 replaces `ws_init` — when those land, the
- * orchestrator's call-site remains (one-line adaptations if
- * signatures differ).
+ * wifi/wifi.c — the linker resolves to that body). FW-10 replaced
+ * `camera_init` (firmware/components/camera/camera.c). FW-13
+ * replaces `ws_init` — when that lands, the orchestrator's
+ * call-site remains (one-line adaptations if signatures differ).
  */
 #include "boot.h"
 
@@ -30,9 +30,8 @@ static const char *TAG = "boot";
  * symbol resolves there via the linker. See T-08-A for the wifi
  * component skeleton commit. */
 
-/* camera_init moved to firmware/components/camera/camera.c — the strong
- * symbol resolves there via the linker (FW-10.1). FW-10.6 will
- * remove this comment block entirely in the closure commit. */
+/* camera_init moved to firmware/components/camera/camera.c (FW-10) —
+ * the strong symbol resolves there via the linker. */
 
 esp_err_t ws_init(const config_t *cfg) {
     (void)cfg;
