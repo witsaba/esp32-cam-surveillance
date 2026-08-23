@@ -133,20 +133,45 @@ size_t ws_text_frame_build_hello(const device_identity_t *id,
     return (size_t)n;
 }
 
-/* T-13-I GREEN lands the full 8-field status JSON emitter
- * (uptime_s, rssi_dbm, free_heap, fb_drops, reconnects). Today
- * (T-13-G GREEN) we emit a minimal 3-field stub so the cadence
- * test asserts something. The full schema lands in T-13-H. */
+/* ---------- status builder (T-13-H GREEN) ----------
+ *
+ * Emits the status frame per REQ-WS-006 schema:
+ *   {"type":"status","mac":"<12-hex>","name":"<nvs>",
+ *    "uptime_s":<int>,"rssi_dbm":<int>,"free_heap":<int>,
+ *    "fb_drops":<int>,"reconnects":<int>}
+ *
+ * Field order matches R-27 spec invariant for downstream
+ * parsers. Empty name/description is allowed (unprovisioned
+ * device; identity_load skips + logs).
+ *
+ * Returns: bytes written excluding NUL, or 0 if `out` is too
+ * small / `m` or `id` is NULL. */
 size_t ws_text_frame_build_status(const ws_runtime_metrics_t *m,
                                    const device_identity_t *id,
                                    char *out, size_t out_len)
 {
     if (!m || !id || !out || out_len == 0) return 0;
+
+    /* uptime_us → seconds (truncates — the cadence is per-30 s
+     * so sub-second precision is meaningless to the backend). */
+    int64_t uptime_s = m->uptime_us / 1000000;
+
     int n = snprintf(out, out_len,
-        "{\"type\":\"status\",\"mac\":\"%s\","
-         "\"uptime_s\":%lld}",
+        "{\"type\":\"status\","
+         "\"mac\":\"%s\","
+         "\"name\":\"%s\","
+         "\"uptime_s\":%lld,"
+         "\"rssi_dbm\":%d,"
+         "\"free_heap\":%u,"
+         "\"fb_drops\":%u,"
+         "\"reconnects\":%u}",
         id->mac_hex,
-        (long long)(m->uptime_us / 1000000));
+        id->name,
+        (long long)uptime_s,
+        (int)m->rssi_dbm,
+        (unsigned)m->free_heap,
+        (unsigned)m->fb_drops,
+        (unsigned)m->reconnects);
     if (n < 0 || (size_t)n >= out_len) return 0;
     return (size_t)n;
 }

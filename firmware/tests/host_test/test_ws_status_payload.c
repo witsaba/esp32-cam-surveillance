@@ -132,17 +132,18 @@ TEST_CASE(
 
     drive_status_cycle();
 
-    /* Frame 0 = hello. Frame 1 = status. Get the second frame. */
+    /* get_text_frame_at(0) returns the newest (status frame);
+     * get_text_frame_at(1) returns the second-newest (hello).
+     * Ring buffer indexing: newest at idx=0. */
     char frame[MOCK_WS_TEXT_FRAME_CAP] = {0};
-    r = mock_esp_websocket_client_get_text_frame_at(1, frame,
+    r = mock_esp_websocket_client_get_text_frame_at(0, frame,
                                                      sizeof(frame));
     TEST_ASSERT_EQUAL(ESP_OK, r);
 
     /* type field must be "status" exactly. */
-    TEST_ASSERT_TRUE(json_get_string(frame, "type", (char[16]){0},
-                                     16));
     char type_buf[16] = {0};
-    json_get_string(frame, "type", type_buf, sizeof(type_buf));
+    TEST_ASSERT_TRUE(json_get_string(frame, "type", type_buf,
+                                       sizeof(type_buf)));
     TEST_ASSERT_EQUAL_STRING("status", type_buf);
 
     /* Every documented key MUST be present. */
@@ -183,7 +184,7 @@ TEST_CASE(
     drive_status_cycle();
 
     char frame[MOCK_WS_TEXT_FRAME_CAP] = {0};
-    r = mock_esp_websocket_client_get_text_frame_at(1, frame,
+    r = mock_esp_websocket_client_get_text_frame_at(0, frame,
                                                      sizeof(frame));
     TEST_ASSERT_EQUAL(ESP_OK, r);
 
@@ -213,7 +214,7 @@ TEST_CASE(
     drive_status_cycle();
 
     char frame[MOCK_WS_TEXT_FRAME_CAP] = {0};
-    r = mock_esp_websocket_client_get_text_frame_at(1, frame,
+    r = mock_esp_websocket_client_get_text_frame_at(0, frame,
                                                      sizeof(frame));
     TEST_ASSERT_EQUAL(ESP_OK, r);
 
