@@ -11,7 +11,7 @@
  *   |     |               | (default 18)                       |
  *   | 4   | fb_count       | 1                                  |
  *   | 5   | grab_mode      | CAMERA_GRAB_WHEN_EMPTY             |
- *   | 6   | xclk_freq_hz   | 20_000_000                         |
+ *   | 6   | xclk_freq_hz   | 10_000_000                         |
  *
  * Plus the AI-THINKER pin map (PRD § Scope-boundary L134-144):
  *   pin_pwdn = 32, pin_reset = -1, pin_xclk = 0,
@@ -128,7 +128,7 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "test_fw10_1_xclk_freq_is_20mhz [fw-10.1][row-6]",
+    "test_fw10_1_xclk_freq_is_10mhz [fw-10.1][row-6]",
     "[camera][fw-10.1][params]")
 {
     esp_err_t rc = camera_init_with_mocks();
@@ -136,7 +136,7 @@ TEST_CASE(
 
     const camera_config_t *cfg = mock_esp_camera_last_init_config();
     TEST_ASSERT_NOT_NULL(cfg);
-    TEST_ASSERT_EQUAL_INT(20000000, cfg->xclk_freq_hz);
+    TEST_ASSERT_EQUAL_INT(10000000, cfg->xclk_freq_hz);
 }
 
 /* AI-Thinker pin map (PRD § FR-2). Combined with the 6 parameter
