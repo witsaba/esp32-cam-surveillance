@@ -116,6 +116,19 @@ void camera_settings_set_source_for_test(const camera_settings_source_t *s);
 esp_err_t camera_settings_apply(const camera_settings_t *in);
 esp_err_t camera_settings_reset_defaults(camera_settings_t *out);
 
+/* The default (fake in-memory) source. The camera_settings_get
+ * _source() lazy-installs it on first call. Exposed for host
+ * tests that need to install the default explicitly + for
+ * FW-20.5 NVS-backed source swap documentation. */
+extern const camera_settings_source_t fake_camera_settings_source;
+
+/* Direct test helpers — used by the FW-10.5 walking-skeleton
+ * tests to prime the fake blob with a chosen quality value.
+ * Production callers MUST NOT use these; the source ABI is the
+ * public contract. */
+esp_err_t camera_settings_test_prime_fake_blob(const camera_settings_t *in);
+void     camera_settings_test_clear_fake_blob(void);
+
 #ifdef __cplusplus
 }
 #endif

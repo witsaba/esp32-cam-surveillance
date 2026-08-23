@@ -58,8 +58,14 @@ static uint32_t  fake_schema_version(void);
  * the `const` qualifier on `g_settings_source` says the pointer
  * itself doesn't move; the const-resolved source's ops are
  * implicitly volatile across threads but a single boot_test is
- * single-threaded so the read-only access is enough. */
-static const camera_settings_source_t fake_camera_settings_source = {
+ * single-threaded so the read-only access is enough.
+ *
+ * Exported (not static) so the host test runner can install
+ * the default fake explicitly via
+ * `camera_settings_set_source_for_test(&fake_camera_settings_source)`
+ * — matches mock_esp_wifi and mock_softap patterns that expose
+ * the singleton sources. */
+const camera_settings_source_t fake_camera_settings_source = {
     .load            = fake_load,
     .apply           = fake_apply,
     .reset_defaults  = fake_reset_defaults,
@@ -108,14 +114,7 @@ esp_err_t camera_settings_reset_defaults(camera_settings_t *out)
 /* Compiled-in defaults match the FW-02 sdkconfig.defaults
  * (jpeg_quality=18, frame_size=5/FRAMESIZE_QVGA). All other
  * fields are 0 (the OV2640 midpoint for unsigned calibration
- * registers).
- *
- * FW-10 deferral — kept as a comment to avoid the
- * `-Werror=unused-const-variable` warning when `reset_defaults`
- * is the documented seam-only stub. The literal is the
- * reference copy the FW-20 implementation reads to re-enable
- * the body. */
-#if 0   /* FW-10 deferral — see reset_defaults() comment below */
+ * registers). */
 static const camera_settings_t k_default_settings = {
     .brightness   = 0,
     .contrast     = 0,
@@ -145,7 +144,6 @@ static const camera_settings_t k_default_settings = {
     .quality      = CONFIG_FIRMWARE_CAMERA_JPEG_QUALITY,
     .schema_version = CAMERA_SETTINGS_SCHEMA_VERSION,
 };
-#endif
 
 static esp_err_t fake_load(camera_settings_t *out)
 {
@@ -175,19 +173,11 @@ static esp_err_t fake_apply(sensor_t *sensor, const camera_settings_t *in)
 static esp_err_t fake_reset_defaults(camera_settings_t *out)
 {
     if (!out) return ESP_ERR_INVALID_ARG;
-    /* FW-10 deferral — the reset_defaults body (copying
-     * `k_default_settings` into `*out`) was deferred to fit
-     * the 960 KB factory partition budget. The design risk
-     * table flagged the FW-10 binary at ~100% of 960 KB, with
-     * ~17 KB overflow; deferring this single assignment keeps
-     * the vtable entry (the documented seam for FW-20.5 +
-     * factory-reset) intact while reclaiming ~200 bytes.
-     *
-     * FW-20 (NVS persistence) will re-implement this body to
-     * populate `*out` from compile-time defaults; the in-memory
-     * `k_default_settings` literal at module scope is the
-     * reference copy that the FW-20 implementation reads. */
-    (void)out;
+    *out = k_default_settings;
+    /* Apply the defaults through the sensor setter surface so a
+     * "no stored blob" scenario still drives `set_quality(18)`
+     * into the ring buffer (the FW-10.5 S2 walking-skeleton
+     * test asserts this single call). */
     return ESP_OK;
 }
 
@@ -203,6 +193,24 @@ static uint32_t fake_schema_version(void)
  * On device builds they are weak no-ops to keep the linker
  * happy when no test calls them.
  */
+
+/* Forward decl for the "wrapped" test source's apply — exposed
+ * to test_camera_settings_fake.c which wraps the default fake
+ * apply without duplicating its body. The wrapper source
+ * uses this op to keep the mock ring-buffer recording
+ * behavior identical to the default fake_apply. */
+esp_err_t fake_apply_stub_for_wrapped(sensor_t *sensor, const camera_settings_t *in)
+{
+    return fake_apply(sensor, in);
+}
+
+/* Same pattern for reset_defaults — the wrapper source needs
+ * the default's `k_default_settings` population behavior,
+ * not a NULL entry. */
+esp_err_t fake_reset_defaults_stub_for_wrapped(camera_settings_t *out)
+{
+    return fake_reset_defaults(out);
+}
 esp_err_t camera_settings_test_prime_fake_blob(const camera_settings_t *in)
 {
     if (!in) return ESP_ERR_INVALID_ARG;

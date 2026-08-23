@@ -186,28 +186,43 @@ esp_err_t camera_init(const config_t *cfg)
     /* Step 5 — apply the boot-time settings (FW-10.5). The
      * default source is the fake in-memory one; FW-20.5 swaps
      * it for an NVS-backed source. We first apply Kconfig
-     * defaults via the source->reset_defaults() path (so the
-     * setter ring gets the default `framesize`/`quality`),
-     * then consult source->load() + source->apply() for the
-     * stored blob override. */
+     * defaults via the source->reset_defaults() + apply()
+     * path (so the setter ring gets the default
+     * `framesize`/`quality`), then consult source->load() +
+     * source->apply() for the stored blob override (if any).
+     *
+     * The schema_version contract: the source's
+     * `schema_version()` returns the version it COMPILES with;
+     * the stored blob carries the version it WAS WRITTEN with.
+     * Mismatch → log warning + skip apply on the stored blob
+     * (defaults still applied, so the sensor is left in a
+     * defined state rather than mid-air). */
     const camera_settings_source_t *src = camera_settings_get_source();
     if (src && src->apply && src->reset_defaults && src->load
               && src->schema_version) {
+        /* Apply Kconfig defaults FIRST — this guarantees the
+         * sensor is in a defined state regardless of whether a
+         * stored blob exists. */
         camera_settings_t defaults = {0};
         (void)src->reset_defaults(&defaults);
+        (void)src->apply(s_sensor, &defaults);
 
+        /* Then check for the stored override. Mismatch or no
+         * stored blob → defaults remain the only apply. */
         camera_settings_t stored = {0};
         esp_err_t lr = src->load(&stored);
         if (lr == ESP_OK &&
             stored.schema_version == src->schema_version()) {
             (void)src->apply(s_sensor, &stored);
-        } else {
+        } else if (lr == ESP_OK) {
             ESP_LOGW(TAG,
                      "stored schema mismatch (blob=%lu src=%lu) — "
                      "using Kconfig defaults",
                      (unsigned long)stored.schema_version,
                      (unsigned long)src->schema_version());
         }
+        /* lr == ESP_ERR_NOT_FOUND → no stored blob; defaults
+         * applied above are the only setters reached. */
     }
 
     return ESP_OK;

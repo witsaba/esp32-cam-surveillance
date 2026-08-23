@@ -405,6 +405,11 @@ ALL_TESTS = [
     "test_fw10_3_setter_path_applies_without_reinit [fw-10.3][scenario-S1][green]",
     # FW-10.4 — PSRAM size logged at first init (mechanical).
     "test_fw10_4_psram_size_logged_at_first_init [fw-10.4][green]",
+    # FW-10.5 — camera_settings_source_t vtable + fake
+    # in-memory source (3 scenarios).
+    "test_fw10_5_no_stored_blob_uses_kconfig_defaults_once [fw-10.5][scenario-S2]",
+    "test_fw10_5_stored_blob_overrides_kconfig_defaults [fw-10.5][scenario-S1][walking-skeleton]",
+    "test_fw10_5_stored_via_setters_not_reinit [fw-10.5][scenario-S3]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -532,6 +537,11 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_guard.c'),
     # FW-10.4 — PSRAM size logged at first init.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_psram_size.c'),
+    # FW-10.5 — camera_settings_source_t vtable + fake
+    # in-memory source. 3 scenarios: stored blob overrides
+    # Kconfig defaults; no stored blob uses Kconfig once;
+    # stored applied via setters (no reinit).
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_settings_fake.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
