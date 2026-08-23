@@ -29,5 +29,8 @@
 #define esp_websocket_client_close(h, t)              mock_esp_websocket_client_close(h, t)
 #define esp_websocket_client_send_text(h, d, l, t)    mock_esp_websocket_client_send_text(h, d, l, t)
 #define esp_websocket_register_events(h, e, cb, arg)  mock_esp_websocket_register_events(h, e, cb, arg)
+/* FW-14 — reconnect-delay setter (v1.8.0 signature). */
+#define esp_websocket_client_set_reconnect_timeout(h, ms) \
+    mock_esp_websocket_client_set_reconnect_timeout(h, ms)
 
 #endif  /* !MOCK_WS_USE_REAL */

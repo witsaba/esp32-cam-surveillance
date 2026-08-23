@@ -259,6 +259,9 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_status_timer.c'),
         os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_runtime_metrics.c'),
         os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_reconnects.c'),
+        # FW-14 — reconnect backoff module (owns the reconnect loop;
+        # disable_auto_reconnect stays true per design #3805).
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_backoff.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),

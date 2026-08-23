@@ -46,6 +46,7 @@
 #include "mock_esp_websocket_client.h"
 #include "mock_esp_timer.h"
 #include "mock_log.h"
+#include "mock_esp_event.h"
 #endif
 
 static config_t s_test_cfg;
@@ -61,9 +62,15 @@ static void reset_state(void)
      * clearing the timer mock slot table, so the next failure
      * re-creates the handle in the freshly-cleared registry. */
     ws_backoff_reset_for_test();
+    ws_status_timer_reset_handle_for_test();
     mock_esp_timer_reset();
     mock_esp_websocket_client_reset_for_test();
+    mock_esp_event_reset();
+    ws_event_handler_reset_for_test();
     mock_log_reset();
+    /* Bring up a real WS session so ws_backoff_on_failure sees a
+     * live handle (the FR-4 setter fires against it). */
+    TEST_ASSERT_EQUAL(ESP_OK, ws_init(&s_test_cfg));
 #endif
 }
 
@@ -82,11 +89,13 @@ static void assert_backoff_row(uint32_t n, uint32_t expected_ms)
         mock_esp_websocket_client_get_last_reconnect_timeout_ms());
     TEST_ASSERT_EQUAL_UINT32(n, ws_backoff_failure_count());
     TEST_ASSERT_EQUAL_UINT32(expected_ms, ws_backoff_current_delay_ms());
-    /* One-shot armed at delay×1000 µs (exactly one new arming). */
+    /* One-shot armed at delay×1000 µs (exactly one new arming).
+     * Host Unity disables 64-bit support; max 30_000_000 µs fits
+     * in 32 bits. */
     TEST_ASSERT_EQUAL_INT(start_once_before + 1,
         mock_esp_timer_start_once_call_count());
-    TEST_ASSERT_EQUAL_UINT64((uint64_t)expected_ms * 1000ULL,
-        mock_esp_timer_last_period_us_oneshot());
+    TEST_ASSERT_EQUAL_UINT32(expected_ms * 1000u,
+        (uint32_t)mock_esp_timer_last_period_us_oneshot());
     /* FR-4 mandates a WARN-level transition log per scheduling. */
     TEST_ASSERT_TRUE(mock_log_warn_count > warn_before);
 }
