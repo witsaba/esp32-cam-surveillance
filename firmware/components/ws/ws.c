@@ -1,4 +1,4 @@
-/* ws.c — WS client init implementation (FW-13, T-13-D GREEN).
+/* ws.c — WS client init implementation (FW-13, T-13-I GREEN).
  *
  * Production init sequence (per design #3756 §4.1):
  *
@@ -9,28 +9,21 @@
  *   2. s_ws_config.disable_auto_reconnect = true   (HARD INVARIANT —
  *      FW-14 owns reconnect; IDF built-in races the FW-14 counter).
  *   3. s_ws_handle = esp_websocket_client_init(&s_ws_config)
- *   4. esp_websocket_register_events(s_ws_handle,
- *        WEBSOCKET_EVENT_CONNECTED,    ws_on_ws_connected,    NULL)
- *      esp_websocket_register_events(s_ws_handle,
- *        WEBSOCKET_EVENT_DISCONNECTED, ws_on_ws_disconnected, NULL)
- *   5. wifi_event_subscribe(WIFI_EVT_STA_GOT_IP, ws_on_sta_got_ip, NULL)
- *      — Subscribes via the IDF default event loop. NO
- *        esp_websocket_client_start here (lazy start, fires from
- *        the IP-up handler).
- *   6. ws_status_timer_init()  — creates the periodic handle
+ *   4. ws_event_handler_install() — subscribes the WS event
+ *      handlers + the WIFI_EVT_STA_GOT_IP via wifi_event_subscribe.
+ *   5. ws_status_timer_init()  — creates the periodic handle
  *      (NOT started).
- *   7. Return ESP_OK.
+ *   6. Return ESP_OK.
  *
  * The boot.c:153 call site is `BOOT_CHECK_STEP(BOOT_STEP_WS_INIT,
- * ws_init(cfg));` — the linker resolves this to stub_inits.c::ws_init
- * today (T-13-J rename). Both bodies honour the
- * mock_init_returns_get(BOOT_STEP_WS_INIT) short-circuit so the
- * FW-03.2 bite-proof stays load-bearing.
+ * ws_init(cfg));` — the linker resolves this to ws_init here in
+ * ws.c (the boot orchestrator's call site was unchanged since
+ * T-13-C). mock_init_returns_get(BOOT_STEP_WS_INIT) is honoured
+ * here so the FW-03.2 bite-proof stays load-bearing.
  *
- * Until T-13-J renames the symbol, this file's public entry is
- * named `ws_init_impl` (NOT `ws_init`) to avoid a duplicate-symbol
- * linker error against stub_inits.c::ws_init. The body itself is
- * the production init sequence; only the symbol name is shimmed.
+ * T-13-I atomic rename: ws_init_impl → ws_init; the host
+ * runner's stub_inits.c::ws_init body was deleted. See the
+ * T-13-I commit message for the link-order invariants.
  */
 #include "ws.h"
 #include "identity.h"
@@ -59,10 +52,10 @@
 
 static const char *TAG = "ws";
 
-/* Module-static config + handle. Set during ws_init_impl; read by
+/* Module-static config + handle. Set during ws_init; read by
  * the event handlers (lazy start fires _start on IP-up; hello +
  * status frames emit on CONNECTED). Lifetime: process — the boot
- * orchestrator calls ws_init_impl exactly once. */
+ * orchestrator calls ws_init exactly once. */
 static esp_websocket_client_config_t s_ws_config;
 static esp_websocket_client_handle_t  s_ws_handle = NULL;
 
@@ -101,9 +94,13 @@ static esp_err_t ws_compose_uri(char *out, size_t out_len)
     return ws_url_build(out, out_len);
 }
 
-/* Production init body. Called by ws_init_impl (today) and
- * ws_init (post T-13-J rename). Returns ESP_OK on success. */
-esp_err_t ws_init_impl(const config_t *cfg)
+/* Production init body. T-13-I atomic rename: this symbol
+ * IS the public `ws_init` consumed by boot.c:153. The host
+ * runner's stub_inits.c::ws_init body was deleted (T-13-I);
+ * the linker picks up this symbol. The mock_init_returns_get
+ * short-circuit remains in-place so the FW-03.2 bite-proof
+ * stays load-bearing. */
+esp_err_t ws_init(const config_t *cfg)
 {
     if (!cfg) return ESP_ERR_INVALID_ARG;
 
@@ -207,12 +204,10 @@ esp_err_t ws_init_impl(const config_t *cfg)
     return ESP_OK;
 }
 
-/* Touch the symbol so the linker keeps it until T-13-J renames
- * it to ws_init. Removed in the T-13-J commit. */
-void ws_init_shim_dummy(void)
-{
-    (void)ws_init_impl;
-}
+/* T-13-I: ws_init_shim_dummy was removed — the rename landed
+ * in this commit (ws_init_impl → ws_init). The shim is no
+ * longer needed; the linker resolves ws_init to this file
+ * directly. */
 
 /* Accessor for the lazy-start IP-up handler — exposed in ws.h
  * via ws_event_handler.h (forward declared). The IP-up handler

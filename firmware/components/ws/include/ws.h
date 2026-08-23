@@ -87,18 +87,9 @@ typedef struct {
  *     _client_init, event handler register, esp_timer_create).
  *
  * On a forced-failure path via mock_init_returns_get(
- * BOOT_STEP_WS_INIT), returns the forced error (mirrors the
- * stub_inits.c behaviour; T-13-J replaces that stub). */
+ * BOOT_STEP_WS_INIT), returns the forced error. The FW-03.2
+ * bite-proof trips on this path. */
 esp_err_t ws_init(const config_t *cfg);
-
-/* Production init body. Today (T-13-D GREEN) the symbol is
- * named ws_init_impl to avoid a duplicate-symbol linker error
- * against stub_inits.c::ws_init (the host runner compiles both).
- * stub_inits.c::ws_init dispatches here after honouring the
- * mock_init_returns_get short-circuit. T-13-J renames ws_init_impl
- * → ws_init and deletes the stub_inits.c body in one atomic
- * commit. */
-esp_err_t ws_init_impl(const config_t *cfg);
 
 /* Event handler seam (declared in ws_event_handler.c; here so
  * ws.c can install them idempotently). */
