@@ -178,11 +178,27 @@ void capture_loop_iteration(capture_queue_t *q, capture_counters_t *c)
  * hardcodes 5 fps; FW-19 owns runtime config-driven fps). */
 #define CAPTURE_PERIOD_MS 200
 
+/* Periodic progress log — every N iterations (N=25 = 5s @ 5fps).
+ * Gives the device-side smoke a visible heartbeat so the operator
+ * can confirm the loop is alive without needing FW-13.6's status
+ * frame. Removes itself as soon as FW-13.6 lands (which emits
+ * structured `{"type":"status", ..., "fb_drops":N, ...}` every
+ * 30s and is the canonical observer). Until then, this is the
+ * only signal that capture is iterating at 5 Hz. */
+#define CAPTURE_PROGRESS_EVERY 25u
+
 static void capture_task_entry(void *arg)
 {
     (void)arg;
+    uint32_t tick = 0;
     for (;;) {
         capture_loop_iteration(&g_capture_queue, &g_capture_counters);
+        if ((++tick % CAPTURE_PROGRESS_EVERY) == 0) {
+            ESP_LOGI(TAG, "progress: frames_captured=%u fb_drops=%u tick=%u",
+                     (unsigned)g_capture_counters.frames_captured,
+                     (unsigned)g_capture_counters.fb_drops,
+                     (unsigned)tick);
+        }
         vTaskDelay(pdMS_TO_TICKS(CAPTURE_PERIOD_MS));
     }
 }
