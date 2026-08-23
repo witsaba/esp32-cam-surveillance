@@ -104,6 +104,25 @@ void mock_esp_timer_reset(void);
  * task. Mirrors FW-05's mock_httpd_invoke_registered_handler. */
 esp_err_t mock_esp_timer_fire_callback(esp_timer_handle_t handle);
 
+/* FW-13 — Periodic-timer advance helper. Synchronously invokes
+ * the registered callback N times where
+ * `N = (advance_ms * 1000) / period_us` and `period_us` is the
+ * most recent value passed to `esp_timer_start_periodic` /
+ * `esp_timer_restart` for this handle.
+ *
+ * If the timer was stopped via `esp_timer_stop` before the advance,
+ * no callbacks fire. Returns:
+ *   - ESP_OK on success (including the "stopped, nothing to do" case)
+ *   - ESP_ERR_INVALID_ARG if the handle was never registered
+ *   - ESP_ERR_INVALID_STATE if the period is zero (start_periodic
+ *     was never called for this handle)
+ *   - ESP_ERR_NOT_FOUND if the slot has no callback registered
+ *
+ * Used by FW-13.5 status-frame cadence tests to advance 90 s of
+ * simulated time and assert that exactly 3 status frames fire. */
+esp_err_t mock_esp_timer_advance_periodic(esp_timer_handle_t handle,
+                                            uint64_t advance_ms);
+
 /* ---------- mock targets (link-header redirects) ---------- */
 esp_err_t mock_esp_timer_create(const esp_timer_create_args_t *args,
                                   esp_timer_handle_t *out_handle);

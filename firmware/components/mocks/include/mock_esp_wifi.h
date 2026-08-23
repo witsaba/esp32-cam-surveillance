@@ -136,7 +136,11 @@ int  mock_esp_wifi_disconnect_call_count(void);
 wifi_mode_t mock_esp_wifi_set_mode_arg_at(size_t idx);
 void mock_esp_wifi_set_config_capture(wifi_config_t *out);
 int  mock_esp_wifi_set_config_capture_get_mode(wifi_interface_t *out);
-
+/* FW-13 — esp_wifi_sta_get_rssi() primer + getter + counter.
+ * The status-frame builder reads rssi_dbm from this getter. */
+void mock_esp_wifi_set_rssi_dbm(int32_t rssi);
+int  mock_esp_wifi_get_rssi_call_count(void);
+int32_t mock_esp_wifi_get_rssi_dbm(void);
 /* ---------- reset ---------- */
 void mock_esp_wifi_reset(void);
 
@@ -149,3 +153,6 @@ esp_err_t mock_esp_wifi_stop(void);
 /* FW-08 — station connect/disconnect. */
 esp_err_t mock_esp_wifi_connect(void);
 esp_err_t mock_esp_wifi_disconnect(void);
+/* FW-13 — esp_wifi_sta_get_rssi() redirect target. The mock writes
+ * the primed RSSI to *rssi and returns ESP_OK. */
+esp_err_t mock_esp_wifi_sta_get_rssi(int32_t *rssi);

@@ -12,6 +12,10 @@ static esp_err_t g_stop_return       = ESP_OK;
 static esp_err_t g_connect_return    = ESP_OK;
 static esp_err_t g_disconnect_return = ESP_OK;
 
+/* FW-13 — RSSI prime + counter (used by status frame payload). */
+static int32_t g_rssi_dbm      = -50;
+static int     g_rssi_count    = 0;
+
 static int g_init_count        = 0;
 static int g_set_mode_count    = 0;
 static int g_set_config_count  = 0;
@@ -47,6 +51,10 @@ int  mock_esp_wifi_start_call_count(void)    { return g_ap_start_count; }
 int  mock_esp_wifi_stop_call_count(void)        { return g_stop_count; }
 int  mock_esp_wifi_connect_call_count(void)     { return g_connect_count; }
 int  mock_esp_wifi_disconnect_call_count(void)  { return g_disconnect_count; }
+/* FW-13 — RSSI getters/counters used by ws_runtime_metrics.c. */
+void mock_esp_wifi_set_rssi_dbm(int32_t rssi)   { g_rssi_dbm = rssi; }
+int  mock_esp_wifi_get_rssi_call_count(void)    { return g_rssi_count; }
+int32_t mock_esp_wifi_get_rssi_dbm(void)        { return g_rssi_dbm; }
 
 wifi_mode_t mock_esp_wifi_set_mode_arg_at(size_t idx)
 {
@@ -84,6 +92,9 @@ void mock_esp_wifi_reset(void)
     g_stop_count        = 0;
     g_connect_count     = 0;
     g_disconnect_count  = 0;
+    /* FW-13 — RSSI reset. */
+    g_rssi_dbm          = -50;
+    g_rssi_count        = 0;
     memset(g_set_mode_args, 0, sizeof(g_set_mode_args));
     g_set_mode_arg_head = 0;
     memset(&g_last_config, 0, sizeof(g_last_config));
@@ -148,4 +159,16 @@ esp_err_t mock_esp_wifi_disconnect(void)
 {
     g_disconnect_count++;
     return g_disconnect_return;
+}
+
+/* FW-13 — esp_wifi_sta_get_rssi() redirect target. Returns the
+ * primed RSSI value (default -50 dBm). Tests prime via
+ * mock_esp_wifi_set_rssi_dbm(). The status-frame builder reads
+ * this to populate the `rssi_dbm` field of the status payload. */
+esp_err_t mock_esp_wifi_sta_get_rssi(int32_t *rssi)
+{
+    g_rssi_count++;
+    if (!rssi) return ESP_ERR_INVALID_ARG;
+    *rssi = g_rssi_dbm;
+    return ESP_OK;
 }

@@ -208,6 +208,9 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_softap.c'),
         # FW-10 — esp32-camera mock triplet.
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_camera.c'),
+        # FW-13 — esp_websocket_client mock (added in T-13-B;
+        # mirrored from the FW-08 mock_esp_wifi pattern).
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_websocket_client.c'),
         # FW-11 — capture component (pure loop body + FreeRTOS wrapper).
         os.path.join(PROJECT_DIR, 'components', 'capture', 'capture.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),

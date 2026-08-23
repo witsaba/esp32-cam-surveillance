@@ -15,7 +15,16 @@ typedef struct {
     esp_timer_handle_t handle;
     esp_timer_cb_t     callback;
     void              *arg;
-    int                active;  /* 1 = slot in use, 0 = free */
+    int                active;            /* 1 = slot in use, 0 = free */
+    uint64_t           last_period_us;    /* FW-13 — last period passed to
+                                          * start_periodic / restart. The
+                                          * mock_esp_timer_advance_periodic
+                                          * helper uses this to compute how
+                                          * many ticks fit in advance_ms. */
+    int                stopped;           /* FW-13 — 1 = esp_timer_stop was
+                                          * called; while stopped, the
+                                          * advance helper does NOT fire
+                                          * the callback (FW-13.5 S2). */
 } mock_esp_timer_slot_t;
 
 /* Opaque handle struct — must match the typedef in the .h so
@@ -133,10 +142,12 @@ esp_err_t mock_esp_timer_create(const esp_timer_create_args_t *args,
     static struct mock_esp_timer_handle backing[MOCK_ESP_TIMER_MAX_HANDLES];
     backing[slot_idx].slot_index = slot_idx;
 
-    g_slots[slot_idx].handle   = &backing[slot_idx];
-    g_slots[slot_idx].callback = args->callback;
-    g_slots[slot_idx].arg      = args->arg;
-    g_slots[slot_idx].active   = 1;
+    g_slots[slot_idx].handle         = &backing[slot_idx];
+    g_slots[slot_idx].callback       = args->callback;
+    g_slots[slot_idx].arg            = args->arg;
+    g_slots[slot_idx].active         = 1;
+    g_slots[slot_idx].last_period_us = 0;
+    g_slots[slot_idx].stopped        = 0;
 
     *out_handle = g_slots[slot_idx].handle;
     return ESP_OK;
@@ -147,7 +158,12 @@ esp_err_t mock_esp_timer_start_periodic(esp_timer_handle_t handle,
 {
     g_start_periodic_count++;
     g_last_period_us = period_us;
-    (void)handle;
+    /* Record per-handle period for FW-13 advance_periodic helper. */
+    int idx = find_slot(handle);
+    if (idx >= 0) {
+        g_slots[idx].last_period_us = period_us;
+        g_slots[idx].stopped        = 0;
+    }
     return g_start_periodic_return;
 }
 
@@ -163,7 +179,11 @@ esp_err_t mock_esp_timer_start_once(esp_timer_handle_t handle,
 esp_err_t mock_esp_timer_stop(esp_timer_handle_t handle)
 {
     g_stop_count++;
-    (void)handle;
+    /* FW-13 — mark the slot as stopped so advance_periodic skips it. */
+    int idx = find_slot(handle);
+    if (idx >= 0) {
+        g_slots[idx].stopped = 1;
+    }
     return g_stop_return;
 }
 
@@ -172,7 +192,12 @@ esp_err_t mock_esp_timer_restart(esp_timer_handle_t handle,
 {
     g_restart_count++;
     g_last_period_us = timeout_us;
-    (void)handle;
+    /* Record per-handle period for FW-13 advance_periodic helper. */
+    int idx = find_slot(handle);
+    if (idx >= 0) {
+        g_slots[idx].last_period_us = timeout_us;
+        g_slots[idx].stopped        = 0;
+    }
     return g_restart_return;
 }
 
@@ -181,10 +206,12 @@ esp_err_t mock_esp_timer_delete(esp_timer_handle_t handle)
     g_delete_count++;
     int idx = find_slot(handle);
     if (idx >= 0) {
-        g_slots[idx].active   = 0;
-        g_slots[idx].callback = NULL;
-        g_slots[idx].arg      = NULL;
-        g_slots[idx].handle   = NULL;
+        g_slots[idx].active         = 0;
+        g_slots[idx].callback       = NULL;
+        g_slots[idx].arg            = NULL;
+        g_slots[idx].handle         = NULL;
+        g_slots[idx].last_period_us = 0;
+        g_slots[idx].stopped        = 0;
     }
     return g_delete_return;
 }
@@ -207,5 +234,34 @@ esp_err_t mock_esp_timer_fire_callback(esp_timer_handle_t handle)
     int idx = find_slot(handle);
     if (idx < 0 || !g_slots[idx].callback) return ESP_ERR_NOT_FOUND;
     g_slots[idx].callback(g_slots[idx].arg);
+    return ESP_OK;
+}
+
+/* FW-13 — Periodic-timer advance helper. Mirrors the FW-06 LED
+ * `mock_esp_timer_fire_callback` pattern but extended for periodic
+ * timers: computes `n_fires = advance_ms * 1000 / period_us` and
+ * invokes the callback that many times.
+ *
+ * If the timer was stopped via `esp_timer_stop` before the advance,
+ * no callbacks fire (FW-13.5 S2 — status frames suspended while
+ * disconnected). If the period was never set (i.e. start_periodic
+ * was not called), the helper returns ESP_ERR_INVALID_STATE.
+ *
+ * Returns ESP_OK on success, ESP_ERR_INVALID_ARG if the handle
+ * is not registered, ESP_ERR_INVALID_STATE if the period is zero. */
+esp_err_t mock_esp_timer_advance_periodic(esp_timer_handle_t handle,
+                                            uint64_t advance_ms)
+{
+    int idx = find_slot(handle);
+    if (idx < 0) return ESP_ERR_INVALID_ARG;
+    if (g_slots[idx].last_period_us == 0) return ESP_ERR_INVALID_STATE;
+    if (g_slots[idx].stopped) return ESP_OK;  /* FW-13.5 S2: nothing fires */
+    if (!g_slots[idx].callback) return ESP_ERR_NOT_FOUND;
+
+    uint64_t advance_us = advance_ms * 1000ULL;
+    uint64_t n_fires = advance_us / g_slots[idx].last_period_us;
+    for (uint64_t i = 0; i < n_fires; ++i) {
+        g_slots[idx].callback(g_slots[idx].arg);
+    }
     return ESP_OK;
 }

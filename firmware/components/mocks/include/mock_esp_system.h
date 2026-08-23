@@ -5,12 +5,16 @@
  *   esp_chip_info(info)
  *   esp_get_idf_version() -> const char *
  *   esp_restart()
+ *   esp_get_free_heap_size() -> uint32_t  (FW-13)
  *
  * `esp_read_mac` is primed by `mock_esp_read_mac_set_bytes` (default
  * zeros). `esp_chip_info` is primed by `mock_esp_chip_info_set`.
  * `esp_get_idf_version` is primed by `mock_esp_get_idf_version_set`.
  * `esp_restart` is a counter-only no-op — production calls it once
  * after sending the 200 response on /provision.
+ * `esp_get_free_heap_size` is primed by
+ * `mock_esp_system_set_free_heap` (default 200 KB) — used by the
+ * FW-13 status frame payload.
  */
 #pragma once
 
@@ -44,12 +48,17 @@ typedef struct {
 void mock_esp_read_mac_set_bytes(const uint8_t mac[6]);
 void mock_esp_chip_info_set(uint32_t model, uint32_t revision);
 void mock_esp_get_idf_version_set(const char *ver);
+/* FW-13 — esp_get_free_heap_size() primer (default 200 KB). */
+void mock_esp_system_set_free_heap(uint32_t bytes);
 
 /* ---------- call counters / state ---------- */
 int  mock_esp_read_mac_call_count(void);
 int  mock_esp_chip_info_call_count(void);
 int  mock_esp_get_idf_version_call_count(void);
 int  mock_esp_restart_call_count(void);
+/* FW-13 — free heap counter + getter for the status-frame builder. */
+int      mock_esp_system_get_free_heap_call_count(void);
+uint32_t mock_esp_system_get_free_heap(void);
 const uint8_t *mock_esp_read_mac_last_bytes(void);
 const char   *mock_esp_get_idf_version_last_returned(void);
 
@@ -61,3 +70,5 @@ esp_err_t mock_esp_read_mac(uint8_t *mac, esp_mac_type_t type);
 void      mock_esp_chip_info(esp_chip_info_t *info);
 const char *mock_esp_get_idf_version(void);
 void      mock_esp_restart(void);
+/* FW-13 — esp_get_free_heap_size() redirect target. */
+uint32_t mock_esp_get_free_heap_size(void);
