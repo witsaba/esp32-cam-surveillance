@@ -969,6 +969,17 @@ SDD change: `firmware-camera-init` · Closes: R-06, R-13, R-14.
 > 5. Commit-line count ~2037 vs pre-approved 1000-line budget — covered by user's `extend-if-needed` qualifier on the `size:exception`.
 >
 > **FW-20.5 handoff**: the `camera_settings_source_t` vtable at `firmware/components/camera/include/camera_settings.h` is the documented port-fake-swap seam. FW-20.5 replaces the `fake_camera_settings_source` instance with the NVS-backed source (`namespace = "camera_cfg"`, `key = "settings"`, `schema_version` check per PRD § FR-2b L153). The module-static `g_settings_source` swap is a single-line change. FW-11's capture task consumes the driver via `camera_sensor_get()` after FW-10's init.
+>
+> **Device-verified end-to-end** (2026-08-23): user provisioned the softAP via the `/` home page (Liwaisi Wifi credentials). Clean boot to normal mode (orchestrator took `boot_run_normal`, not provisioning — NVS now has the configured SSID). Observed at `/dev/cu.usbserial-130`:
+>
+> - `I (1274) camera: psram_size=8388608 bytes` — FW-10.4 mechanical log (8 MB PSRAM confirmed; the host mock primes 4 MB but the real device returns 8 MB; the `ESP_LOGI` formatter reports runtime value, no code change needed).
+> - `I (1314) camera: Camera PID=0x26 VER=0x42 MIDL=0x7f MIDH=0xa2` + `I (1314) camera: Detected OV2640 camera` + `I (1314) camera: Detected camera at address=0x30` — FW-10.1 sensor detected, AI-Thinker pin map correct.
+> - `I (1424) cam_hal: Allocating 11520 Byte frame buffer in PSRAM` + `I (1434) cam_hal: cam config ok` + `I (1434) ov2640: Set PLL: clk_2x: 0, clk_div: 0, pclk_auto: 0, pclk_div: 8` — FW-10.1 `esp_camera_init` succeeded on real silicon; FW-10.2 PSRAM-backed frame buffer working; XCLK 10 MHz LEDC channel 0 working.
+> - `I (1474) wifi:connected with Liwaisi Wifi, aid = 10, channel 11, BW20, bssid = d6:83:ce:2f:87:73, rssi: -39` — FW-08 wifi held up post-FW-10.
+> - `I (1574) boot: stub: capture_task_start` ... `I (1594) boot: fw: boot_run ret=ok step=return` — Orchestrator cleanly handed off to supervision stubs (FW-11/13/15/16/18 are the next milestones).
+> - `I (2534) esp_netif_handlers: sta ip: 192.168.1.48` — Same IP as FW-08 device-verify session.
+>
+> User observation: the LED blinks at 1 Hz after boot — that is `CONFIG_FIRMWARE_LED_PERIOD_IDLE_HEARTBEAT_MS=1000`, the wifi-connected idle state waiting for the WebSocket client to land in FW-13.
 
 ### FW-11 — Frame capture task is the sole caller of the frame-buffer API
 
