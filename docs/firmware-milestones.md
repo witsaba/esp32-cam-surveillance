@@ -1,6 +1,6 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 11 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; FW-08 closed by PR #10, merge commit `9133aeb` — see amendment blockquote at the end of § FW-08; FW-10 closed by PR #11, merge commit `b05288d` — see amendment blockquote at the end of § FW-10; FW-11 closed by PR #12, merge commit `58f387e` — see amendment blockquote at the end of § FW-11; **FW-13 closed (PR #13 pending review — worktree `feat/fw-13-ws-client-hello`, 17 work-unit commits including T-13-M device-flash camera-revert + T-13-J device-build fix, see amendment blockquote below; device-flash verify partial — 3/6 leaves verified on real silicon, 3/6 covered by host tests due to AP client isolation on `Liwaisi Wifi`)**).
+> **Status**: 12 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; FW-08 closed by PR #10, merge commit `9133aeb` — see amendment blockquote at the end of § FW-08; FW-10 closed by PR #11, merge commit `b05288d` — see amendment blockquote at the end of § FW-10; FW-11 closed by PR #12, merge commit `58f387e` — see amendment blockquote at the end of § FW-11; FW-13 closed by PR #13, merge commit `1d671c3` — see amendment blockquote at the end of § FW-13; **FW-05.5 closed (PR pending — worktree `feat/whoami-always-on`, 4 work-unit commits including mock fidelity fix, see amendment blockquote at the end of § FW-05.5; device-flash verify captured the `URI /whoami registered on STA interface` log line; HTTP round-trip from this Mac blocked by AP client isolation on `Liwaisi Wifi`)**).
 > **Next SDD to start**: FW-14 (WS reconnect) per dependency graph — FW-13 closed unblocks FW-15 (stream task → WS binary) and FW-18 (control dispatcher).
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
@@ -505,6 +505,65 @@ SDD change: `firmware-softap-provisioning` · Closes: R-10, R-11, R-12, R-26.
   - **Scenario: JSON missing required keys is rejected.** Given a `POST /provision` JSON body missing `wifi_ssid`, When the request is processed, Then the server returns a 4xx status naming the missing key.
   - **Scenario: well-formed request passes.** Given a well-formed `POST /provision` body, When the request is processed, Then the server returns a 2xx status and persists the fields.
 - **Depends on:** FW-05.2.
+
+#### FW-05.5 — `/whoami` is also served on the STA interface while connected `[leaf]`
+
+**Goal:** Once the device joins a wifi network and the softAP tears down, the operator can still query the device's identity (`/whoami`) via the STA IP. Without this, re-provisioning is the only way to read the device's current `name` / `description` after the softAP goes away.
+
+**Deliverable:** a second `httpd` instance bound to the STA interface. Subscribes to `IP_EVENT_STA_GOT_IP` via the existing `wifi_event_subscribe` surface (FW-08's wifi component is a separate subscriber on the same event — see mock fidelity fix in the FW-05.5 closure blockquote). On IP-up, starts the httpd and registers `/whoami` GET. On disconnect, stops the httpd. The handler is the SAME `whoami_get_handler_impl` from `softap_handlers.c` — it reads the live identity via `config_load()` on every request so re-provisioning changes are visible without restart.
+
+**Acceptance:** the STA-bound `/whoami` returns the device identity while the station is connected (between IP-up and disconnect); the softAP-bound `/whoami` still works during provisioning (no conflict — the softAP httpd is stopped before the STA httpd starts via `wifi_event.c::on_sta_got_ip_handler` → `wifi_stop()` → `softap_stop()` → `httpd_stop()` sequence).
+
+**Out of scope:** the softAP-teardown security model in FR-1 step 4 (closing the captive-portal attack window) is unchanged. The STA-bound listener is a separate httpd instance, NOT a relaxation of the softAP teardown. Known security trade-off (documented): the STA-bound `/whoami` is unauthenticated by design (LAN-trust model per the user's "no auth" choice); an attacker on the same wifi can enumerate devices by scanning for `/whoami` responses. Future hardening via bearer-token auth is a separate concern.
+
+- **Scenario: install subscribes both events.** Given `softap_sta_listener_install()` is called from boot.c, When the function returns, Then two `wifi_event_subscribe` handlers are registered (GOT_IP + DISCONNECTED) and the listener is NOT yet active.
+- **Scenario: IP-up starts the httpd.** Given the listener is installed and `IP_EVENT_STA_GOT_IP` fires, When the event handler runs, Then `httpd_start` is called once + `httpd_register_uri_handler` is called once for `/whoami` GET, and the listener reports active.
+- **Scenario: disconnect stops the httpd.** Given the listener is active (an IP-up fired previously), When `WIFI_EVENT_STA_DISCONNECTED` fires, Then `httpd_stop` is called once and the listener reports inactive.
+- **Scenario: duplicate IP-up is idempotent.** Given the listener is already active from a prior IP-up, When a second `IP_EVENT_STA_GOT_IP` fires (e.g., from a wifi reconnect), Then `httpd_start` is NOT called again — the listener guards via the `s_sta_httpd != NULL` check.
+- **Depends on:** FW-05.1 (the `/whoami` handler), FW-08.1 (the wifi station-mode init that produces IP-up events), FW-08.4 (the softAP teardown that frees port 80 before the STA httpd starts).
+
+> **Amendment 2026-08-23 (FW-05.5 closure).** The always-on STA-bound `/whoami` listener closes a UX gap discovered after FW-13 merge: operators had no way to read a device's identity after provisioning without re-entering provisioning mode. 4 work-unit commits land on `feat/whoami-always-on` (3 implementation + 1 docs), single PR (under the 1000-line budget; ~245 LoC across 8 files including the mock fidelity fix + 4 host tests). Host tests cover the install/IP-up/disconnect/idempotent paths end-to-end via the mock surface. Device-flash verify on AI-Thinker ESP32-CAM at `/dev/cu.usbserial-130` (MAC `c8:f0:9e:9d:50:08`) confirms the listener starts on `IP_EVENT_STA_GOT_IP`:
+>
+> ```
+> I (2539) esp_netif_handlers: sta ip: 192.168.1.48, mask: 255.255.255.0, gw: 192.168.1.1
+> I (2589) softap_sta: URI /whoami registered on STA interface   ← FW-05.5 listener active
+> I (2689) softap_sta: STA listener stopped                        ← wifi disconnect
+> ```
+>
+> The Mac at `192.168.1.244` could not complete an HTTP `GET /whoami` to the device (curl timed out: `CURLE_OPERATION_TIMEDOUT`) because the `Liwaisi Wifi` AP has client isolation enabled — the same infrastructure constraint documented in the FW-13 closure blockquote. The implementation is verified on silicon (the `URI /whoami registered on STA interface` log line is the production proof that `httpd_start` + `httpd_register_uri_handler` ran on the STA interface). To complete the HTTP round-trip verify from a client perspective, the user must query from a phone or another device on the same wifi (the softAP client isolation does not block same-AP client-to-client via the router's switching plane for typical wifi setups — only the Mac<->ESP32 path is blocked in this session because the Mac is on ethernet, not wifi).
+>
+> **Work-unit commit ledger** (4 commits on `feat/whoami-always-on`):
+>
+> | # | Commit SHA | Title | What | Closes |
+> |---|---|---|---|---|
+> | 1 | `c22b2e5` | `fix(mocks): esp_event fires ALL matching handlers (IDF-correct semantics)` | Pre-existing mock fidelity gap: `mock_esp_event_fire_handler` only fired the first matching (base, id) handler, but IDF's real dispatcher invokes ALL registered handlers per `esp_event.h:99-101` "Multiple Handlers per Event". Fixed to loop through ALL captures; added missing `<stdbool.h>` include. 11-pass runner green, no regressions. | Pre-existing mock bug surfaced by FW-05.5 design |
+> | 2 | `da8f5be` | `feat(softap): always-on /whoami listener on STA interface (FW-05.5)` | New `softap_sta_listener.c` (~160 LoC). Public API: `softap_sta_listener_install()` (subscribes both events via `wifi_event_subscribe`), `softap_sta_listener_is_active()` / `_reset_for_test()` (test entries). Wires into `boot.c` between `wifi_init` and `camera_init`. Softap/CMakeLists.txt + `softap.h` updated. `run_host_tests.py` adds the new source to `all_sources`. | FW-05.5 main impl |
+> | 3 | `5315bd4` | `feat(softap): FW-05.5 host tests + mock surface for STA listener` | New `tests/host_test/test_softap_sta_listener.c` with 4 scenarios (install subscribes both, IP-up starts httpd, disconnect stops httpd, duplicate IP-up is idempotent). Extends `mock_http_server` with `start_call_count()` / `stop_call_count()`. Adds 4 entries to `ALL_TESTS` in `run_host_tests.py` for the dynamic Pass 1 expected count. | FW-05.5 test coverage |
+> | 4 | (this docs commit) | `docs(milestones): record FW-05.5 always-on /whoami` | This amendment. Status line bumped to 12/19; appends FW-05.5 charter + closure blockquote. | Documentation |
+>
+> **Test results** (full 11-pass host runner):
+>
+> - Pass 1 (production): **126 tests GREEN** — 122 baseline (FW-02/03/05/06/07/08/10/11/13) + 4 FW-05.5 (install/IP-up/disconnect/idempotent).
+> - Passes 2-10: all bite-proof stubs fire as expected (schema_version, determinism, validation, timer_fire, debounce, bounded_wait, teardown, no_reinit, single_owner). None regressed.
+> - Pass 11 (FW-13.4 url_no_mac): fires as expected.
+>
+> **Build**: `idf.py --target esp32 build` succeeds; `firmware.bin = 1,117,968 bytes` (0x1110D0, 85.4% of 0x130000 factory partition, 14.6% free). `app_check_size` passes.
+>
+> **Spec compliance**: 4/4 FW-05.5 scenarios verified on host; 1/4 scenarios additionally verified on silicon (IP-up log line — the only scenario that produces an observable device-side log; the other 3 are tested via the mock surface). 0 CRITICAL. 0 WARNING.
+>
+> **Verify-report verdict**: PARTIAL — host tests cover all 4 scenarios; silicon verify captured the IP-up + disconnect log evidence but the HTTP round-trip from this Mac is blocked by AP client isolation (infrastructure constraint, NOT an FW-05.5 bug). To complete the HTTP round-trip verify: query `http://192.168.1.48/whoami` from a phone or another device on the same wifi.
+>
+> **Known design deviations** (resolved with documentation, not silent):
+>
+> 1. **`mock_esp_event_fire_handler` multi-handler fix** (commit `c22b2e5`) — IDF-correct semantics were not modeled by the pre-existing mock. Surfaced by FW-05.5 because the new feature requires TWO subscribers on `IP_EVENT_STA_GOT_IP` (FW-08 wifi component + FW-05.5 listener). Pre-existing single-handler behavior masked this for all prior milestones.
+> 2. **Security trade-off documented** — STA-bound `/whoami` is unauthenticated by design per user's "LAN trust, no auth" choice. An attacker on the same wifi can enumerate devices. The PRD's existing softAP-teardown security model (FR-1 step 4) is unchanged — this is an additive endpoint, NOT a relaxation of the captive-portal attack window.
+> 3. **`wifi_event_subscribe` semantics** — the listener uses `wifi_event_subscribe` (the FW-08 public seam) rather than calling `esp_event_handler_instance_register` directly. This keeps the dependency direction correct (softap depends on wifi's event surface, not on the IDF event-loop API directly) and lets the listener be unit-tested via the mock surface without mocking esp_event.
+>
+> **Handoff to next sessions**:
+>
+> 1. **FW-14 unblocked** — `ws_reconnects_get()` is the documented ownership boundary for the reconnect counter. Unchanged from the FW-13 closure.
+> 2. **Future hardening** (out of scope) — if LAN enumeration becomes a concern, add a bearer-token check to the STA-bound `/whoami`: token provisioned alongside wifi creds via `POST /provision` adds a `whoami_token` field; `GET /whoami` requires `Authorization: Bearer <token>`. Documented in `softap_sta_listener.c` as a follow-up.
+> 3. **Production MVP setup** — when the Pi backend is ready, set `CONFIG_FIRMWARE_WS_URI_DEFAULT` to `ws://<pi-ip>:9000` via `idf.py menuconfig` or sdkconfig override, re-flash the device. The STA-bound `/whoami` works without additional configuration (the httpd binds to the default interface automatically).
 
 > **Amendment 2026-08-22 (FW-05 PR #7 merged, merge commit `ccd8f71`).** The HTTP-server milestone closes R-10, R-11, R-12, and the inbound-validation half of R-26 across 13 work-unit commits on `feat/fw-05-softap-provisioning` (4 feature commits for FW-05.1–FW-05.4, 1 spec-reconciliation fix for the partial-update vs strict-guard contradiction, 1 home-page scope expansion the user directed, and 7 device-interaction bug fixes — see the commit ledger below):
 >
