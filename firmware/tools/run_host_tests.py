@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """run_host_tests.py — host-side Unity test runner for FW-02, FW-03,
-FW-05, FW-06, FW-07, and FW-08.
+FW-05, FW-06, FW-07, FW-08, and FW-10.
 
 Builds and runs the in-tree host tests against the in-memory
-mock surface. Eight compile passes:
+mock surface. Nine compile passes:
 
   Pass 1 — production build (no stub flags): all FW-02/FW-03/FW-05
-           + FW-06 + FW-07 + FW-08 tests must pass (current count:
-           69 — 68 baseline + 1 FW-08 smoke after T-08-A lands).
+           + FW-06 + FW-07 + FW-08 + FW-10 tests must pass (current
+           count: 91 — 89 baseline + 2 FW-10.1 + 2 FW-10.2 +
+           1 FW-10.3 green — FW-10.4 + FW-10.5 to be added in
+           WU-4 and WU-5).
 
   Pass 2 — stub build (-DCONFIG_TEST_STUB_VERSION_CHECK): the FW-02.3
            bite-proof MUST FAIL with 'schema_version' in the message.
@@ -33,8 +35,12 @@ mock surface. Eight compile passes:
            the message. Wired in T-08-D.
 
   Pass 8 — stub build (-DWIFI_TEST_STUB_SKIP_IP_UP_HANDLER): the
-           FW-08.6 bite-proof MUST FAIL with 'teardown' in the
-           message. Wired in T-08-G.
+           FW-08.6 bite-proof MUST FAIL with 'teardown' in
+           the message. Wired in T-08-G.
+
+  Pass 9 — stub build (-DCAMERA_TEST_STUB_REINIT): the FW-10.3
+           no-reinit guard's bite-proof MUST FAIL with 'no_reinit'
+           in the message. Wired in this PR.
 
 Exits 0 only when all passes satisfy their expected outcomes.
 Exits 1 on any unexpected pass/fail pattern (regression in either
@@ -125,6 +131,8 @@ def _common_cflags(extra_defines):
         f'-I{PROJECT_DIR}/components/button/include',
         # FW-08 — wifi component public headers.
         f'-I{PROJECT_DIR}/components/wifi/include',
+        # FW-10 — camera component public headers.
+        f'-I{PROJECT_DIR}/components/camera/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
         # FW-08 — Kconfig mirrors for the host build (the device
@@ -137,6 +145,12 @@ def _common_cflags(extra_defines):
         # _ON_CONNECT` so it does not compile under the default
         # Pass 1 build.
         '-DCONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=1',
+        # FW-10 — camera Kconfig mirrors for the host build.
+        # Device builds resolve these via sdkconfig; the host has
+        # no sdkconfig.h so we set the FW-02 defaults that match
+        # firmware/sdkconfig.defaults:28-29 + Kconfig.projbuild:6,14.
+        '-DCONFIG_FIRMWARE_CAMERA_JPEG_QUALITY=18',
+        '-DCONFIG_FIRMWARE_CAMERA_FRAME_SIZE=5',
     ]
     flags.extend(extra_defines)
     return flags
@@ -160,6 +174,10 @@ def _build(basename, extra_defines, test_files, workdir):
         # FW-08 — wifi component (connect driver + event handlers).
         os.path.join(PROJECT_DIR, 'components', 'wifi', 'wifi.c'),
         os.path.join(PROJECT_DIR, 'components', 'wifi', 'wifi_event.c'),
+        # FW-10 — camera component (init + runtime setter + fake
+        # settings source).
+        os.path.join(PROJECT_DIR, 'components', 'camera', 'camera.c'),
+        os.path.join(PROJECT_DIR, 'components', 'camera', 'camera_settings.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_nvs_flash.cpp'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_boot_button.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_init_returns.c'),
@@ -175,6 +193,8 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_config.c'),
         # FW-08 — softap mock (mirrors mock_esp_wifi shape).
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_softap.c'),
+        # FW-10 — esp32-camera mock triplet.
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_camera.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
@@ -366,6 +386,30 @@ ALL_TESTS = [
     # only on production build; bite-proof runs under Pass 8
     # stub.
     "test_fw08_6_green_path_closes_attack_window [fw-08.6][scenario-S2]",
+    # FW-10.1 — camera_init applies PRD § FR-2 parameter table
+    # (T-10-A). 6-row Scenario Outline + a 7th pin-map assertion.
+    "test_fw10_1_pixel_format_is_jpeg [fw-10.1][row-1]",
+    "test_fw10_1_frame_size_is_qvga_default [fw-10.1][row-2]",
+    "test_fw10_1_jpeg_quality_default_is_18 [fw-10.1][row-3]",
+    "test_fw10_1_fb_count_is_one [fw-10.1][row-4]",
+    "test_fw10_1_grab_mode_is_when_empty [fw-10.1][row-5]",
+    "test_fw10_1_xclk_freq_is_10mhz [fw-10.1][row-6]",
+    "test_fw10_1_ai_thinker_pin_map [fw-10.1][pin-map]",
+    # FW-10.2 — PSRAM presence assertion + PSRAM_REQUIRED
+    # typed-error (S1 green + S2 typed-error path).
+    "test_fw10_2_psram_present_allows_init [fw-10.2][scenario-S1][green]",
+    "test_fw10_2_psram_absent_logs_required_and_fails [fw-10.2][scenario-S2]",
+    # FW-10.3 — runtime setter path + no-reinit guard. Green
+    # path compiles under the production build (this row); the
+    # bite-proof runs under Pass 9 stub build.
+    "test_fw10_3_setter_path_applies_without_reinit [fw-10.3][scenario-S1][green]",
+    # FW-10.4 — PSRAM size logged at first init (mechanical).
+    "test_fw10_4_psram_size_logged_at_first_init [fw-10.4][green]",
+    # FW-10.5 — camera_settings_source_t vtable + fake
+    # in-memory source (3 scenarios).
+    "test_fw10_5_no_stored_blob_uses_kconfig_defaults_once [fw-10.5][scenario-S2]",
+    "test_fw10_5_stored_blob_overrides_kconfig_defaults [fw-10.5][scenario-S1][walking-skeleton]",
+    "test_fw10_5_stored_via_setters_not_reinit [fw-10.5][scenario-S3]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -482,6 +526,22 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # (see FW08_6_GUARD_TEST_FILES below). The #ifdef inside
     # the file selects which one is compiled into each build.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_event_guard.c'),
+    # FW-10.1 — camera_init applies PRD § FR-2 parameter table.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_init.c'),
+    # FW-10.2 — PSRAM presence assertion + PSRAM_REQUIRED
+    # typed-error. 2 scenarios: present allows init; absent
+    # logs PSRAM_REQUIRED + returns ESP_FAIL.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_psram.c'),
+    # FW-10.3 — runtime setter path green scenario + bite-proof
+    # (Pass 9 below uses -DCAMERA_TEST_STUB_REINIT=1).
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_guard.c'),
+    # FW-10.4 — PSRAM size logged at first init.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_psram_size.c'),
+    # FW-10.5 — camera_settings_source_t vtable + fake
+    # in-memory source. 3 scenarios: stored blob overrides
+    # Kconfig defaults; no stored blob uses Kconfig once;
+    # stored applied via setters (no reinit).
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_settings_fake.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
@@ -519,6 +579,28 @@ FW08_6_GUARD_TEST_FILES = [
 # BUTTON_TEST_STUB_DISABLE_DEBOUNCE ("debounce") patterns.
 WIFI_BITE_PROOF_KEYWORD = "bounded_wait"
 WIFI_EVENT_BITE_PROOF_KEYWORD = "teardown"
+
+# FW-10.3 — Pass 9 stub build includes ONLY the FW-10.3 guard
+# file. The build defines -DCAMERA_TEST_STUB_REINIT=1 so
+# camera_init() short-circuits on the second invocation into
+# the no_reinit guard tripwire. The bite-proof test asserts
+# the guard fires with the literal "no_reinit" in the message.
+# Mirrors the WIFI_TEST_STUB_USE_BLOCKING_WAIT (Pass 7) +
+# WIFI_TEST_STUB_SKIP_IP_UP_HANDLER (Pass 8) pattern: the same
+# compile flag is applied to BOTH the production source
+# (camera.c) AND the test file (test_camera_guard.c). The
+# green-path test in test_camera_guard.c is excluded by the
+# `#ifndef CAMERA_TEST_STUB_REINIT` inside the file.
+FW10_3_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_guard.c'),
+]
+
+# Pass-9 keyword + bite-proof test marker — mirrors
+# WIFI_BITE_PROOF_KEYWORD above. The literal substring
+# "no_reinit" must appear in the guard tripwire's
+# TEST_FAIL_MESSAGE so Pass 9 of run_host_tests.py can grep
+# for it.
+CAMERA_BITE_PROOF_KEYWORD = "no_reinit"
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
 # green-path test in that file is guarded by `#ifndef
@@ -910,6 +992,46 @@ def main():
     print(f"OK: FW-08.6 stub build → guard tripped on "
           f"'{WIFI_EVENT_BITE_PROOF_KEYWORD}' invariant as expected "
           f"(test failed with rc={fw08_6_rc}).")
+
+    # ----- Pass 9: FW-10.3 no-reinit invariant stub build -----
+    # Compile test_camera_guard.c (and camera.c) with
+    # -DCAMERA_TEST_STUB_REINIT=1 so camera_init()'s body takes
+    # the re-entry path on the second invocation. The guard
+    # tripwire fires TEST_FAIL_MESSAGE with the literal
+    # substring "no_reinit". Pass 9 expects:
+    #   - rc != 0 (TEST_FAIL_MESSAGE exits non-zero)
+    #   - literal "no_reinit" present in stdout (from the test's
+    #     marker line + the TEST_FAIL_MESSAGE body)
+    #   - "guard_bite_proof_no_reinit_rejected" test name in
+    #     stdout so the runner can match it to the expected
+    #     bite-proof.
+    # Mirrors Pass 7 (WIFI_TEST_STUB_USE_BLOCKING_WAIT) + Pass 8
+    # (WIFI_TEST_STUB_SKIP_IP_UP_HANDLER) pattern.
+    print()
+    print("=== Pass 9: FW-10.3 stub build (CAMERA_TEST_STUB_REINIT, guard file) ===")
+    fw10_3_bin = _build('fw10_3_tests_stub',
+                        ['-DCAMERA_TEST_STUB_REINIT=1'],
+                        FW10_3_GUARD_TEST_FILES, workdir)
+    fw10_3_rc, fw10_3_out = _run_binary(fw10_3_bin)
+    # Under stub, camera_init()'s guard tripwire fires
+    # TEST_FAIL_MESSAGE(0, "no_reinit invariant violated: ...").
+    # The runner greps for the literal keyword in stdout.
+    if fw10_3_rc == 0:
+        sys.exit(f"FAIL: FW-10.3 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The stub gate "
+                 f"didn't bypass the no-reinit invariant. "
+                 f"Output:\n{fw10_3_out}")
+    if CAMERA_BITE_PROOF_KEYWORD not in fw10_3_out:
+        sys.exit(f"FAIL: FW-10.3 stub build output does not "
+                 f"contain the literal '{CAMERA_BITE_PROOF_KEYWORD}':\n{fw10_3_out}")
+    # The guard test name should appear in the output so the
+    # runner can match it to the expected bite-proof.
+    if "guard_bite_proof_no_reinit_rejected" not in fw10_3_out:
+        sys.exit(f"FAIL: FW-10.3 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw10_3_out}")
+    print(f"OK: FW-10.3 stub build → guard tripped on "
+          f"'{CAMERA_BITE_PROOF_KEYWORD}' invariant as expected "
+          f"(test failed with rc={fw10_3_rc}).")
 
     print()
     print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
