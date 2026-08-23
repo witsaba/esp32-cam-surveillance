@@ -435,6 +435,10 @@ ALL_TESTS = [
     # bounded).
     "test_fw11_4_one_fifty_iterations_yield_one_fifty_attempts [fw-11.4][scenario-S1][green]",
     "test_fw11_4_heap_stays_bounded_over_soak [fw-11.4][scenario-S2][green]",
+    # FW-11.5 — PSRAM heap-metrics closing check. 1 scenario:
+    # PSRAM decreased by frame-buffer allocation after first
+    # fb_get().
+    "test_fw11_5_psram_heap_decreases_by_frame_buffer_allocation [fw-11.5][scenario-S1][green]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -580,6 +584,10 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # FW-11.4 — 30 s soak (loop-count semantics on host). 2
     # scenarios: 150 iterations + heap bounded.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_capture_soak.c'),
+    # FW-11.5 — PSRAM heap-metrics closing check. 1 scenario:
+    # PSRAM decreased by frame-buffer allocation after first
+    # fb_get().
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_capture_heap.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
