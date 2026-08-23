@@ -48,6 +48,8 @@ void mock_httpd_reset(void)
 
 int  mock_httpd_register_uri_handler_call_count(void) { return g_register_count; }
 int  mock_httpd_registered_handler_count(void)       { return g_register_count; }
+int  mock_httpd_start_call_count(void)                { return g_start_count; }
+int  mock_httpd_stop_call_count(void)                 { return g_stop_count; }
 
 void mock_httpd_last_registered_uri(const char **uri, int *method)
 {
