@@ -1,19 +1,23 @@
 /* ws_event_handler.c — WS event handler registration + bodies.
- * (FW-13, T-13-D GREEN).
+ * (FW-13, T-13-D GREEN; FW-14 adds ERROR + CLOSED + reconnect
+ * scheduling.)
  *
- * Three handlers + one installer:
+ * Five handlers + one installer:
  *   ws_event_handler_on_sta_got_ip        — fires
  *     esp_websocket_client_start (lazy start per FW-13.1).
- *   ws_event_handler_on_ws_connected      — emits hello + starts
- *     status timer (T-13-E + T-13-H GREEN land the bodies).
- *   ws_event_handler_on_ws_disconnected   — stops status timer
- *     (T-13-H GREEN).
+ *   ws_event_handler_on_ws_connected      — resets the FW-14 backoff
+ *     counter + latch FIRST, then emits hello + starts the status
+ *     timer.
+ *   ws_event_handler_on_ws_disconnected   — stops status timer;
+ *     unless clean-CLOSE-latched, schedules the FW-14 reconnect via
+ *     ws_backoff_on_failure() (WARN transition).
+ *   ws_event_handler_on_ws_error          — identical semantics to
+ *     DISCONNECTED (ERROR-event counting parity, R-19).
+ *   ws_event_handler_on_ws_closed         — close code 1000 latches
+ *     the sleep latch (cancelling any pending reconnect); other
+ *     codes are a no-op.
  *   ws_event_handler_install()             — idempotent installer;
- *     wires the 3 handlers to their event sources.
- *
- * Today (T-13-D GREEN): the on_sta_got_ip body fires
- * esp_websocket_client_start; the CONNECTED/DISCONNECTED bodies
- * are stubs that T-13-E + T-13-H replace.
+ *     wires the handlers to their event sources.
  *
  * On host: the wifi_event_subscribe surface routes to
  * mock_esp_event_handler_instance_register (mock_esp_event_link.h
@@ -38,6 +42,8 @@
 #include "wifi_event.h"
 #include "wifi.h"
 #endif
+
+#include "ws_backoff.h"
 
 #include "esp_log.h"
 
@@ -104,9 +110,11 @@ void ws_event_handler_on_sta_got_ip(void *arg,
     }
 }
 
-/* WEBSOCKET_EVENT_CONNECTED — emits hello (T-13-E GREEN) + starts
- * status timer (T-13-H GREEN). The T-13-D GREEN body is a stub
- * that logs; subsequent leaves replace it. */
+/* WEBSOCKET_EVENT_CONNECTED — resets the FW-14 backoff state
+ * FIRST (counter + sleep latch), then emits hello (T-13-E GREEN)
+ * + starts status timer (T-13-H GREEN). The reset MUST precede
+ * everything else so a reconnect that succeeds never inherits the
+ * previous session's failure count. */
 void ws_event_handler_on_ws_connected(void *handler_arg,
                                        esp_event_base_t base,
                                        int32_t event_id,
@@ -116,6 +124,10 @@ void ws_event_handler_on_ws_connected(void *handler_arg,
     (void)base;
     (void)event_id;
     (void)event_data;
+
+    /* FW-14.2: counter → 0, clean-CLOSE latch cleared, stale
+     * pending reconnect timer cancelled. */
+    ws_backoff_on_connected();
 
     esp_websocket_client_handle_t h = ws_handle_get();
     if (!h) {
@@ -175,10 +187,37 @@ void ws_event_handler_on_ws_connected(void *handler_arg,
     }
 }
 
-/* WEBSOCKET_EVENT_DISCONNECTED — stops status timer (T-13-G
- * GREEN). Per REQ-WS-005 S2, status frames MUST be suspended
- * while disconnected; FW-14 owns the reconnect producer
- * (re-arms the timer when CONNECTED fires again). */
+/* Shared failure path for DISCONNECTED + ERROR (FW-14): stop the
+ * status timer, then — unless the clean-CLOSE sleep latch holds —
+ * increment the counter and arm the one-shot reconnect timer via
+ * ws_backoff_on_failure(). The WARN-level transition log lives in
+ * the backoff module. */
+static void ws_failure_stop_and_schedule(void)
+{
+    esp_err_t r = ws_status_timer_stop();
+    if (r != ESP_OK) {
+        ESP_LOGE(TAG, "ws_status_timer_stop failed: %s",
+                 esp_err_to_name(r));
+    }
+
+#ifndef WS_TEST_STUB_ENABLE_CLOSE_RECONNECT
+    /* FW-14.3 clean-CLOSE latch: while latched, no reconnect is
+     * scheduled until CONNECTED clears it. Pass-12's bite-proof
+     * stub build (-DWS_TEST_STUB_ENABLE_CLOSE_RECONNECT=1)
+     * compiles this check OUT to prove the guard is load-bearing
+     * ("close_no_reconnect"). */
+    if (ws_backoff_latch_get()) {
+        ESP_LOGI(TAG, "clean close latched; suppressing reconnect "
+                       "(sleep invariant)");
+        return;
+    }
+#endif
+
+    (void)ws_backoff_on_failure();
+}
+
+/* WEBSOCKET_EVENT_DISCONNECTED — status frames suspended per
+ * REQ-WS-005 S2; FW-14 owns the reconnect producer. */
 void ws_event_handler_on_ws_disconnected(void *handler_arg,
                                           esp_event_base_t base,
                                           int32_t event_id,
@@ -188,12 +227,50 @@ void ws_event_handler_on_ws_disconnected(void *handler_arg,
     (void)base;
     (void)event_id;
     (void)event_data;
-    esp_err_t r = ws_status_timer_stop();
-    if (r != ESP_OK) {
-        ESP_LOGE(TAG, "ws_status_timer_stop failed: %s",
-                 esp_err_to_name(r));
+    ws_failure_stop_and_schedule();
+}
+
+/* WEBSOCKET_EVENT_ERROR — identical counting/scheduling semantics
+ * to DISCONNECTED (ERROR-event parity, R-19/FR-4). */
+void ws_event_handler_on_ws_error(void *handler_arg,
+                                   esp_event_base_t base,
+                                   int32_t event_id,
+                                   void *event_data)
+{
+    (void)handler_arg;
+    (void)base;
+    (int32_t)event_id;
+    (void)event_data;
+    ESP_LOGW(TAG, "ws transport error");
+    ws_failure_stop_and_schedule();
+}
+
+/* WEBSOCKET_EVENT_CLOSED — derive cleanliness from the close
+ * status code carried on the event payload (the pinned v1.8.0
+ * component populates event_data.close_status_code on every
+ * dispatch; it has no get_close_code accessor). Code 1000 latches
+ * the sleep latch — which cancels any pending reconnect timer.
+ * Any other code (or a NULL payload) is a no-op: the failure path
+ * schedules normally. */
+void ws_event_handler_on_ws_closed(void *handler_arg,
+                                    esp_event_base_t base,
+                                    int32_t event_id,
+                                    void *event_data)
+{
+    (void)handler_arg;
+    (void)base;
+    (void)event_id;
+
+    const esp_websocket_event_data_t *ev =
+        (const esp_websocket_event_data_t *)event_data;
+    int close_code = ev ? ev->close_status_code : 0;
+
+    if (close_code == 1000) {
+        ESP_LOGI(TAG, "clean CLOSE (1000); latching sleep mode");
+        ws_backoff_latch_set(true);
+    } else {
+        ESP_LOGD(TAG, "CLOSE with code %d; not a clean close", close_code);
     }
-    ESP_LOGI(TAG, "ws disconnected; status timer paused");
 }
 
 /* ---------- installer ---------- */
@@ -202,6 +279,8 @@ void ws_event_handler_on_ws_disconnected(void *handler_arg,
  *   1. WIFI_EVT_STA_GOT_IP   → ws_event_handler_on_sta_got_ip
  *   2. WEBSOCKET_EVENT_CONNECTED     → ws_event_handler_on_ws_connected
  *      WEBSOCKET_EVENT_DISCONNECTED  → ws_event_handler_on_ws_disconnected
+ *      WEBSOCKET_EVENT_ERROR         → ws_event_handler_on_ws_error (FW-14)
+ *      WEBSOCKET_EVENT_CLOSED        → ws_event_handler_on_ws_closed (FW-14)
  *
  * ws.c::ws_init_impl calls this after esp_websocket_client_init +
  * esp_websocket_register_events. On host the wifi subscription
@@ -239,6 +318,21 @@ esp_err_t ws_event_handler_install(void)
                                        WEBSOCKET_EVENT_DISCONNECTED,
                                        (esp_event_handler_t)
                                          ws_event_handler_on_ws_disconnected,
+                                       NULL);
+    if (r != ESP_OK) return r;
+
+    /* FW-14 — ERROR parity + CLOSED latch subscription. */
+    r = esp_websocket_register_events(s_ws_handle,
+                                       WEBSOCKET_EVENT_ERROR,
+                                       (esp_event_handler_t)
+                                         ws_event_handler_on_ws_error,
+                                       NULL);
+    if (r != ESP_OK) return r;
+
+    r = esp_websocket_register_events(s_ws_handle,
+                                       WEBSOCKET_EVENT_CLOSED,
+                                       (esp_event_handler_t)
+                                         ws_event_handler_on_ws_closed,
                                        NULL);
     if (r != ESP_OK) return r;
 
