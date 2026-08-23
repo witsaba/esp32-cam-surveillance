@@ -403,6 +403,8 @@ ALL_TESTS = [
     # path compiles under the production build (this row); the
     # bite-proof runs under Pass 9 stub build.
     "test_fw10_3_setter_path_applies_without_reinit [fw-10.3][scenario-S1][green]",
+    # FW-10.4 — PSRAM size logged at first init (mechanical).
+    "test_fw10_4_psram_size_logged_at_first_init [fw-10.4][green]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -528,6 +530,8 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # FW-10.3 — runtime setter path green scenario + bite-proof
     # (Pass 9 below uses -DCAMERA_TEST_STUB_REINIT=1).
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_guard.c'),
+    # FW-10.4 — PSRAM size logged at first init.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_psram_size.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
