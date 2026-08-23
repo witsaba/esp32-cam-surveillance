@@ -91,6 +91,14 @@ uint32_t ws_backoff_delay_ms(uint32_t consecutive_failures)
     return (uint32_t)delay;
 }
 
+void ws_backoff_on_connected(void)
+{
+    s_consecutive_failures = 0;
+    s_current_delay_ms     = 0;
+    s_sleep_latched        = false;
+    ws_backoff_timer_cancel();
+}
+
 uint32_t ws_backoff_on_failure(void)
 {
     s_consecutive_failures++;

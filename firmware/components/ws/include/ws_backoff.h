@@ -42,6 +42,12 @@ void ws_backoff_init(void);
  * INITIAL × 2^(n−1), capped at CAP. n == 0 is treated as 1. */
 uint32_t ws_backoff_delay_ms(uint32_t consecutive_failures);
 
+/* CONNECTED semantics: reset consecutive_failures to 0, clear the
+ * clean-CLOSE latch, cancel any stale pending timer, and clear the
+ * cached current delay. Wired into the WEBSOCKET_EVENT_CONNECTED
+ * handler FIRST (before hello/status work). */
+void ws_backoff_on_connected(void);
+
 /* DISCONNECTED/ERROR semantics (call only when NOT latched):
  * increment the counter, compute + cache the delay, call the FR-4
  * setter, arm the one-shot reconnect timer, WARN-log the
