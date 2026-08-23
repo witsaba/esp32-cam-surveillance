@@ -47,6 +47,13 @@ esp_err_t capture_task_start(void);
 uint32_t  capture_fb_drops_get(void);
 uint32_t  capture_frames_captured_get(void);
 
+/* Reset the module-static counters + queue to their
+ * fresh-boot state. Host-only test helper (mirrors the
+ * mock triplet's reset() pattern). On device the counters
+ * are initialised to 0 by BSS + the queue is created in
+ * `capture_task_start`; reset() is a no-op there. */
+void capture_counters_reset_for_test(void);
+
 /* ---------- test seam (internal — visible for host tests) ---------- */
 
 /* Depth of the host capture_queue_t slots — mirrors the real

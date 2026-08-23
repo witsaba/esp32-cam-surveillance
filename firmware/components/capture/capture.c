@@ -27,6 +27,8 @@
  */
 #include "capture.h"
 
+#include <string.h>
+
 #include "esp_log.h"
 
 #ifdef UNITY_HOST_BUILD
@@ -64,6 +66,18 @@ static capture_counters_t g_capture_counters;
  * status-task context. */
 uint32_t capture_fb_drops_get(void)        { return g_capture_counters.fb_drops; }
 uint32_t capture_frames_captured_get(void) { return g_capture_counters.frames_captured; }
+
+/* Host-only reset helper (test seam). Mirrors the mock
+ * triplet's reset() pattern. On device the counters are
+ * BSS-zeroed at boot + the queue is created at task
+ * start; this function is a no-op there. */
+void capture_counters_reset_for_test(void)
+{
+#ifdef UNITY_HOST_BUILD
+    memset(&g_capture_queue, 0, sizeof(g_capture_queue));
+    memset(&g_capture_counters, 0, sizeof(g_capture_counters));
+#endif
+}
 
 /* ---------- host queue backend (depth-2 ring buffer) ----------
  *

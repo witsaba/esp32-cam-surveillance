@@ -57,6 +57,9 @@ static void capture_with_mocks(void)
     mock_esp_camera_reset();
     mock_supervision_reset();
     mock_init_returns_reset();
+    /* Reset the capture component's module-static counters
+     * + queue so test order doesn't leak state. */
+    capture_counters_reset_for_test();
 }
 
 /* ---------- S1 — 5 fps sustained: 5 iterations = 5 fb_get attempts ---------- */
