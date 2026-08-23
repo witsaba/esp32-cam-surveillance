@@ -121,6 +121,11 @@ void mock_httpd_reset(void);
 int  mock_httpd_register_uri_handler_call_count(void);
 void mock_httpd_last_registered_uri(const char **uri, int *method);
 int  mock_httpd_registered_handler_count(void);
+/* FW-05.5 — count of httpd_start / httpd_stop invocations since
+ * last reset. Used by the STA-bound /whoami listener test to
+ * assert the httpd fires exactly once per IP_EVENT_STA_GOT_IP. */
+int  mock_httpd_start_call_count(void);
+int  mock_httpd_stop_call_count(void);
 
 /* ---------- test entry point ---------- */
 esp_err_t mock_httpd_invoke_registered_handler(const char *uri,

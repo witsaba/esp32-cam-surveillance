@@ -205,6 +205,9 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap.c'),
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_handlers.c'),
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_home.c'),
+        # FW-05.5 — STA-bound /whoami listener (always-on httpd on
+        # the station interface, started on IP_EVENT_STA_GOT_IP).
+        os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_sta_listener.c'),
         os.path.join(PROJECT_DIR, 'components', 'led', 'led.c'),
         os.path.join(PROJECT_DIR, 'components', 'button', 'button.c'),
         # FW-08 — wifi component (connect driver + event handlers).
@@ -523,6 +526,12 @@ ALL_TESTS = [
     "test_status_payload_full_fields [fw-13.6][status-payload][scenario-S1]",
     "test_status_reconnects_zero_in_fw13 [fw-13.6][status-payload][scenario-S2]",
     "test_status_rssi_reflects_mock [fw-13.6][status-payload][scenario-S3]",
+    # FW-05.5 — always-on /whoami listener on the STA interface.
+    # 4 scenarios covering install, IP-up, disconnect, idempotency.
+    "test_fw05_5_install_subscribes_both_events [fw-05.5][install][scenario-S1]",
+    "test_fw05_5_ip_up_starts_httpd [fw-13.5][ip-up][scenario-S1]",
+    "test_fw05_5_disconnect_stops_httpd [fw-05.5][disconnect][scenario-S2]",
+    "test_fw05_5_idempotent_ip_up [fw-05.5][idempotent][scenario-S3]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -565,6 +574,8 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_guard.c'),
     # FW-05 home page (scope expansion 2026-08-22)
     os.path.join(PROJECT_DIR, 'tests', 'test_softap', 'test_softap_home.c'),
+    # FW-05.5 — always-on /whoami listener on the STA interface
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_softap_sta_listener.c'),
     # FW-06 status LED
     os.path.join(PROJECT_DIR, 'tests', 'test_led', 'test_led_boot_connecting.c'),
     os.path.join(PROJECT_DIR, 'tests', 'test_led', 'test_led_connected.c'),
