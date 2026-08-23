@@ -104,6 +104,14 @@ esp_err_t ws_init_impl(const config_t *cfg);
  * ws.c can install them idempotently). */
 void ws_handle_set(esp_websocket_client_handle_t h);
 
+/* Host-test reset — clears the idempotency flag so the next
+ * ws_init → ws_event_handler_install call re-registers the
+ * handlers. The mock's handler table is also reset on each
+ * _init call; both resets are needed together to keep the
+ * CONNECTED/DISCONNECTED subscriptions live across host test
+ * cases. Not for production use. */
+void ws_event_handler_reset_for_test(void);
+
 /* Read-only accessor for the module-static handle. Tests use
  * this to drive the mock (esp_websocket_client_start fires
  * CONNECTED synchronously; the production on_ws_connected

@@ -96,16 +96,41 @@ esp_err_t ws_text_frame_parse_uri_path(const char *uri,
     return ESP_OK;
 }
 
-/* T-13-E GREEN lands the hello JSON emitter here. Today (T-13-D)
- * we return 0 — the call site (on_ws_connected) checks len == 0
- * and skips the send. */
+/* ---------- hello builder (T-13-E GREEN) ----------
+ *
+ * Emits the hello frame per REQ-WS-002 schema:
+ *   {"type":"hello","mac":"<12-hex>","name":"<nvs>",
+ *    "description":"<nvs>","fw":"<version>",
+ *    "caps":["jpeg","stream","identify"]}
+ *
+ * Field order matches R-27 spec invariant for downstream parsers.
+ * Empty name/description is allowed (unprovisioned device; the
+ * ws init path logs ESP_LOGW from identity_load but still emits
+ * the frame with empty fields).
+ *
+ * Returns: bytes written excluding NUL, or 0 if `out` is too
+ * small / `id` is NULL. */
 size_t ws_text_frame_build_hello(const device_identity_t *id,
                                   char *out, size_t out_len)
 {
-    (void)id;
-    (void)out;
-    (void)out_len;
-    return 0;
+    if (!id || !out || out_len == 0) return 0;
+
+    /* Hand-rolled emitter (no cJSON dep needed — the shape is
+     * fixed and 6 fields, ~200 bytes worst case). fw field is
+     * a compile-time string baked at build; today we emit
+     * "1.0.0" (mirrors the FW-13 charter L1180 "1.0.0"). */
+    int n = snprintf(out, out_len,
+        "{\"type\":\"hello\","
+         "\"mac\":\"%s\","
+         "\"name\":\"%s\","
+         "\"description\":\"%s\","
+         "\"fw\":\"1.0.0\","
+         "\"caps\":[\"jpeg\",\"stream\",\"identify\"]}",
+        id->mac_hex,
+        id->name,
+        id->description);
+    if (n < 0 || (size_t)n >= out_len) return 0;
+    return (size_t)n;
 }
 
 /* T-13-I GREEN lands the status JSON emitter here. Today (T-13-D)

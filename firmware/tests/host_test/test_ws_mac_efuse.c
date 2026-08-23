@@ -35,6 +35,7 @@
 #include "mock_esp_system.h"
 #include "mock_nvs_flash_link.h"
 #include "mock_esp_system_link.h"
+#include "mock_init_returns.h"
 #endif
 
 static config_t s_test_cfg;
@@ -47,7 +48,17 @@ static void reset_state(void)
             sizeof(s_test_cfg.wifi.ssid) - 1);
     s_test_cfg.wifi.ssid[sizeof(s_test_cfg.wifi.ssid) - 1] = '\0';
 #ifdef UNITY_HOST_BUILD
+    /* CRITICAL: clear stale forced-failure state from prior
+     * boot-order tests (test_boot_order.c sets BOOT_STEP_WS_INIT
+     * to ESP_FAIL and never resets). Without this reset the
+     * ws_init short-circuit returns ESP_FAIL and no hello
+     * fires. */
+    mock_init_returns_reset();
     mock_esp_websocket_client_reset_for_test();
+    /* Reset the ws component's install idempotency flag so
+     * the next ws_init → ws_event_handler_install call re-
+     * registers the CONNECTED/DISCONNECTED handlers. */
+    ws_event_handler_reset_for_test();
     /* Prime eFuse MAC: 0a:0b:0c:0d:0e:0f — distinct from the
      * canonical Espressif prefix so the test catches accidental
      * hardcoded MAC leakage. */
@@ -99,7 +110,8 @@ TEST_CASE(
     /* MAC must equal the eFuse-primed value formatted as
      * lower-hex (no separators): 0a:0b:0c:0d:0e:0f -> "0a0b0c0d0e0f". */
     char mac_buf[32] = {0};
-    TEST_ASSERT_TRUE(json_get_string(frame, "mac", mac_buf, sizeof(mac_buf)));
+    bool found = json_get_string(frame, "mac", mac_buf, sizeof(mac_buf));
+    TEST_ASSERT_TRUE_MESSAGE(found, "hello.mac field missing or unparseable");
     TEST_ASSERT_EQUAL_STRING("0a0b0c0d0e0f", mac_buf);
     TEST_ASSERT_EQUAL(12, strlen(mac_buf));
 }

@@ -38,6 +38,7 @@
 #include "mock_esp_websocket_client.h"
 #include "mock_nvs_flash_link.h"
 #include "mock_esp_system_link.h"
+#include "mock_init_returns.h"
 #endif
 
 /* Per-test setup. Resets the mock + primes a known MAC for
@@ -51,7 +52,21 @@ static void reset_state(void)
             sizeof(s_test_cfg.wifi.ssid) - 1);
     s_test_cfg.wifi.ssid[sizeof(s_test_cfg.wifi.ssid) - 1] = '\0';
 #ifdef UNITY_HOST_BUILD
+    /* CRITICAL: clear any stale forced-failure state set by
+     * prior FW-03 boot-order tests (test_boot_order.c sets
+     * BOOT_STEP_WS_INIT=ESP_FAIL at line 147 and never resets).
+     * Without this reset, ws_init's mock_init_returns_get
+     * short-circuit returns ESP_FAIL and the init body never
+     * runs — the hello emit never fires. */
+    mock_init_returns_reset();
     mock_esp_websocket_client_reset_for_test();
+    /* Reset the ws component's install idempotency flag so
+     * the next ws_init → ws_event_handler_install call re-
+     * registers the CONNECTED/DISCONNECTED handlers (the mock
+     * resets its handler table on each _init call; the
+     * production idempotency would otherwise leave no handlers
+     * registered for the new test case). */
+    ws_event_handler_reset_for_test();
     /* Prime the eFuse MAC: c8:f0:9e:9d:50:08 (Espressif
      * canonical prefix). The mock's esp_read_mac returns
      * these bytes when not overridden by the test. */

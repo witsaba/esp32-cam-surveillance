@@ -41,6 +41,7 @@
 #include "mock_esp_websocket_client.h"
 #include "mock_nvs_flash_link.h"
 #include "mock_esp_system_link.h"
+#include "mock_init_returns.h"
 #endif
 
 /* Module-static config shared across tests. The boot orchestrator
@@ -60,7 +61,17 @@ static void reset_state(void)
             sizeof(s_test_cfg.wifi.ssid) - 1);
     s_test_cfg.wifi.ssid[sizeof(s_test_cfg.wifi.ssid) - 1] = '\0';
 #ifdef UNITY_HOST_BUILD
+    /* Clear stale forced-failure state from prior FW-03
+     * boot-order tests. Without this reset, ws_init's
+     * mock_init_returns_get short-circuit returns ESP_FAIL and
+     * the init body never runs (esp_websocket_client_init is
+     * never called, the URI stays NULL). */
+    mock_init_returns_reset();
     mock_esp_websocket_client_reset_for_test();
+    /* Reset the ws component's install idempotency flag so
+     * subsequent ws_init calls re-register handlers (the mock
+     * resets its handler table on each _init call). */
+    ws_event_handler_reset_for_test();
 #endif
 }
 
