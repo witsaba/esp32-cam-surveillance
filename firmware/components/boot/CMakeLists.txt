@@ -4,6 +4,6 @@ idf_component_register(
          "stub_inits.c"
          "stub_supervision.c"
     INCLUDE_DIRS "include"
-    REQUIRES config nvs_flash softap wifi
+    REQUIRES config nvs_flash softap wifi camera
     PRIV_REQUIRES button
 )

@@ -125,6 +125,8 @@ def _common_cflags(extra_defines):
         f'-I{PROJECT_DIR}/components/button/include',
         # FW-08 — wifi component public headers.
         f'-I{PROJECT_DIR}/components/wifi/include',
+        # FW-10 — camera component public headers.
+        f'-I{PROJECT_DIR}/components/camera/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
         # FW-08 — Kconfig mirrors for the host build (the device
@@ -137,6 +139,12 @@ def _common_cflags(extra_defines):
         # _ON_CONNECT` so it does not compile under the default
         # Pass 1 build.
         '-DCONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=1',
+        # FW-10 — camera Kconfig mirrors for the host build.
+        # Device builds resolve these via sdkconfig; the host has
+        # no sdkconfig.h so we set the FW-02 defaults that match
+        # firmware/sdkconfig.defaults:28-29 + Kconfig.projbuild:6,14.
+        '-DCONFIG_FIRMWARE_CAMERA_JPEG_QUALITY=18',
+        '-DCONFIG_FIRMWARE_CAMERA_FRAME_SIZE=5',
     ]
     flags.extend(extra_defines)
     return flags
@@ -160,6 +168,10 @@ def _build(basename, extra_defines, test_files, workdir):
         # FW-08 — wifi component (connect driver + event handlers).
         os.path.join(PROJECT_DIR, 'components', 'wifi', 'wifi.c'),
         os.path.join(PROJECT_DIR, 'components', 'wifi', 'wifi_event.c'),
+        # FW-10 — camera component (init + runtime setter + fake
+        # settings source).
+        os.path.join(PROJECT_DIR, 'components', 'camera', 'camera.c'),
+        os.path.join(PROJECT_DIR, 'components', 'camera', 'camera_settings.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_nvs_flash.cpp'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_boot_button.c'),
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_init_returns.c'),
@@ -175,6 +187,8 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_config.c'),
         # FW-08 — softap mock (mirrors mock_esp_wifi shape).
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_softap.c'),
+        # FW-10 — esp32-camera mock triplet.
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_camera.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
@@ -366,6 +380,15 @@ ALL_TESTS = [
     # only on production build; bite-proof runs under Pass 8
     # stub.
     "test_fw08_6_green_path_closes_attack_window [fw-08.6][scenario-S2]",
+    # FW-10.1 — camera_init applies PRD § FR-2 parameter table
+    # (T-10-A). 6-row Scenario Outline + a 7th pin-map assertion.
+    "test_fw10_1_pixel_format_is_jpeg [fw-10.1][row-1]",
+    "test_fw10_1_frame_size_is_qvga_default [fw-10.1][row-2]",
+    "test_fw10_1_jpeg_quality_default_is_18 [fw-10.1][row-3]",
+    "test_fw10_1_fb_count_is_one [fw-10.1][row-4]",
+    "test_fw10_1_grab_mode_is_when_empty [fw-10.1][row-5]",
+    "test_fw10_1_xclk_freq_is_10mhz [fw-10.1][row-6]",
+    "test_fw10_1_ai_thinker_pin_map [fw-10.1][pin-map]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -482,6 +505,8 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # (see FW08_6_GUARD_TEST_FILES below). The #ifdef inside
     # the file selects which one is compiled into each build.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_event_guard.c'),
+    # FW-10.1 — camera_init applies PRD § FR-2 parameter table.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_init.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard

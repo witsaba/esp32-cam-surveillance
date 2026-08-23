@@ -30,15 +30,9 @@ static const char *TAG = "boot";
  * symbol resolves there via the linker. See T-08-A for the wifi
  * component skeleton commit. */
 
-esp_err_t camera_init(const config_t *cfg) {
-    (void)cfg;
-#ifdef UNITY_HOST_BUILD
-    esp_err_t forced = mock_init_returns_get(BOOT_STEP_CAMERA_INIT);
-    if (forced != ESP_OK) return forced;
-#endif
-    ESP_LOGI(TAG, "stub: camera_init  // FW-10: real impl lands in camera driver init");
-    return ESP_OK;
-}
+/* camera_init moved to firmware/components/camera/camera.c — the strong
+ * symbol resolves there via the linker (FW-10.1). FW-10.6 will
+ * remove this comment block entirely in the closure commit. */
 
 esp_err_t ws_init(const config_t *cfg) {
     (void)cfg;
