@@ -133,15 +133,20 @@ size_t ws_text_frame_build_hello(const device_identity_t *id,
     return (size_t)n;
 }
 
-/* T-13-I GREEN lands the status JSON emitter here. Today (T-13-D)
- * we return 0. */
+/* T-13-I GREEN lands the full 8-field status JSON emitter
+ * (uptime_s, rssi_dbm, free_heap, fb_drops, reconnects). Today
+ * (T-13-G GREEN) we emit a minimal 3-field stub so the cadence
+ * test asserts something. The full schema lands in T-13-H. */
 size_t ws_text_frame_build_status(const ws_runtime_metrics_t *m,
                                    const device_identity_t *id,
                                    char *out, size_t out_len)
 {
-    (void)m;
-    (void)id;
-    (void)out;
-    (void)out_len;
-    return 0;
+    if (!m || !id || !out || out_len == 0) return 0;
+    int n = snprintf(out, out_len,
+        "{\"type\":\"status\",\"mac\":\"%s\","
+         "\"uptime_s\":%lld}",
+        id->mac_hex,
+        (long long)(m->uptime_us / 1000000));
+    if (n < 0 || (size_t)n >= out_len) return 0;
+    return (size_t)n;
 }

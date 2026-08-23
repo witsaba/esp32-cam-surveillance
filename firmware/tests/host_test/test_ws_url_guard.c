@@ -109,10 +109,8 @@ TEST_CASE(
     /* Stub flag NOT defined — this test is excluded from Pass 1
      * (production build) and Passes 2-10 (other bite-proof
      * stubs). The bite-proof runs ONLY under Pass 11 via the
-     * dedicated stub build. The body just passes (no assertion
-     * needed; the disabled-case marker is the test name itself
-     * — grep matches the enabled-case test name in Pass 11). */
-    printf("\n[diag] FW-13.4 Pass 11 bite-proof disabled in this build\n");
+     * dedicated stub build. The body is intentionally empty
+     * so the test always passes. */
 }
 #else
 TEST_CASE(

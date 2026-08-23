@@ -210,6 +210,11 @@ esp_err_t ws_status_timer_stop(void);
  * mock_esp_timer_advance_periodic(). Returns NULL before init. */
 void *ws_status_timer_handle_get(void);
 
+/* Host-test reset: clears the module-static status-timer handle
+ * so the next ws_status_timer_init() call re-creates the timer
+ * in a freshly cleared mock slot table. Not for production use. */
+void ws_status_timer_reset_handle_for_test(void);
+
 /* ---------- FW-13.6 runtime metrics (T-13-I GREEN) ---------- */
 
 /* Populate `out` from the current runtime (timer + wifi rssi +

@@ -36,6 +36,14 @@
 #include "mock_nvs_flash_link.h"
 #include "mock_esp_system_link.h"
 #include "mock_init_returns.h"
+
+/* Host-only reset for the ws_status_timer module-static
+ * handle. Without this, tests that follow a previous test
+ * (which had its handle slot wiped by mock_esp_timer_reset)
+ * see a stale g_status_timer pointer that no longer maps to a
+ * real mock slot — advance_periodic returns ESP_ERR_INVALID_ARG
+ * and no status callbacks fire. */
+extern void ws_status_timer_reset_handle_for_test(void);
 #endif
 
 static config_t s_test_cfg;
@@ -53,6 +61,13 @@ static void reset_state(void)
      * between passes; do it explicitly so our handle_count is
      * predictable. */
     mock_esp_timer_reset();
+    /* Clear the ws_status_timer module-static handle so the
+     * next ws_init re-creates the timer slot in the freshly-
+     * cleared mock table. Without this the test sees a stale
+     * g_status_timer pointer that no longer maps to a real
+     * mock slot — advance_periodic fails with NO_SLOT and no
+     * status callbacks fire. */
+    ws_status_timer_reset_handle_for_test();
     /* Reset event-mock slot table — wifi + ws subscriptions
      * accumulate across tests within a single binary. The
      * 8-slot table fills fast; reset between tests to keep

@@ -32,8 +32,8 @@
 #include "wifi.h"
 #include "esp_event.h"
 #else
-#include "esp_event.h>
-#include "esp_websocket_client.h>
+#include "esp_event.h"
+#include "esp_websocket_client.h"
 #include "esp_timer.h"
 #include "wifi_event.h"
 #include "wifi.h"
@@ -165,11 +165,20 @@ void ws_event_handler_on_ws_connected(void *handler_arg,
                  sent, id.mac_hex, id.name);
     }
 
-    /* T-13-H: ws_status_timer_start() lands here. */
+    /* T-13-H: arm the 30 s status timer. The cadence test
+     * (REQ-WS-005 S1) asserts exactly 3 status frames fire per
+     * 90 s while connected. */
+    esp_err_t tmr = ws_status_timer_start();
+    if (tmr != ESP_OK) {
+        ESP_LOGE(TAG, "on_ws_connected: ws_status_timer_start "
+                       "failed: %s", esp_err_to_name(tmr));
+    }
 }
 
-/* WEBSOCKET_EVENT_DISCONNECTED — stops status timer (T-13-H
- * GREEN). The T-13-D GREEN body is a stub. */
+/* WEBSOCKET_EVENT_DISCONNECTED — stops status timer (T-13-G
+ * GREEN). Per REQ-WS-005 S2, status frames MUST be suspended
+ * while disconnected; FW-14 owns the reconnect producer
+ * (re-arms the timer when CONNECTED fires again). */
 void ws_event_handler_on_ws_disconnected(void *handler_arg,
                                           esp_event_base_t base,
                                           int32_t event_id,
@@ -179,8 +188,12 @@ void ws_event_handler_on_ws_disconnected(void *handler_arg,
     (void)base;
     (void)event_id;
     (void)event_data;
-    /* T-13-H: ws_status_timer_stop() lands here. */
-    ESP_LOGI(TAG, "ws disconnected (status-timer-stop lands in T-13-H)");
+    esp_err_t r = ws_status_timer_stop();
+    if (r != ESP_OK) {
+        ESP_LOGE(TAG, "ws_status_timer_stop failed: %s",
+                 esp_err_to_name(r));
+    }
+    ESP_LOGI(TAG, "ws disconnected; status timer paused");
 }
 
 /* ---------- installer ---------- */
