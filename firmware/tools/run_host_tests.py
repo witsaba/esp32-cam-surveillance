@@ -550,6 +550,14 @@ ALL_TESTS = [
     "test_fw14_2_counter_resets_on_connected [fw-14.2][counter][scenario-S1]",
     "test_fw14_2_counter_persists_back_to_back [fw-14.2][counter][scenario-S2]",
     "test_fw14_2_connect_clears_latch [fw-14.2][latch][scenario-S3]",
+    # FW-14 Phase 4 — event wiring end-to-end: ERROR parity with
+    # DISCONNECTED, clean-CLOSE latch orderings, non-clean close,
+    # event-driven counter reset.
+    "test_fw14_error_arms_timer_like_disconnected [fw-14][error-parity][scenario-S1]",
+    "test_fw14_clean_close_latches_before_disconnect [fw-14][latch-order][scenario-S2]",
+    "test_fw14_clean_close_cancels_pending_timer [fw-14][latch-order][scenario-S3]",
+    "test_fw14_non_clean_close_does_not_latch [fw-14][latch-order][scenario-S4]",
+    "test_fw14_connected_event_resets_counter_end_to_end [fw-14][counter-wiring][scenario-S5]",
     # FW-05.5 — always-on /whoami listener on the STA interface.
     # 4 scenarios covering install, IP-up, disconnect, idempotency.
     "test_fw05_5_install_subscribes_both_events [fw-05.5][install][scenario-S1]",

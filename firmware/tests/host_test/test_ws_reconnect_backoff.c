@@ -218,3 +218,110 @@ TEST_CASE(
     TEST_ASSERT_FALSE(ws_backoff_latch_get());
     assert_backoff_row(1, 2000u);
 }
+
+/* ---------- FW-14 Phase 4 — event wiring (end-to-end) ----------
+ *
+ * These drive the REAL event handlers through the mock: fire the
+ * IDF-shaped events, assert on the captured setter/timer state.
+ * They prove the wiring (subscription + body semantics), not just
+ * the module math. */
+
+/* ERROR-event counting semantics: WEBSOCKET_EVENT_ERROR must arm
+ * the reconnect exactly like DISCONNECTED. */
+TEST_CASE(
+    "test_fw14_error_arms_timer_like_disconnected [fw-14][error-parity][scenario-S1]",
+    "[ws][fw-14][error]")
+{
+    reset_state();
+    int start_once_before = mock_esp_timer_start_once_call_count();
+
+    esp_err_t r = mock_esp_websocket_client_fire_event(
+        WEBSOCKET_EVENT_ERROR);
+    TEST_ASSERT_EQUAL(ESP_OK, r);
+
+    TEST_ASSERT_EQUAL_INT(2000,
+        mock_esp_websocket_client_get_last_reconnect_timeout_ms());
+    TEST_ASSERT_EQUAL_INT(start_once_before + 1,
+        mock_esp_timer_start_once_call_count());
+    TEST_ASSERT_EQUAL_UINT32(1, ws_backoff_failure_count());
+}
+
+/* Clean CLOSE before DISCONNECTED: CLOSED(1000) latches; the
+ * subsequent DISCONNECTED must NOT schedule anything. */
+TEST_CASE(
+    "test_fw14_clean_close_latches_before_disconnect [fw-14][latch-order][scenario-S2]",
+    "[ws][fw-14][latch]")
+{
+    reset_state();
+    mock_esp_websocket_client_fire_closed(1000);
+    TEST_ASSERT_TRUE(ws_backoff_latch_get());
+
+    mock_esp_websocket_client_fire_disconnected();
+
+    TEST_ASSERT_EQUAL_INT(0,
+        (int)mock_esp_websocket_client_set_reconnect_timeout_call_count());
+    TEST_ASSERT_EQUAL_INT(0, mock_esp_timer_start_once_call_count());
+}
+
+/* DISCONNECTED before clean CLOSE observed: the pending reconnect
+ * timer is cancelled and the latch holds against later failures. */
+TEST_CASE(
+    "test_fw14_clean_close_cancels_pending_timer [fw-14][latch-order][scenario-S3]",
+    "[ws][fw-14][latch]")
+{
+    reset_state();
+    /* First failure schedules normally. */
+    mock_esp_websocket_client_fire_disconnected();
+    TEST_ASSERT_EQUAL_INT(1,
+        (int)mock_esp_websocket_client_set_reconnect_timeout_call_count());
+
+    int stops_before = mock_esp_timer_stop_call_count();
+    mock_esp_websocket_client_fire_closed(1000);
+    /* The CLOSED(1000) handler cancelled the pending one-shot. */
+    TEST_ASSERT_TRUE(mock_esp_timer_stop_call_count() > stops_before);
+    TEST_ASSERT_TRUE(ws_backoff_latch_get());
+
+    /* Latch holds: a later DISCONNECTED does not re-arm. */
+    mock_esp_websocket_client_fire_disconnected();
+    TEST_ASSERT_EQUAL_INT(1,
+        (int)mock_esp_websocket_client_set_reconnect_timeout_call_count());
+    TEST_ASSERT_EQUAL_UINT32(1, ws_backoff_failure_count());
+}
+
+/* Non-clean close (code != 1000) does not latch; scheduling
+ * proceeds normally. */
+TEST_CASE(
+    "test_fw14_non_clean_close_does_not_latch [fw-14][latch-order][scenario-S4]",
+    "[ws][fw-14][latch]")
+{
+    reset_state();
+    mock_esp_websocket_client_fire_closed(1001);
+    TEST_ASSERT_FALSE(ws_backoff_latch_get());
+
+    mock_esp_websocket_client_fire_disconnected();
+
+    TEST_ASSERT_EQUAL_INT(2000,
+        mock_esp_websocket_client_get_last_reconnect_timeout_ms());
+}
+
+/* Event-driven counter lifecycle: two DISCONNECTED events reach
+ * row-2, a real CONNECTED event resets to row-1 again. Proves the
+ * CONNECTED handler calls on_connected FIRST. */
+TEST_CASE(
+    "test_fw14_connected_event_resets_counter_end_to_end [fw-14][counter-wiring][scenario-S5]",
+    "[ws][fw-14][counter]")
+{
+    reset_state();
+    mock_esp_websocket_client_fire_disconnected();
+    mock_esp_websocket_client_fire_disconnected();
+    TEST_ASSERT_EQUAL_UINT32(2, ws_backoff_failure_count());
+
+    esp_err_t r = mock_esp_websocket_client_fire_event(
+        WEBSOCKET_EVENT_CONNECTED);
+    TEST_ASSERT_EQUAL(ESP_OK, r);
+    TEST_ASSERT_EQUAL_UINT32(0, ws_backoff_failure_count());
+
+    mock_esp_websocket_client_fire_disconnected();
+    TEST_ASSERT_EQUAL_INT(2000,
+        mock_esp_websocket_client_get_last_reconnect_timeout_ms());
+}
