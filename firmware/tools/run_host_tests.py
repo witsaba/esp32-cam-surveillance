@@ -46,6 +46,11 @@ mock surface. Ten compile passes:
            with 'single_owner' in the message. Wired in this
            PR (FW-11 apply cycle).
 
+  Pass 12 — stub build (-DWS_TEST_STUB_ENABLE_CLOSE_RECONNECT): the
+           FW-14 clean-CLOSE sleep-invariant guard's bite-proof
+           MUST FAIL with 'close_no_reconnect' in the message.
+           Wired in the FW-14 apply cycle.
+
 Exits 0 only when all passes satisfy their expected outcomes.
 Exits 1 on any unexpected pass/fail pattern (regression in either
 direction).
@@ -841,6 +846,26 @@ FW13_4_GUARD_TEST_FILES = [
 # message so Pass 11 of run_host_tests.py can grep for it.
 WS_URL_GUARD_BITE_PROOF_KEYWORD = "url_no_mac"
 
+# FW-14 — Pass 12 stub build includes ONLY the FW-14 close-guard
+# file. The build defines -DWS_TEST_STUB_ENABLE_CLOSE_RECONNECT=1,
+# which compiles the clean-CLOSE latch check OUT of
+# ws_event_handler.c's failure path (simulating the regression
+# where a clean CLOSE no longer suppresses reconnect scheduling).
+# The bite-proof test asserts NOTHING was scheduled after
+# CLOSED(1000) + DISCONNECTED; under the stub it fails with the
+# literal "close_no_reconnect". Mirrors Pass 11
+# (WS_TEST_STUB_INJECT_MAC_INTO_URL) shape exactly: the same
+# compile flag is applied to BOTH the production sources AND the
+# test file.
+FW14_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_close_guard.c'),
+]
+
+# Pass-12 keyword + bite-proof test marker. The literal substring
+# "close_no_reconnect" must appear in the bite-proof's failure
+# message so Pass 12 of run_host_tests.py can grep for it.
+WS_CLOSE_GUARD_BITE_PROOF_KEYWORD = "close_no_reconnect"
+
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
 # green-path test in that file is guarded by `#ifndef
 # BOOT_TEST_STUB_FLIP_DECISION` so it auto-excludes itself; what
@@ -1348,6 +1373,43 @@ def main():
     print(f"OK: FW-13.4 stub build → guard tripped on "
           f"'{WS_URL_GUARD_BITE_PROOF_KEYWORD}' invariant as expected "
           f"(test failed with rc={fw13_4_rc}).")
+
+    # ----- Pass 12: FW-14 clean-CLOSE sleep-invariant stub build -----
+    # Compile test_ws_close_guard.c (and the production sources) with
+    # -DWS_TEST_STUB_ENABLE_CLOSE_RECONNECT=1 so the latch check in
+    # ws_event_handler.c's failure path is compiled out. The
+    # bite-proof test drives ws_init → CLOSED(1000) → DISCONNECTED
+    # and asserts NOTHING was scheduled. Under the stub the failure
+    # path schedules anyway and TEST_FAIL_MESSAGE fires with the
+    # literal "close_no_reconnect". Pass 12 expects:
+    #   - rc != 0 (TEST_FAIL_MESSAGE exits non-zero)
+    #   - literal "close_no_reconnect" present in stdout (from the
+    #     test's marker line AND from the TEST_FAIL_MESSAGE body)
+    #   - "test_pass12_clean_close_must_not_schedule" test name in
+    #     stdout so the runner can match it to the expected
+    #     bite-proof.
+    # Mirrors Pass 11 (WS_TEST_STUB_INJECT_MAC_INTO_URL) shape
+    # exactly.
+    print()
+    print("=== Pass 12: FW-14 stub build (WS_TEST_STUB_ENABLE_CLOSE_RECONNECT, guard file) ===")
+    fw14_bin = _build('fw14_tests_stub',
+                      ['-DWS_TEST_STUB_ENABLE_CLOSE_RECONNECT=1'],
+                      FW14_GUARD_TEST_FILES, workdir)
+    fw14_rc, fw14_out = _run_binary(fw14_bin)
+    if fw14_rc == 0:
+        sys.exit(f"FAIL: FW-14 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The stub gate "
+                 f"didn't bypass the close_no_reconnect invariant. "
+                 f"Output:\n{fw14_out}")
+    if WS_CLOSE_GUARD_BITE_PROOF_KEYWORD not in fw14_out:
+        sys.exit(f"FAIL: FW-14 stub build output does not "
+                 f"contain the literal '{WS_CLOSE_GUARD_BITE_PROOF_KEYWORD}':\n{fw14_out}")
+    if "test_pass12_clean_close_must_not_schedule" not in fw14_out:
+        sys.exit(f"FAIL: FW-14 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw14_out}")
+    print(f"OK: FW-14 stub build → guard tripped on "
+          f"'{WS_CLOSE_GUARD_BITE_PROOF_KEYWORD}' invariant as expected "
+          f"(test failed with rc={fw14_rc}).")
 
     print()
     print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 + FW-10 + FW-11 + FW-13 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
