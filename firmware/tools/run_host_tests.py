@@ -389,6 +389,10 @@ ALL_TESTS = [
     "test_fw10_1_grab_mode_is_when_empty [fw-10.1][row-5]",
     "test_fw10_1_xclk_freq_is_10mhz [fw-10.1][row-6]",
     "test_fw10_1_ai_thinker_pin_map [fw-10.1][pin-map]",
+    # FW-10.2 — PSRAM presence assertion + PSRAM_REQUIRED
+    # typed-error (S1 green + S2 typed-error path).
+    "test_fw10_2_psram_present_allows_init [fw-10.2][scenario-S1][green]",
+    "test_fw10_2_psram_absent_logs_required_and_fails [fw-10.2][scenario-S2]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -507,6 +511,10 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_wifi_event_guard.c'),
     # FW-10.1 — camera_init applies PRD § FR-2 parameter table.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_init.c'),
+    # FW-10.2 — PSRAM presence assertion + PSRAM_REQUIRED
+    # typed-error. 2 scenarios: present allows init; absent
+    # logs PSRAM_REQUIRED + returns ESP_FAIL.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_psram.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
