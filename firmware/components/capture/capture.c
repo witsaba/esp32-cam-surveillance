@@ -38,8 +38,6 @@
 #include "mock_esp_camera_link.h"
 #include "mock_supervision_record.h"
 #include "mock_init_returns.h"
-#include "boot_priq.h"
-#include "boot.h"
 #else
 /* Device — link the real esp32-camera managed component
  * via REQUIRES in the component CMakeLists.txt. */
@@ -48,6 +46,9 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #endif
+
+#include "boot_priq.h" /* BOOT_TASK_STACK_SUPERVISION + BOOT_TASK_PRIO_SUPERVISION */
+#include "boot.h"
 
 #define TAG "capture"
 
@@ -96,7 +97,7 @@ void capture_counters_reset_for_test(void)
  * implement the same shape on device but operate on a
  * real xQueueHandle through the same slots[].
  */
-bool capture_queue_send_drop_on_full(capture_queue_t *q, camera_fb_t *fb)
+bool capture_queue_send_drop_on_full(capture_queue_t *q, void *fb)
 {
     if (!q || !fb) return false;
     if (q->count >= MOCK_CAPTURE_QUEUE_DEPTH) {
@@ -119,7 +120,7 @@ bool capture_queue_send_drop_on_full(capture_queue_t *q, camera_fb_t *fb)
 void capture_loop_iteration(capture_queue_t *q, capture_counters_t *c)
 {
     if (!q || !c) return;
-    camera_fb_t *fb = (camera_fb_t *)esp_camera_fb_get();
+    void *fb = esp_camera_fb_get();
     if (!fb) return; /* driver not ready — retry next tick */
 
     /* FW-11.5 closing-check log: at the first fb_get, log
@@ -127,23 +128,38 @@ void capture_loop_iteration(capture_queue_t *q, capture_counters_t *c)
      * can grep for the literal "psram_before=<N> psram_after=<M>"
      * and confirm the frame buffer landed in PSRAM
      * (MALLOC_CAP_SPIRAM), not internal SRAM. Mirrors the
-     * FW-10.4 "psram_size=<N> bytes" log pattern. */
+     * FW-10.4 "psram_size=<N> bytes" log pattern.
+     *
+     * The .len access requires the real camera_fb_t struct
+     * definition. On host this comes from mock_esp_camera.h
+     * (already included via mock_esp_camera_link.h); on
+     * device from esp_camera.h (already included above).
+     * We cast through the appropriate pointer type. */
+#ifdef UNITY_HOST_BUILD
+    /* Host — use the mock's struct definition. */
+    extern size_t heap_caps_get_free_size(uint32_t caps);
+    camera_fb_t *fb_host = (camera_fb_t *)fb;
     if (g_capture_counters.frames_captured == 0 &&
         g_capture_counters.fb_drops == 0) {
-        /* Only log on the very first successful frame
-         * (frames_captured == 0 BEFORE we increment). We
-         * already have `fb` in hand at this point, so the
-         * "before" measurement is the pre-allocation size
-         * and the "after" is the post-allocation size
-         * (which the mock has already decremented inside
-         * mock_esp_camera_fb_get). */
-        extern size_t heap_caps_get_free_size(uint32_t caps);
         size_t psram_before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM)
-                              + fb->len;
+                              + fb_host->len;
         size_t psram_after  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
         ESP_LOGI(TAG, "psram_before=%u psram_after=%u",
                  (unsigned)psram_before, (unsigned)psram_after);
     }
+#else
+    /* Device — use the real esp32-camera struct definition. */
+    extern size_t heap_caps_get_free_size(uint32_t caps);
+    camera_fb_t *fb_dev = (camera_fb_t *)fb;
+    if (g_capture_counters.frames_captured == 0 &&
+        g_capture_counters.fb_drops == 0) {
+        size_t psram_before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM)
+                              + fb_dev->len;
+        size_t psram_after  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        ESP_LOGI(TAG, "psram_before=%u psram_after=%u",
+                 (unsigned)psram_before, (unsigned)psram_after);
+    }
+#endif
 
     if (!capture_queue_send_drop_on_full(q, fb)) {
         esp_camera_fb_return(fb);

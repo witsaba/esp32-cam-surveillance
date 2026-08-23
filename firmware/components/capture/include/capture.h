@@ -60,13 +60,13 @@ void capture_counters_reset_for_test(void);
  * driver xQueueCreate(2, sizeof(camera_fb_t*)) depth. */
 #define MOCK_CAPTURE_QUEUE_DEPTH 2
 
-/* camera_fb_t forward declaration — the full typedef lives
- * inside mock_esp_camera.h on host and the real esp_camera.h
- * on device. Both declare it as `typedef struct camera_fb_s
- * { ... } camera_fb_t;`, so this header's forward-declaration
- * uses the same tag to avoid a "typedef redefinition" error
- * when capture.h is included alongside either backend. */
-typedef struct camera_fb_s camera_fb_t;
+/* camera_fb_t — we DON'T typedef it here to avoid the
+ * "conflicting types" error when this header is compiled
+ * alongside either mock_esp_camera.h (host) or esp_camera.h
+ * (device). The public API takes a `void *` parameter; the
+ * implementation casts internally. Callers that need to
+ * access fields (test fixtures stack-allocating a frame)
+ * include the backend header directly. */
 
 /* capture_queue_t — opaque wrapper. On device wraps
  * xQueueHandle; on host a {static slots[2] + head/tail}. The
@@ -91,8 +91,13 @@ typedef struct {
  * Returns true if enqueued (slot available), false if
  * dropped (queue full). The pure caller is responsible for
  * returning the buffer + bumping fb_drops on the false
- * branch — this function is purely a queue op. */
-bool capture_queue_send_drop_on_full(capture_queue_t *q, camera_fb_t *fb);
+ * branch — this function is purely a queue op.
+ *
+ * `fb` is declared as `void *` here because the real
+ * `camera_fb_t` typedef differs between host (mock_esp
+ * _camera.h) and device (esp_camera.h). The implementation
+ * casts internally. */
+bool capture_queue_send_drop_on_full(capture_queue_t *q, void *fb);
 
 /* capture_loop_iteration — ONE iteration of the capture
  * loop: esp_camera_fb_get → optional drop-on-full →
