@@ -514,6 +514,10 @@ ALL_TESTS = [
     # only the bite-proof body) so we count both here.
     "test_pass1_green_url_has_no_mac [fw-13.4][url-guard][scenario-S1]",
     "test_pass11_mac_injected_url_rejected_disabled [fw-13.4][url-guard][scenario-S2][disabled]",
+    # FW-13.5 — status cadence (T-13-G). 2 scenarios from
+    # REQ-WS-005 S1+S2.
+    "test_status_cadence_3_frames_in_90s [fw-13.5][status-cadence][scenario-S1]",
+    "test_status_cadence_0_frames_when_disconnected [fw-13.5][status-cadence][scenario-S2]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -680,6 +684,9 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # 1 Pass 11 bite-proof test, both in the same file with
     # #ifdef WS_TEST_STUB_INJECT_MAC_INTO_URL guards.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_url_guard.c'),
+    # FW-13.5 — status frame cadence (T-13-G). 2 scenarios:
+    # 3 frames in 90 s + 0 frames when disconnected.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_status_cadence.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard

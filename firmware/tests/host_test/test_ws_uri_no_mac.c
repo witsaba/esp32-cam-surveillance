@@ -39,7 +39,9 @@
 
 #ifdef UNITY_HOST_BUILD
 #include "mock_esp_websocket_client.h"
+#include "mock_esp_event.h"
 #include "mock_nvs_flash_link.h"
+#include "mock_esp_system.h"
 #include "mock_esp_system_link.h"
 #include "mock_init_returns.h"
 #endif
@@ -68,6 +70,9 @@ static void reset_state(void)
      * never called, the URI stays NULL). */
     mock_init_returns_reset();
     mock_esp_websocket_client_reset_for_test();
+    /* Reset event-mock slot table to prevent NO_MEM under
+     * accumulated subscriptions from prior tests. */
+    mock_esp_event_reset();
     /* Reset the ws component's install idempotency flag so
      * subsequent ws_init calls re-register handlers (the mock
      * resets its handler table on each _init call). */

@@ -33,6 +33,7 @@
 
 #ifdef UNITY_HOST_BUILD
 #include "mock_esp_websocket_client.h"
+#include "mock_esp_event.h"
 #include "mock_nvs_flash_link.h"
 #include "mock_esp_system.h"
 #include "mock_esp_system_link.h"
@@ -50,6 +51,8 @@ static void reset_state(void)
 #ifdef UNITY_HOST_BUILD
     mock_init_returns_reset();
     mock_esp_websocket_client_reset_for_test();
+    /* Reset event-mock slot table to prevent NO_MEM. */
+    mock_esp_event_reset();
     ws_event_handler_reset_for_test();
     /* Disable the bite-proof gate for the green-path test. */
     mock_esp_websocket_client_set_inject_mac_into_url(false);
