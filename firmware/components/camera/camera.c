@@ -66,7 +66,13 @@
 #define CAMERA_PIN_HREF   23
 #define CAMERA_PIN_PCLK   22
 
-#define CAMERA_XCLK_FREQ_HZ  10000000
+#define CAMERA_XCLK_FREQ_HZ  20000000  /* FW-10 follow-up: 10 MHz → 20 MHz to match the
+                                          * rural_home_assistant reference (cam_reader.c:29).
+                                          * The AI-Thinker ESP32-CAM's OV2640 PLL locks more
+                                          * reliably at 20 MHz; at 10 MHz the sensor's XCLK
+                                          * divide is too low and the I2S DMA ring never
+                                          * fills (we observed "Failed to get frame: timeout"
+                                          * every 4.2 s on first device-flash with 10 MHz). */
 #define CAMERA_LEDC_CHANNEL  0
 
 /* Cached sensor_t pointer from the prior camera_init(). Resets
@@ -172,6 +178,10 @@ esp_err_t camera_init(const config_t *cfg)
         .frame_size   = CONFIG_FIRMWARE_CAMERA_FRAME_SIZE,
         .jpeg_quality = CONFIG_FIRMWARE_CAMERA_JPEG_QUALITY,
         .fb_count     = 1,
+        .fb_location  = CAMERA_FB_IN_PSRAM,  /* FW-10 follow-up: explicit. PRD § FR-2b
+                                              * mandates PSRAM-backed buffer; relying on the
+                                              * IDF default is fragile if the PSRAM check is
+                                              * ever weakened. Mirrors cam_reader.c:73. */
         .grab_mode    = CAMERA_GRAB_WHEN_EMPTY,
     };
 

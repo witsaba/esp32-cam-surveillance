@@ -27,6 +27,26 @@ static size_t    g_psram_size    = 4194304; /* 4 MB */
 static camera_config_t g_last_config;
 static int             g_last_captured = 0;
 
+/* ---------- FW-11 frame-buffer + heap-caps mock state ---------- */
+
+/* Static camera_fb_t instance. `mock_esp_camera_fb_get()` returns
+ * its address; `mock_esp_camera_fb_return()` clears the slot's
+ * `buf` pointer so subsequent calls return the same struct again
+ * (mirrors the real driver's fb_count=1 ownership semantics
+ * where only ONE buffer is in-flight at a time). */
+static camera_fb_t  g_fb;
+static int          g_fb_get_count   = 0;
+static bool         g_fb_return_flag = false;
+static size_t       g_fb_size        = 11520; /* QVGA JPEG default */
+
+/* heap_caps_get_free_size() mock state — primable per-cap. The
+ * FW-11.5 closing check asserts PSRAM decreases by `g_fb_size`
+ * (11520 bytes) after the first fb_get, mimicking the real
+ * allocator's heap_caps_malloc(MALLOC_CAP_SPIRAM) path. */
+static uint32_t     g_caps_free_spiram   = 4000000;
+static uint32_t     g_caps_free_internal = 200000;
+static int          g_fb_alloc_count     = 0; /* increments per fb_get */
+
 /* ---------- sensor_t sentinel + setter ring buffer ---------- */
 
 static sensor_t g_sensor_sentinel;
@@ -167,6 +187,15 @@ void mock_esp_camera_reset(void)
     memset(&g_last_config, 0, sizeof(g_last_config));
     g_last_captured = 0;
 
+    /* Reset FW-11 frame-buffer + heap-caps mock state. */
+    memset(&g_fb, 0, sizeof(g_fb));
+    g_fb_get_count     = 0;
+    g_fb_return_flag   = false;
+    g_fb_size          = 11520;
+    g_caps_free_spiram   = 4000000;
+    g_caps_free_internal = 200000;
+    g_fb_alloc_count     = 0;
+
     /* Wire the sensor sentinel's setter slots. We initialize ALL
      * the slots FW-10 uses (mirroring the real esp32-camera
      * sensor_t layout) so production source compiled unchanged
@@ -236,4 +265,55 @@ bool mock_esp_psram_is_initialized(void)
 size_t mock_esp_psram_get_size(void)
 {
     return g_psram_size;
+}
+
+/* ---------- FW-11 frame-buffer + heap-caps mock targets ---------- */
+
+int  mock_esp_camera_fb_get_call_count(void)   { return g_fb_get_count; }
+bool mock_esp_camera_fb_return_was_called(void) { return g_fb_return_flag; }
+void mock_esp_camera_fb_size_set(size_t len)    { g_fb_size = len; }
+void mock_esp_camera_heap_caps_set(uint32_t spiram, uint32_t internal)
+{
+    g_caps_free_spiram   = spiram;
+    g_caps_free_internal = internal;
+}
+
+camera_fb_t *mock_esp_camera_fb_get(void)
+{
+    g_fb_get_count++;
+    g_fb_alloc_count++;
+    /* Populate the static fb each call — buf is non-NULL to
+     * signal "got a frame", len = g_fb_size (default 11520). */
+    g_fb.buf     = (uint8_t *)0x1000; /* sentinel non-NULL */
+    g_fb.len     = g_fb_size;
+    g_fb.width   = 320;
+    g_fb.height  = 240;
+    g_fb.format  = PIXFORMAT_JPEG;
+    g_fb.fb_count = 1;
+    /* Each successful fb_get decreases PSRAM free size by the
+     * frame-buffer allocation. Mirrors the FW-10 device-verify
+     * log "cam_hal: Allocating 11520 Byte frame buffer in
+     * PSRAM". */
+    if (g_caps_free_spiram >= g_fb_size) {
+        g_caps_free_spiram -= g_fb_size;
+    }
+    return &g_fb;
+}
+
+void mock_esp_camera_fb_return(camera_fb_t *fb)
+{
+    (void)fb;
+    g_fb_return_flag = true;
+    /* The real driver would return the buffer to its free
+     * pool; on host we just clear the buf slot so the next
+     * fb_get() returns the same struct again (matches
+     * fb_count=1 semantics). */
+    g_fb.buf = NULL;
+}
+
+size_t mock_esp_camera_heap_caps_get_free_size(uint32_t caps)
+{
+    if (caps & MALLOC_CAP_SPIRAM)   return g_caps_free_spiram;
+    if (caps & MALLOC_CAP_INTERNAL) return g_caps_free_internal;
+    return 0;
 }

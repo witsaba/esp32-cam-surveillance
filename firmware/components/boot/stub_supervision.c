@@ -59,21 +59,6 @@ esp_err_t health_task_start(void) {
     return ESP_OK;
 }
 
-esp_err_t capture_task_start(void) {
-#ifdef UNITY_HOST_BUILD
-    esp_err_t forced = mock_init_returns_get(BOOT_STEP_SUPERVISION_CAPTURE);
-    if (forced != ESP_OK) return forced;
-    mock_supervision_record("capture");
-#endif
-    ESP_LOGI(TAG, "stub: capture_task_start  // FW-11: real impl lands in capture task");
-#ifndef UNITY_HOST_BUILD
-    xTaskCreate(stub_task_body, "stub_capture",
-                BOOT_TASK_STACK_SUPERVISION, NULL,
-                BOOT_TASK_PRIO_SUPERVISION, NULL);
-#endif
-    return ESP_OK;
-}
-
 esp_err_t stream_task_start(void) {
 #ifdef UNITY_HOST_BUILD
     esp_err_t forced = mock_init_returns_get(BOOT_STEP_SUPERVISION_STREAM);

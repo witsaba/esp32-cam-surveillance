@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """run_host_tests.py — host-side Unity test runner for FW-02, FW-03,
-FW-05, FW-06, FW-07, FW-08, and FW-10.
+FW-05, FW-06, FW-07, FW-08, FW-10, and FW-11.
 
 Builds and runs the in-tree host tests against the in-memory
-mock surface. Nine compile passes:
+mock surface. Ten compile passes:
 
   Pass 1 — production build (no stub flags): all FW-02/FW-03/FW-05
-           + FW-06 + FW-07 + FW-08 + FW-10 tests must pass (current
-           count: 91 — 89 baseline + 2 FW-10.1 + 2 FW-10.2 +
-           1 FW-10.3 green — FW-10.4 + FW-10.5 to be added in
-           WU-4 and WU-5).
+           + FW-06 + FW-07 + FW-08 + FW-10 + FW-11 tests must pass
+           (current count: 101 — 89 baseline + 7 FW-10 +
+           5 FW-11 capture-loop + 1 FW-11 getter).
 
   Pass 2 — stub build (-DCONFIG_TEST_STUB_VERSION_CHECK): the FW-02.3
            bite-proof MUST FAIL with 'schema_version' in the message.
@@ -40,7 +39,12 @@ mock surface. Nine compile passes:
 
   Pass 9 — stub build (-DCAMERA_TEST_STUB_REINIT): the FW-10.3
            no-reinit guard's bite-proof MUST FAIL with 'no_reinit'
-           in the message. Wired in this PR.
+           in the message.
+
+  Pass 10 — stub build (-DCAPTURE_TEST_STUB_SECOND_CALLER): the
+           FW-11.3 single-owner guard's bite-proof MUST FAIL
+           with 'single_owner' in the message. Wired in this
+           PR (FW-11 apply cycle).
 
 Exits 0 only when all passes satisfy their expected outcomes.
 Exits 1 on any unexpected pass/fail pattern (regression in either
@@ -133,6 +137,8 @@ def _common_cflags(extra_defines):
         f'-I{PROJECT_DIR}/components/wifi/include',
         # FW-10 — camera component public headers.
         f'-I{PROJECT_DIR}/components/camera/include',
+        # FW-11 — capture component public headers.
+        f'-I{PROJECT_DIR}/components/capture/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
         # FW-08 — Kconfig mirrors for the host build (the device
@@ -195,6 +201,8 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_softap.c'),
         # FW-10 — esp32-camera mock triplet.
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_camera.c'),
+        # FW-11 — capture component (pure loop body + FreeRTOS wrapper).
+        os.path.join(PROJECT_DIR, 'components', 'capture', 'capture.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
@@ -410,6 +418,27 @@ ALL_TESTS = [
     "test_fw10_5_no_stored_blob_uses_kconfig_defaults_once [fw-10.5][scenario-S2]",
     "test_fw10_5_stored_blob_overrides_kconfig_defaults [fw-10.5][scenario-S1][walking-skeleton]",
     "test_fw10_5_stored_via_setters_not_reinit [fw-10.5][scenario-S3]",
+    # FW-11.1 — capture task produces frames at the requested
+    # fps. S1 (5 fps sustained) + S2 (1 fps sustained).
+    "test_fw11_1_five_fps_five_iterations_yield_five_frames [fw-11.1][scenario-S1][green]",
+    "test_fw11_1_one_fps_single_iteration_yields_one_frame [fw-11.1][scenario-S2]",
+    # FW-11.2 — drop-on-overflow + counter. S3 (full queue drop)
+    # + S4 (100 frames no stall) + S5 (getters return values).
+    "test_fw11_2_full_queue_drops_frame_and_returns_buffer [fw-11.2][scenario-S3]",
+    "test_fw11_2_one_hundred_frames_no_stall [fw-11.2][scenario-S4]",
+    "test_fw11_2_getters_return_counter_values [fw-11.2][getters]",
+    # FW-11.3 — single-owner guard. Green path on production
+    # build; bite-proof runs under Pass 10 stub.
+    "test_fw11_3_capture_task_start_records_supervision [fw-11.3][scenario-S1][green]",
+    # FW-11.4 — 30 s soak (loop-count semantics on host). S1
+    # (150 iterations = 2 captured + 148 drops) + S2 (heap
+    # bounded).
+    "test_fw11_4_one_fifty_iterations_yield_one_fifty_attempts [fw-11.4][scenario-S1][green]",
+    "test_fw11_4_heap_stays_bounded_over_soak [fw-11.4][scenario-S2][green]",
+    # FW-11.5 — PSRAM heap-metrics closing check. 1 scenario:
+    # PSRAM decreased by frame-buffer allocation after first
+    # fb_get().
+    "test_fw11_5_psram_heap_decreases_by_frame_buffer_allocation [fw-11.5][scenario-S1][green]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -542,6 +571,23 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # Kconfig defaults; no stored blob uses Kconfig once;
     # stored applied via setters (no reinit).
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_settings_fake.c'),
+    # FW-11.1/11.2 — capture-loop production + drop-on-overflow.
+    # 4 scenarios: 5 fps sustained, 1 fps sustained, full queue
+    # drop, 100 frames no stall.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_capture_loop.c'),
+    # FW-11.3 — single-owner guard. Compiles the green-path
+    # test under the production build; the bite-proof test is
+    # compiled under the Pass 10 stub build (see
+    # FW11_3_GUARD_TEST_FILES below). The #ifdef inside the
+    # file selects which one is compiled into each build.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_capture_guard.c'),
+    # FW-11.4 — 30 s soak (loop-count semantics on host). 2
+    # scenarios: 150 iterations + heap bounded.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_capture_soak.c'),
+    # FW-11.5 — PSRAM heap-metrics closing check. 1 scenario:
+    # PSRAM decreased by frame-buffer allocation after first
+    # fb_get().
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_capture_heap.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
@@ -601,6 +647,24 @@ FW10_3_GUARD_TEST_FILES = [
 # TEST_FAIL_MESSAGE so Pass 9 of run_host_tests.py can grep
 # for it.
 CAMERA_BITE_PROOF_KEYWORD = "no_reinit"
+
+# FW-11.3 — Pass 10 stub build includes ONLY the FW-11.3
+# guard file. The build defines -DCAPTURE_TEST_STUB_SECOND
+# _CALLER=1 so capture_task_start() short-circuits into
+# capture_guard_fail_single_owner() with the literal
+# "single_owner" in TEST_FAIL_MESSAGE. Mirrors Pass 9
+# (CAMERA_TEST_STUB_REINIT) shape exactly. The green-path
+# test in test_capture_guard.c is excluded by the
+# `#ifndef CAPTURE_TEST_STUB_SECOND_CALLER` inside the file.
+FW11_3_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_capture_guard.c'),
+]
+
+# Pass-10 keyword + bite-proof test marker. The literal
+# substring "single_owner" must appear in the guard tripwire's
+# TEST_FAIL_MESSAGE so Pass 10 of run_host_tests.py can grep
+# for it.
+CAPTURE_BITE_PROOF_KEYWORD = "single_owner"
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
 # green-path test in that file is guarded by `#ifndef
@@ -1033,8 +1097,42 @@ def main():
           f"'{CAMERA_BITE_PROOF_KEYWORD}' invariant as expected "
           f"(test failed with rc={fw10_3_rc}).")
 
+    # ----- Pass 10: FW-11.3 single-owner invariant stub build -----
+    # Compile test_capture_guard.c (and capture.c) with
+    # -DCAPTURE_TEST_STUB_SECOND_CALLER=1 so capture_task_start()
+    # short-circuits into capture_guard_fail_single_owner() with
+    # the literal "single_owner" in TEST_FAIL_MESSAGE. Pass 10
+    # expects:
+    #   - rc != 0 (TEST_FAIL_MESSAGE exits non-zero)
+    #   - literal "single_owner" present in stdout (from the
+    #     test's marker line + the TEST_FAIL_MESSAGE body)
+    #   - "guard_bite_proof_single_owner_rejected" test name in
+    #     stdout so the runner can match it to the expected
+    #     bite-proof.
+    # Mirrors Pass 9 (CAMERA_TEST_STUB_REINIT) shape exactly.
     print()
-    print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
+    print("=== Pass 10: FW-11.3 stub build (CAPTURE_TEST_STUB_SECOND_CALLER, guard file) ===")
+    fw11_3_bin = _build('fw11_3_tests_stub',
+                        ['-DCAPTURE_TEST_STUB_SECOND_CALLER=1'],
+                        FW11_3_GUARD_TEST_FILES, workdir)
+    fw11_3_rc, fw11_3_out = _run_binary(fw11_3_bin)
+    if fw11_3_rc == 0:
+        sys.exit(f"FAIL: FW-11.3 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The stub gate "
+                 f"didn't bypass the single_owner invariant. "
+                 f"Output:\n{fw11_3_out}")
+    if CAPTURE_BITE_PROOF_KEYWORD not in fw11_3_out:
+        sys.exit(f"FAIL: FW-11.3 stub build output does not "
+                 f"contain the literal '{CAPTURE_BITE_PROOF_KEYWORD}':\n{fw11_3_out}")
+    if "guard_bite_proof_single_owner_rejected" not in fw11_3_out:
+        sys.exit(f"FAIL: FW-11.3 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw11_3_out}")
+    print(f"OK: FW-11.3 stub build → guard tripped on "
+          f"'{CAPTURE_BITE_PROOF_KEYWORD}' invariant as expected "
+          f"(test failed with rc={fw11_3_rc}).")
+
+    print()
+    print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 + FW-10 + FW-11 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
     print(f"workdir kept at {workdir} for debugging; safe to rm -rf.")
 
 

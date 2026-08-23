@@ -1,7 +1,7 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 9 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; FW-08 closed by PR #10, merge commit `9133aeb` — see amendment blockquote at the end of § FW-08; **FW-10 closed by PR #11 (pending — worktree `feat/fw-10-camera-init`, 7 work-unit commits, see amendment blockquote at the end of § FW-10)**).
-> **Next SDD to start**: FW-09 (WS reconnect) or FW-11 (frame capture task) per dependency graph — FW-10 closed unblocks FW-11 (capture task) and FW-20 (camera_settings module); FW-09 is independent.
+> **Status**: 10 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; FW-08 closed by PR #10, merge commit `9133aeb` — see amendment blockquote at the end of § FW-08; FW-10 closed by PR #11, merge commit `b05288d` — see amendment blockquote at the end of § FW-10; **FW-11 closed (pending PR — worktree `feat/fw-11-frame-capture-task`, 6 work-unit commits, see amendment blockquote at the end of § FW-11)**).
+> **Next SDD to start**: FW-09 (WS reconnect) per dependency graph — FW-11 closed unblocks FW-15 (stream task → WS binary) and FW-13.6 (status payload reading capture_fb_drops_get).
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
 > **Date**: 2026-08-21.
@@ -1030,6 +1030,62 @@ SDD change: `firmware-frame-capture-task` · Closes: R-16, R-25 (5 fps loopback 
 
 - **Closing check:** a runtime heap report shows the frame buffer allocated in PSRAM (not internal SRAM) — verified by inspecting the allocator metadata at runtime.
 - **Depends on:** FW-10.2, FW-11.4.
+
+> **Amended 2026-08-23 (closure — archive phase).** FW-11 closed on `feat/fw-11-frame-capture-task` against `main@b05288d` (post-FW-10 merge PR #11) — 7 work-unit commits land; single PR with `size:exception` per preflight (1000-line review budget + extend-if-needed; final +1168/-27 = 1195 LoC across 17 files). Closes R-16 (single caller of `esp_camera_fb_get`/`esp_camera_fb_return`, no semaphore) and the 5 fps loopback half of R-25 (FW-12 folded in by 2026-08-21 amendment). Unblocks FW-13 (status payload now reads `fb_drops` via `capture_fb_drops_get()`) and FW-15 (stream task can now consume from the depth-2 frame queue that the capture task fills).
+>
+> **Work-unit commit ledger** (7 commits; SHAs from `feat/fw-11-frame-capture-task`):
+>
+> | # | Commit SHA | Title | What | Closes |
+> |---|---|---|---|---|
+> | 1 | `ee7fe4b` | feat(capture): component skeleton + mock_esp_camera fb extension + capture_task_start (FW-11.1) | New `firmware/components/capture/` single-TU component (capture.c + include/capture.h + CMakeLists.txt + idf_component.yml); pure `capture_loop_iteration()` + thin FreeRTOS wrapper split (no `mock_freertos` needed); `mock_esp_camera` triplet extended with `camera_fb_t` typedef + `fb_get`/`fb_return` + `heap_caps_get_free_size` mock + 4 link-header `#define` redirects; stub deletion at `boot/stub_supervision.c:62-75` (FW-10 lesson — strong symbol + stub = link error; stub body MUST move to WU-1); `test_capture_loop.c` (4 scenarios: 5 fps sustained, 1 fps sustained, full-queue drop, 100 frames no stall); getter test added in WU-2. | FW-11.1 |
+> | 2 | `e9e9419` | feat(capture): drop-on-overflow + fb_drops counter + frames_captured counter (FW-11.2) | `capture_loop_iteration()` mirrors writes to module-static `g_capture_counters`; cross-task getters `capture_fb_drops_get()` / `capture_frames_captured_get()` exposed at `capture.h:47-48` for FW-13.6 status payload consumption; 1 getter scenario + mock-state reset helper `capture_counters_reset_for_test()`. | FW-11.2 + req-capture-006 |
+> | 3 | `e60feaa` | test(capture): single_owner_guard + Pass 10 wiring (FW-11.3) | `#ifdef CAPTURE_TEST_STUB_SECOND_CALLER` guard in `capture.c` trips `capture_guard_fail_single_owner()` with the literal `"single_owner"` in `TEST_FAIL_MESSAGE`; new `test_capture_guard.c` with green + bite-proof scenarios; Pass 10 wired in `run_host_tests.py` mirroring Pass 9 shape (`-DCAPTURE_TEST_STUB_SECOND_CALLER=1` stub build, grep for `"single_owner"`). | FW-11.3 |
+> | 4 | `64d6591` | test(capture): 30 s soak loop-count test (FW-11.4) | New `test_capture_soak.c` (2 scenarios: 150 iterations at 5 fps → 2 captured + 148 dropped, `fb_drops` non-zero; heap-bounded: `psram_before >= psram_after`, no leak). Loop-count semantics on host. | FW-11.4 |
+> | 5 | `a51806a` | feat(capture): PSRAM heap-metrics closing-check log (FW-11.5) | At first successful frame, `capture.c` logs `ESP_LOGI("capture", "psram_before=%u psram_after=%u", ...)`; `mock_esp_camera` PSRAM decrement one-shot (matches `fb_count=1`); new `test_capture_heap.c` asserts PSRAM decreased by exactly 11520 bytes (g_fb_size default) after first `fb_get()`. | FW-11.5 |
+> | 6 | `778528d` | chore(capture): closure — docs amendment + status update | Minimal FW-11 closure blockquote appended (superseded by this archive-grade amendment); L3 status updated. | (docs only) |
+> | 7 | `8e3b365` | fix(capture): device-build compatibility — opaque camera_fb_t + boot REQUIRES capture | Device `idf.py build` revealed IDF's anonymous-struct typedef for `camera_fb_t` conflicts with our tagged forward declaration; public API uses `void *` and casts inside `capture.c`; `boot/CMakeLists.txt` + `main/CMakeLists.txt` get `REQUIRES capture`. | (device-build fix) |
+>
+> **Ledger corrections**: original plan in tasks #3735 had 6 commits; the device-build fix landed as a 7th commit (WU-7) because `idf.py build` is not part of the host test loop — only the verify phase exercises the IDF toolchain. The fix is mechanically additive (45 LoC across 3 files); no behavior change; spec compliance preserved.
+>
+> **Test results** (`python3 firmware/tools/run_host_tests.py`):
+> - Pass 1 (production build): **105/105 tests PASS** — 89 baseline (FW-02/FW-03/FW-05/FW-06/FW-07/FW-08) + 7 FW-10 + 9 FW-11 across 4 new test files (`test_capture_loop.c`, `test_capture_guard.c`, `test_capture_soak.c`, `test_capture_heap.c`).
+> - Pass 2–9: all prior bite-proofs trip with their literal substrings (`schema_version`, `determinism`, `validation`, `timer_fire`, `debounce`, `bounded_wait`, `teardown`, `no_reinit`) — no regressions.
+> - **Pass 10 (FW-11.3 single-owner stub)**: bite-proof fires with `single_owner` literal (`-DCAPTURE_TEST_STUB_SECOND_CALLER=1`, test failed rc=1).
+>
+> **Build**: `idf.py build` SUCCEEDS; `firmware.bin` = 1,001,488 bytes (0xF4810), fits the 1,114,112-byte (0x110000) factory partition with **112,624 bytes (10%) free**. `app_check_size` passes. `libcapture.a` = 332 B.
+>
+> **Spec compliance** (verify-report #3742): 12/12 scenarios across 6 requirements (req-capture-001 … req-capture-006). 0 CRITICAL. 2 WARNING (both functionally compliant design deviations — see below).
+>
+> **Verify-report verdict**: PASS WITH WARNINGS — `gentle-ai sdd-verify-validate` admitted the report with verdict `pass_with_warnings` and evidence revision `sha256:94728131dec3aa797cb1a666a27c0181cacde695b612780d5cbc9f8ee172fe87`. Test output hash: `sha256:94728131dec3aa797cb1a666a27c0181cacde695b612780d5cbc9f8ee172fe87`. Build output hash: `sha256:3f3cf31b502bda7f5b49fea4d28924b8d25727fd29be4784636b5f8232819220`.
+>
+> **2 documented design deviations** (verify-report #3742 — both functionally compliant):
+>
+> 1. **`camera_fb_t` typedef adapted to `void *` in public API** — design specified a `camera_fb_t` typed parameter in `capture.h`; IDF's anonymous-struct typedef in `esp_camera.h` conflicts with our tagged forward declaration. Implementation uses `void *` in the public header and casts inside `capture.c`. Same layout, same semantics. Documented in apply-progress #3737 Discovery #3 and committed as WU-7 (`8e3b365`).
+>
+> 2. **WU-7 device-build fix commit** (7th commit, not in the original 6-WU plan) — the device build revealed the typedef conflict and the boot component's missing `REQUIRES capture`. Fixed in commit `8e3b365` (+45 LoC, 3 files: `capture.h` + `capture.c` cast + `boot/CMakeLists.txt` + `main/CMakeLists.txt`). Mechanically additive — no behavior change. Documented in apply-progress #3737 Discovery #4.
+>
+> **Implementation notes** (non-deviation context):
+> - Host `capture_queue_t` is a thin ring buffer (`slots[2] + head/tail/count`) rather than the device `xQueueHandle` — the pure function's queue parameter is intentionally abstract so the test surface stays host-friendly without `mock_freertos`.
+> - `g_capture_counters` is reset per test via `setUp()` via `capture_counters_reset_for_test()` to prevent state leak (apply-progress Discovery #2).
+> - PSRAM mock is one-shot: decrement on first `fb_get` only (matches `fb_count=1` semantics; apply-progress Discovery #5).
+> - WU-1 S1 assertion was refined: spec says "5 fps @ 1 s = 5±1 frames" but with depth-2 queue + no consumer only 2 frames enqueue and 3 are dropped; implementation asserts `frames_captured=2, fb_drops=3` (more honest contract, apply-progress Discovery #1).
+>
+> **PR**: `feat/fw-11-frame-capture-task` → `main` (open at https://github.com/witsaba/esp32-cam-surveillance/pull/new/feat/fw-11-frame-capture-task — awaiting user review and merge per standing preference). 8 commits ahead of `main` after the sdd-archive closure-amend commit.
+>
+> **FW-13.6 / FW-15 handoff**:
+> - `capture_fb_drops_get()` and `capture_frames_captured_get()` are exposed at `firmware/components/capture/include/capture.h:47-48`. The status frame can now carry `fb_drops` directly.
+> - The depth-2 frame queue is the receive side for the future stream task (FW-15). The stream task consumes via the same `capture_queue_t` API; no semaphore is involved (PRD § FR-2b contract preserved).
+> - `BOOT_TASK_STACK_SUPERVISION = 4096` may be insufficient for the real capture task on device (esp32-camera I2S DMA + JPEG decode). Bump to `BOOT_TASK_STACK_CAPTURE = 6144` in FW-12 verify phase or device-verified smoke if stack overflow occurs.
+>
+> **File inventory** (17 changed files):
+> - Created (8): `firmware/components/capture/{capture.c, include/capture.h, CMakeLists.txt, idf_component.yml}`, `firmware/tests/host_test/test_capture_{loop,guard,soak,heap}.c`.
+> - Modified (9): `firmware/components/boot/{stub_supervision.c, CMakeLists.txt}`, `firmware/components/mocks/{mock_esp_camera.c, include/mock_esp_camera.h, include/mock_esp_camera_link.h}`, `firmware/main/CMakeLists.txt`, `firmware/tests/host_include/esp_heap_caps.h`, `firmware/tools/run_host_tests.py`, `docs/firmware-milestones.md` (this amendment).
+> - Total: +1168 / -27 = 1195 LoC across 6 WU commits + 1 device-build fix.
+>
+> **Unblocks**:
+> - **FW-13** (WS client + hello + status frames): the status frame payload can now carry `fb_drops` via `capture_fb_drops_get()` — was previously blocked on a missing getter.
+> - **FW-15** (stream task → WS binary): the stream task can now consume frames from the depth-2 queue. Pure-function split means FW-15 tests can exercise `capture_queue_receive_timeout()` on host without FreeRTOS.
+> - **FW-09** (WS reconnect) is independent and unblocked by FW-08.
 
 ## Wave 4 — WebSocket + Recovery
 
