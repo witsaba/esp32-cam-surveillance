@@ -149,6 +149,23 @@ boot_status_t boot_run_normal(const config_t *cfg)
     } while (0)
 
     BOOT_CHECK_STEP(BOOT_STEP_WIFI_INIT,            wifi_init(cfg));
+
+    /* FW-05.5 — install the always-on /whoami listener on the STA
+     * interface. Subscribes IP_EVENT_STA_GOT_IP + DISCONNECTED but
+     * does NOT start the httpd here (waits for the first IP-up).
+     * Non-fatal on failure: log + continue so a subscription error
+     * doesn't brick the device (the softAP still serves /whoami
+     * during provisioning, so we don't lose the operator surface
+     * entirely). */
+    {
+        esp_err_t r_listener = softap_sta_listener_install();
+        if (r_listener != ESP_OK) {
+            ESP_LOGE(TAG, "softap_sta_listener_install failed: %s "
+                          "(continuing — softAP /whoami still works)",
+                          esp_err_to_name(r_listener));
+        }
+    }
+
     BOOT_CHECK_STEP(BOOT_STEP_CAMERA_INIT,          camera_init(cfg));
     BOOT_CHECK_STEP(BOOT_STEP_WS_INIT,              ws_init(cfg));
     BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_HEALTH,   health_task_start());

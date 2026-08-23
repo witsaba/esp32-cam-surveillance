@@ -52,6 +52,28 @@ esp_err_t softap_stop(void);
  * this to mock_softap_is_active_get(). */
 bool softap_is_active(void);
 
+/* FW-05.5 — install the always-on /whoami listener on the STA
+ * interface. Called once from boot.c after wifi_init() returns.
+ * Subscribes to IP_EVENT_STA_GOT_IP + IP_EVENT_STA_DISCONNECTED
+ * via wifi_event_subscribe. The actual httpd start fires on the
+ * first IP-up event (deferred — not all boots reach STA-IP-up
+ * because the provisioning branch takes the softAP path).
+ *
+ * Idempotent: the first call subscribes the handlers; subsequent
+ * calls (e.g., after a re-init) are a no-op. The FW-03 boot
+ * orchestrator calls this exactly once per process. */
+esp_err_t softap_sta_listener_install(void);
+
+/* FW-05.5 — test entry. Returns true while the STA-bound httpd
+ * is serving (i.e., the device is connected to a wifi network).
+ * On host, the link-header redirects to the mock equivalent. */
+bool softap_sta_listener_is_active(void);
+
+/* FW-05.5 — test entry. Clears module-static state between
+ * tests so the mock surface stays clean. Mirrors softap_stop()
+ * semantics. */
+void softap_sta_listener_reset_for_test(void);
+
 #ifdef __cplusplus
 }
 #endif

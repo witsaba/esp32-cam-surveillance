@@ -205,6 +205,9 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap.c'),
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_handlers.c'),
         os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_home.c'),
+        # FW-05.5 — STA-bound /whoami listener (always-on httpd on
+        # the station interface, started on IP_EVENT_STA_GOT_IP).
+        os.path.join(PROJECT_DIR, 'components', 'softap', 'softap_sta_listener.c'),
         os.path.join(PROJECT_DIR, 'components', 'led', 'led.c'),
         os.path.join(PROJECT_DIR, 'components', 'button', 'button.c'),
         # FW-08 — wifi component (connect driver + event handlers).
