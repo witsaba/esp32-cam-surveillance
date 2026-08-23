@@ -1,0 +1,7 @@
+## IDF Component Manager manifest for `firmware/components/capture`.
+##
+## Empty dependencies (FW-06 gotcha — managed components are
+## declared in firmware/main/idf_component.yml, NOT here). The
+## component CMakeLists.txt's REQUIRES directive handles the
+## link to the in-tree camera component.
+dependencies: {}

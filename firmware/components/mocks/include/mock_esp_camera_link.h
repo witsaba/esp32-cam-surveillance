@@ -18,7 +18,14 @@
 #define esp_camera_init(cfg)               mock_esp_camera_init(cfg)
 #define esp_camera_deinit()                mock_esp_camera_deinit()
 #define esp_camera_sensor_get()            mock_esp_camera_sensor_get()
+#define esp_camera_fb_get()                mock_esp_camera_fb_get()
+#define esp_camera_fb_return(fb)           mock_esp_camera_fb_return(fb)
 #define esp_psram_is_initialized()         mock_esp_psram_is_initialized()
 #define esp_psram_get_size()               mock_esp_psram_get_size()
+/* FW-11.5 — heap_caps_get_free_size() mock redirect.
+ * Production source includes this header BEFORE esp_heap_caps.h
+ * so the macro wins; on device the real IDF heap API is linked
+ * via the esp_hw_support managed component. */
+#define heap_caps_get_free_size(caps)      mock_esp_camera_heap_caps_get_free_size(caps)
 
 #endif  /* !MOCK_CAMERA_USE_REAL */

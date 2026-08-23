@@ -131,6 +131,44 @@ typedef struct {
 #define CAMERA_GRAB_WHEN_EMPTY 0
 #endif
 
+/* camera_fb_t — FW-11 mirror of esp32-camera's frame-buffer
+ * struct (managed_components/espressif__esp32-camera/driver/
+ * include/esp_camera.h). The mock holds a single static
+ * instance; `esp_camera_fb_get()` returns its address and
+ * `esp_camera_fb_return()` resets the slot so the next
+ * `fb_get()` returns the same struct again (matching the real
+ * driver's fb_count=1 ownership semantics). The FW-11.5
+ * closing check uses `.len` as the frame-buffer allocation
+ * size (11520 for QVGA JPEG per the FW-10 device-verify log
+ * at milestones L977).
+ *
+ * The struct uses a forward-declared tag (`struct camera_fb_s`)
+ * so the capture component's public header can declare an
+ * opaque forward-declaration without triggering a
+ * "typedef redefinition" error when both headers are
+ * included in the same TU. */
+struct camera_fb_s;
+typedef struct camera_fb_s {
+    uint8_t *buf;
+    size_t   len;
+    size_t   width;
+    size_t   height;
+    int      format;
+    int      fb_count;
+    void    *fb;
+    size_t   timestamp;
+} camera_fb_t;
+
+/* MALLOC_CAP_* mirrors for the heap_caps mock below (matches
+ * host_include/esp_heap_caps.h). Re-declared here so the
+ * mock header is self-contained. */
+#ifndef MALLOC_CAP_INTERNAL
+#define MALLOC_CAP_INTERNAL   (1 << 4)
+#endif
+#ifndef MALLOC_CAP_SPIRAM
+#define MALLOC_CAP_SPIRAM     (1 << 5)
+#endif
+
 /* ---------- primable return values ---------- */
 void mock_esp_camera_init_return_set(esp_err_t r);
 void mock_esp_camera_deinit_return_set(esp_err_t r);
@@ -171,6 +209,38 @@ sensor_t *mock_esp_camera_sensor_get(void);
  * `esp_psram_is_initialized()` to false. */
 bool      mock_esp_psram_is_initialized(void);
 size_t    mock_esp_psram_get_size(void);
+
+/* FW-11.1/11.2 frame-buffer mock targets. The static
+ * camera_fb_t returned by `mock_esp_camera_fb_get()` lives
+ * for the entire process; the next `fb_return()` resets the
+ * slot so a subsequent `fb_get()` returns the same struct
+ * (mirrors fb_count=1). */
+camera_fb_t *mock_esp_camera_fb_get(void);
+void         mock_esp_camera_fb_return(camera_fb_t *fb);
+/* FW-11.5 heap-caps mock target. The default PSRAM = 4000000
+ * and decreases by g_fb_size (11520 default) on each
+ * fb_get(); the FW-11.5 closing check asserts the delta. */
+size_t mock_esp_camera_heap_caps_get_free_size(uint32_t caps);
+
+/* ---------- FW-11 frame-buffer mock surface ---------- */
+/* Call counter for esp_camera_fb_get(); reset by
+ * mock_esp_camera_reset(). Used by the FW-11.1 fps scenarios
+ * to assert "exactly 5 frames produced in 5 iterations". */
+int  mock_esp_camera_fb_get_call_count(void);
+/* True iff mock_esp_camera_fb_return() was called since the
+ * last reset. Used by the FW-11.2 drop scenario to assert
+ * the dropped frame's buffer was returned to the driver. */
+bool mock_esp_camera_fb_return_was_called(void);
+/* Frame-buffer allocation size (the .len field of the static
+ * camera_fb_t). Defaults to 11520 (QVGA JPEG per FW-10
+ * device-verify log). Primable for FW-11.5 tests. */
+void mock_esp_camera_fb_size_set(size_t len);
+/* Primable heap_caps_get_free_size() return values. Defaults:
+ * PSRAM = 4000000 (4 MB), INTERNAL = 200000 (~195 KB). The
+ * FW-11.5 closing check asserts PSRAM decreases by the
+ * frame-buffer allocation size after the first fb_get. */
+void mock_esp_camera_heap_caps_set(uint32_t caps_free_spiram,
+                                   uint32_t caps_free_internal);
 
 #ifdef __cplusplus
 }

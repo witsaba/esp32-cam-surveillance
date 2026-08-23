@@ -39,4 +39,12 @@ static inline void heap_caps_free(void *ptr)
     free(ptr);
 }
 
+/* heap_caps_get_free_size — host stub. Production source
+ * includes this header ONLY via the mock_esp_camera_link.h
+ * macro-redirect, so the call site resolves to the mock
+ * triplet's `mock_esp_camera_heap_caps_get_free_size()`. We
+ * declare the prototype here so test files that call
+ * `heap_caps_get_free_size(caps)` directly compile. */
+size_t heap_caps_get_free_size(uint32_t caps);
+
 #endif /* HOST_ESP_HEAP_H */

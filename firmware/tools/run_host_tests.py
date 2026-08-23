@@ -133,6 +133,8 @@ def _common_cflags(extra_defines):
         f'-I{PROJECT_DIR}/components/wifi/include',
         # FW-10 — camera component public headers.
         f'-I{PROJECT_DIR}/components/camera/include',
+        # FW-11 — capture component public headers.
+        f'-I{PROJECT_DIR}/components/capture/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
         # FW-08 — Kconfig mirrors for the host build (the device
@@ -195,6 +197,8 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_softap.c'),
         # FW-10 — esp32-camera mock triplet.
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_camera.c'),
+        # FW-11 — capture component (pure loop body + FreeRTOS wrapper).
+        os.path.join(PROJECT_DIR, 'components', 'capture', 'capture.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
@@ -410,6 +414,14 @@ ALL_TESTS = [
     "test_fw10_5_no_stored_blob_uses_kconfig_defaults_once [fw-10.5][scenario-S2]",
     "test_fw10_5_stored_blob_overrides_kconfig_defaults [fw-10.5][scenario-S1][walking-skeleton]",
     "test_fw10_5_stored_via_setters_not_reinit [fw-10.5][scenario-S3]",
+    # FW-11.1 — capture task produces frames at the requested
+    # fps. S1 (5 fps sustained) + S2 (1 fps sustained).
+    "test_fw11_1_five_fps_five_iterations_yield_five_frames [fw-11.1][scenario-S1][green]",
+    "test_fw11_1_one_fps_single_iteration_yields_one_frame [fw-11.1][scenario-S2]",
+    # FW-11.2 — drop-on-overflow + counter. S3 (full queue drop)
+    # + S4 (100 frames no stall).
+    "test_fw11_2_full_queue_drops_frame_and_returns_buffer [fw-11.2][scenario-S3]",
+    "test_fw11_2_one_hundred_frames_no_stall [fw-11.2][scenario-S4]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -542,6 +554,10 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # Kconfig defaults; no stored blob uses Kconfig once;
     # stored applied via setters (no reinit).
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_camera_settings_fake.c'),
+    # FW-11.1/11.2 — capture-loop production + drop-on-overflow.
+    # 4 scenarios: 5 fps sustained, 1 fps sustained, full queue
+    # drop, 100 frames no stall.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_capture_loop.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
