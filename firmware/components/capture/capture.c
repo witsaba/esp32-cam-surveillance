@@ -233,9 +233,13 @@ esp_err_t capture_task_start(void)
 
     ESP_LOGI(TAG, "capture_task_start: spawn FreeRTOS capture loop @ 5 fps");
 #ifndef UNITY_HOST_BUILD
-    xTaskCreate(capture_task_entry, "capture",
-                BOOT_TASK_STACK_SUPERVISION, NULL,
-                BOOT_TASK_PRIO_SUPERVISION, NULL);
+    BaseType_t ret = xTaskCreate(capture_task_entry, "capture",
+                                 BOOT_TASK_STACK_SUPERVISION, NULL,
+                                 BOOT_TASK_PRIO_SUPERVISION, NULL);
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "xTaskCreate failed: ret=%d — capture loop NOT running", (int)ret);
+        return ESP_FAIL;
+    }
 #endif
     return ESP_OK;
 }
