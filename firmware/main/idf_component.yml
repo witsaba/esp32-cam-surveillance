@@ -1,15 +1,17 @@
 ## IDF Component Manager manifest for `firmware/main`.
 ##
-## FW-02 declares the websocket client and camera managed-component
-## dependencies so that the validation scaffold the milestones doc
-## references actually resolves. The `nvs_flash` built-in component
-## is NOT listed here (it's a built-in, not a managed component) —
-## the CMakeLists.txt declares `REQUIRES nvs_flash` for the link.
+## FW-02 declared the websocket client + camera + cJSON managed-
+## component dependencies so the validation scaffold the milestones
+## doc references actually resolves. T-13-C transferred the
+## `espressif/esp_websocket_client` dep to firmware/components/ws/
+## idf_component.yml (single declaration site — see ws component's
+## idf_component.yml for the FW-13.4 ownership boundary rationale).
+## The camera + cJSON deps stay here since they're shared across
+## main + boot + softap components.
 ##
 ## Host tests rely on the `mocks` block to swap the link-time symbols
 ## of the NVS API with the in-memory mock under
 ## `firmware/components/mocks/`.
 dependencies:
-  espressif/esp_websocket_client: ==1.8.0
   espressif/esp32-camera: ==2.1.7
   espressif/cJSON: ^1.7.18

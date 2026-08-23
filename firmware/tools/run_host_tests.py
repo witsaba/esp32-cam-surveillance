@@ -139,6 +139,9 @@ def _common_cflags(extra_defines):
         f'-I{PROJECT_DIR}/components/camera/include',
         # FW-11 — capture component public headers.
         f'-I{PROJECT_DIR}/components/capture/include',
+        # FW-13 — identity + ws component public headers.
+        f'-I{PROJECT_DIR}/components/identity/include',
+        f'-I{PROJECT_DIR}/components/ws/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
         # FW-08 — Kconfig mirrors for the host build (the device
@@ -157,6 +160,33 @@ def _common_cflags(extra_defines):
         # firmware/sdkconfig.defaults:28-29 + Kconfig.projbuild:6,14.
         '-DCONFIG_FIRMWARE_CAMERA_JPEG_QUALITY=18',
         '-DCONFIG_FIRMWARE_CAMERA_FRAME_SIZE=5',
+        # FW-10 follow-up (commit 9188c31) — camera.c:181 references
+        # the IDF-side `CAMERA_FB_IN_PSRAM` constant directly (not
+        # via a CONFIG_* Kconfig symbol). The host mock declares
+        # `camera_config_t.fb_location` as `int` but does not
+        # provide this IDF constant, so we mirror its value here.
+        # Value 2 per esp_camera.h (IDF v5.5.3).
+        '-DCAMERA_FB_IN_PSRAM=2',
+        # FW-13 — identity component Kconfig mirrors (T-13-C).
+        # Mirror components/identity/Kconfig defaults so the host
+        # runner's -D cflag set matches the device sdkconfig.defaults
+        # (no sdkconfig.h on host).
+        '-DCONFIG_FIRMWARE_IDENTITY_NAME_MAX_LEN=32',
+        '-DCONFIG_FIRMWARE_IDENTITY_DESCRIPTION_MAX_LEN=64',
+        # FW-13 — ws component Kconfig mirrors (T-13-D). Mirror
+        # components/ws/Kconfig defaults so the host runner's
+        # -D cflag set matches the device sdkconfig.defaults
+        # (no sdkconfig.h on host). The URI + path strings are
+        # string literals in the C source, so we use #define
+        # with double-quoted string values.
+        '-DCONFIG_FIRMWARE_WS_URI_DEFAULT="ws://example.local:9000"',
+        '-DCONFIG_FIRMWARE_WS_PATH="/cams"',
+        '-DCONFIG_FIRMWARE_WS_BUFFER_SIZE=16384',
+        '-DCONFIG_FIRMWARE_WS_PING_INTERVAL_SEC=10',
+        '-DCONFIG_FIRMWARE_WS_PINGPONG_TIMEOUT_SEC=30',
+        '-DCONFIG_FIRMWARE_WS_NETWORK_TIMEOUT_MS=5000',
+        '-DCONFIG_FIRMWARE_WS_TASK_STACK=8192',
+        '-DCONFIG_FIRMWARE_WS_STATUS_PERIOD_MS=30000',
     ]
     flags.extend(extra_defines)
     return flags
@@ -201,8 +231,25 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_softap.c'),
         # FW-10 — esp32-camera mock triplet.
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_camera.c'),
+        # FW-13 — esp_websocket_client mock (added in T-13-B;
+        # mirrored from the FW-08 mock_esp_wifi pattern).
+        os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_websocket_client.c'),
         # FW-11 — capture component (pure loop body + FreeRTOS wrapper).
         os.path.join(PROJECT_DIR, 'components', 'capture', 'capture.c'),
+        # FW-13 — identity component (shared MAC + NVS identity).
+        os.path.join(PROJECT_DIR, 'components', 'identity', 'identity.c'),
+        # FW-13 — ws component (skeleton stubs only; real impls land
+        # in T-13-D..T-13-I). The 6 .c files compile into the host
+        # build so the linker can resolve the strong `ws_init`
+        # symbol that boot.c:153 calls. Today the stub_inits.c
+        # symbol also exists (linker prefers the first definition
+        # seen; the host runner includes stub_inits.c before ws.c).
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws.c'),
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_text_frame.c'),
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_event_handler.c'),
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_status_timer.c'),
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_runtime_metrics.c'),
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_reconnects.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
@@ -439,6 +486,43 @@ ALL_TESTS = [
     # PSRAM decreased by frame-buffer allocation after first
     # fb_get().
     "test_fw11_5_psram_heap_decreases_by_frame_buffer_allocation [fw-11.5][scenario-S1][green]",
+    # FW-13 — identity_mac_to_hex_lower hex-encode surface (T-13-C).
+    # Three scenarios: canonical MAC, all-zero MAC, overflow rejection.
+    # Brings Pass 1 to 108 (was 105 after T-13-B).
+    "test_mac_hex_format [fw-13][identity][mac-hex]",
+    "test_mac_hex_zero [fw-13][identity][mac-hex][boundary]",
+    "test_mac_hex_overflow [fw-13][identity][mac-hex][overflow]",
+    # FW-13.1 — URI = /cams, TCP transport, no MAC substring (T-13-D).
+    # Three scenarios from REQ-WS-001 S1+S2+S3. Brings Pass 1 to
+    # 111 (was 108).
+    "test_uri_path_is_cams [fw-13.1][uri-no-mac][scenario-S1]",
+    "test_transport_is_tcp [fw-13.1][uri-no-mac][scenario-S2]",
+    "test_no_mac_in_uri [fw-13.1][uri-no-mac][scenario-S3]",
+    # FW-13.2 — hello is first frame + full payload (T-13-E).
+    # 2 scenarios from REQ-WS-002 S1+S2.
+    "test_hello_first_after_connected [fw-13.2][hello-first][scenario-S1]",
+    "test_hello_full_payload [fw-13.2][hello-first][scenario-S2]",
+    # FW-13.3 — hello MAC matches eFuse + no NVS mac key (T-13-E).
+    # 2 scenarios from REQ-WS-003 S1+S2.
+    "test_mac_matches_efuse [fw-13.3][mac-efuse][scenario-S1]",
+    "test_no_mac_in_nvs [fw-13.3][mac-efuse][scenario-S2]",
+    # FW-13.4 — URL-no-MAC guard (T-13-F). 1 green-path test
+    # (Pass 1) + 1 Pass 11 bite-proof. The Pass 11 test name
+    # carries the literal "url_no_mac" so the runner's grep can
+    # match it under -DWS_TEST_STUB_INJECT_MAC_INTO_URL=1.
+    # The _disabled test runs in Pass 1 (its #ifdef excludes
+    # only the bite-proof body) so we count both here.
+    "test_pass1_green_url_has_no_mac [fw-13.4][url-guard][scenario-S1]",
+    "test_pass11_mac_injected_url_rejected_disabled [fw-13.4][url-guard][scenario-S2][disabled]",
+    # FW-13.5 — status cadence (T-13-G). 2 scenarios from
+    # REQ-WS-005 S1+S2.
+    "test_status_cadence_3_frames_in_90s [fw-13.5][status-cadence][scenario-S1]",
+    "test_status_cadence_0_frames_when_disconnected [fw-13.5][status-cadence][scenario-S2]",
+    # FW-13.6 — status payload (T-13-H). 3 scenarios from
+    # REQ-WS-006 S1+S2+S3.
+    "test_status_payload_full_fields [fw-13.6][status-payload][scenario-S1]",
+    "test_status_reconnects_zero_in_fw13 [fw-13.6][status-payload][scenario-S2]",
+    "test_status_rssi_reflects_mock [fw-13.6][status-payload][scenario-S3]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -588,6 +672,29 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # PSRAM decreased by frame-buffer allocation after first
     # fb_get().
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_capture_heap.c'),
+    # FW-13 — identity_mac_to_hex_lower (T-13-C). Three tests
+    # covering canonical MAC, all-zero MAC, and overflow
+    # rejection. Pure helper (no IDF mocks needed).
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_identity_mac_hex.c'),
+    # FW-13.1 — URI exactly /cams, TCP transport, no MAC substring
+    # (T-13-D). 3 scenarios from REQ-WS-001 S1+S2+S3.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_uri_no_mac.c'),
+    # FW-13.2 — hello is first frame, full 6-field payload
+    # (T-13-E). 2 scenarios from REQ-WS-002 S1+S2.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_hello_first_frame.c'),
+    # FW-13.3 — hello MAC matches eFuse MAC + no mac key in NVS
+    # (T-13-E). 2 scenarios from REQ-WS-003 S1+S2.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_mac_efuse.c'),
+    # FW-13.4 — URL-no-MAC guard (T-13-F). 1 green-path test +
+    # 1 Pass 11 bite-proof test, both in the same file with
+    # #ifdef WS_TEST_STUB_INJECT_MAC_INTO_URL guards.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_url_guard.c'),
+    # FW-13.5 — status frame cadence (T-13-G). 2 scenarios:
+    # 3 frames in 90 s + 0 frames when disconnected.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_status_cadence.c'),
+    # FW-13.6 — status frame payload (T-13-H). 3 scenarios:
+    # full 8-field payload, reconnects == 0, rssi_dbm reflects mock.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_status_payload.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
@@ -665,6 +772,27 @@ FW11_3_GUARD_TEST_FILES = [
 # TEST_FAIL_MESSAGE so Pass 10 of run_host_tests.py can grep
 # for it.
 CAPTURE_BITE_PROOF_KEYWORD = "single_owner"
+
+# FW-13.4 — Pass 11 stub build includes ONLY the FW-13.4
+# guard file. The build defines -DWS_TEST_STUB_INJECT_MAC
+# _INTO_URL=1 so the mock's esp_websocket_client_init
+# splices the eFuse MAC hex into the URI path before
+# capture. The ws_init_impl URL guard MUST trip and the
+# production code logs a message containing the literal
+# "url_no_mac". Mirrors Pass 10 (CAPTURE_TEST_STUB_SECOND
+# _CALLER) shape exactly: the same compile flag is applied
+# to BOTH the production source (ws.c) AND the test file
+# (test_ws_url_guard.c). The green-path test is excluded by
+# the `#ifndef WS_TEST_STUB_INJECT_MAC_INTO_URL` inside the
+# file.
+FW13_4_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_url_guard.c'),
+]
+
+# Pass-11 keyword + bite-proof test marker. The literal
+# substring "url_no_mac" must appear in the guard tripwire's
+# message so Pass 11 of run_host_tests.py can grep for it.
+WS_URL_GUARD_BITE_PROOF_KEYWORD = "url_no_mac"
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
 # green-path test in that file is guarded by `#ifndef
@@ -1131,8 +1259,51 @@ def main():
           f"'{CAPTURE_BITE_PROOF_KEYWORD}' invariant as expected "
           f"(test failed with rc={fw11_3_rc}).")
 
+    # ----- Pass 11: FW-13.4 URL-no-MAC invariant stub build -----
+    # Compile test_ws_url_guard.c (and ws.c) with
+    # -DWS_TEST_STUB_INJECT_MAC_INTO_URL=1 so the mock's
+    # esp_websocket_client_init splices the eFuse MAC hex
+    # into the URI path before capture. The ws_init_impl URL
+    # guard MUST trip: production code logs a message with
+    # the literal "url_no_mac" and returns ESP_FAIL. The
+    # bite-proof test asserts the return code; the literal
+    # grep happens against the production log output + the
+    # test's marker line.
+    #
+    # Pass 11 expects:
+    #   - rc != 0 (ws_init returns ESP_FAIL; test asserts
+    #     non-OK + ESP_FAIL specifically)
+    #   - literal "url_no_mac" present in stdout (from the
+    #     production code's ESP_LOGE message + the test's
+    #     marker line)
+    #   - "test_pass11_mac_injected_url_rejected" test name
+    #     in stdout so the runner can match it to the expected
+    #     bite-proof.
+    # Mirrors Pass 10 (CAPTURE_TEST_STUB_SECOND_CALLER) shape
+    # exactly.
     print()
-    print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 + FW-10 + FW-11 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
+    print("=== Pass 11: FW-13.4 stub build (WS_TEST_STUB_INJECT_MAC_INTO_URL, guard file) ===")
+    fw13_4_bin = _build('fw13_4_tests_stub',
+                        ['-DWS_TEST_STUB_INJECT_MAC_INTO_URL=1'],
+                        FW13_4_GUARD_TEST_FILES, workdir)
+    fw13_4_rc, fw13_4_out = _run_binary(fw13_4_bin)
+    if fw13_4_rc == 0:
+        sys.exit(f"FAIL: FW-13.4 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The stub gate "
+                 f"didn't bypass the url_no_mac invariant. "
+                 f"Output:\n{fw13_4_out}")
+    if WS_URL_GUARD_BITE_PROOF_KEYWORD not in fw13_4_out:
+        sys.exit(f"FAIL: FW-13.4 stub build output does not "
+                 f"contain the literal '{WS_URL_GUARD_BITE_PROOF_KEYWORD}':\n{fw13_4_out}")
+    if "test_pass11_mac_injected_url_rejected" not in fw13_4_out:
+        sys.exit(f"FAIL: FW-13.4 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw13_4_out}")
+    print(f"OK: FW-13.4 stub build → guard tripped on "
+          f"'{WS_URL_GUARD_BITE_PROOF_KEYWORD}' invariant as expected "
+          f"(test failed with rc={fw13_4_rc}).")
+
+    print()
+    print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 + FW-10 + FW-11 + FW-13 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
     print(f"workdir kept at {workdir} for debugging; safe to rm -rf.")
 
 

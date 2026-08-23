@@ -9,5 +9,7 @@
 #define esp_chip_info(info)                 mock_esp_chip_info(info)
 #define esp_get_idf_version()               mock_esp_get_idf_version()
 #define esp_restart()                       mock_esp_restart()
+/* FW-13 — esp_get_free_heap_size() redirect target. */
+#define esp_get_free_heap_size()            mock_esp_get_free_heap_size()
 
 #endif  /* !MOCK_SYSTEM_USE_REAL */

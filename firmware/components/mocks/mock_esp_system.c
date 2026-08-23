@@ -17,6 +17,10 @@ static int         g_version_count = 0;
 
 static int g_restart_count = 0;
 
+/* FW-13 — free heap prime + counter (used by status frame payload). */
+static uint32_t g_free_heap     = 200 * 1024;
+static int      g_free_heap_count = 0;
+
 void mock_esp_read_mac_set_bytes(const uint8_t mac[6])
 {
     if (mac) memcpy(g_mac, mac, sizeof(g_mac));
@@ -33,10 +37,18 @@ void mock_esp_get_idf_version_set(const char *ver)
     if (ver) g_version_str = ver;
 }
 
+/* FW-13 — esp_get_free_heap_size() primer. */
+void mock_esp_system_set_free_heap(uint32_t bytes)
+{
+    g_free_heap = bytes;
+}
+
 int  mock_esp_read_mac_call_count(void)          { return g_mac_count; }
 int  mock_esp_chip_info_call_count(void)         { return g_chip_count; }
 int  mock_esp_get_idf_version_call_count(void)  { return g_version_count; }
 int  mock_esp_restart_call_count(void)           { return g_restart_count; }
+int  mock_esp_system_get_free_heap_call_count(void) { return g_free_heap_count; }
+uint32_t mock_esp_system_get_free_heap(void)      { return g_free_heap; }
 
 const uint8_t *mock_esp_read_mac_last_bytes(void)
 {
@@ -60,6 +72,9 @@ void mock_esp_system_reset(void)
     g_version_last  = "";
     g_version_count = 0;
     g_restart_count = 0;
+    /* FW-13 — free heap reset. */
+    g_free_heap       = 200 * 1024;
+    g_free_heap_count = 0;
 }
 
 esp_err_t mock_esp_read_mac(uint8_t *mac, esp_mac_type_t type)
@@ -95,4 +110,14 @@ void mock_esp_restart(void)
 {
     g_restart_count++;
     /* Counter-only no-op. On host the test asserts call_count == 1. */
+}
+
+/* FW-13 — esp_get_free_heap_size() redirect target. Returns the
+ * primed free-heap value (default 200 KB). Tests prime via
+ * mock_esp_system_set_free_heap(). The status-frame builder reads
+ * this to populate the `free_heap` field. */
+uint32_t mock_esp_get_free_heap_size(void)
+{
+    g_free_heap_count++;
+    return g_free_heap;
 }

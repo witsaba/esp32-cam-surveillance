@@ -8,13 +8,15 @@
  * path (`#ifndef UNITY_HOST_BUILD`) so a failure mid-run does
  * not create the FreeRTOS task the stub would otherwise spin up.
  *
- * Each stub logs `// FW-NN: real impl lands in <milestone>` so
- * the next reviewer can grep for the follow-up. FW-08 replaced
- * `wifi_init` (the strong symbol now lives in firmware/components/
- * wifi/wifi.c — the linker resolves to that body). FW-10 replaced
- * `camera_init` (firmware/components/camera/camera.c). FW-13
- * replaces `ws_init` — when that lands, the orchestrator's
- * call-site remains (one-line adaptations if signatures differ).
+ * FW-08 replaced `wifi_init` (firmware/components/wifi/wifi.c).
+ * FW-10 replaced `camera_init` (firmware/components/camera/camera.c).
+ * FW-13 T-13-I replaced `ws_init` (firmware/components/ws/ws.c).
+ * No strong symbols remain in this file — every init step
+ * resolves to its production component via the linker. The
+ * stub file persists to host the `// FW-NN: real impl lands
+ * in <milestone>` audit log (no remaining lines) and for future
+ * FW-NN init interfaces that may need a temporary bridge before
+ * the production component lands.
  */
 #include "boot.h"
 
@@ -33,12 +35,8 @@ static const char *TAG = "boot";
 /* camera_init moved to firmware/components/camera/camera.c (FW-10) —
  * the strong symbol resolves there via the linker. */
 
-esp_err_t ws_init(const config_t *cfg) {
-    (void)cfg;
-#ifdef UNITY_HOST_BUILD
-    esp_err_t forced = mock_init_returns_get(BOOT_STEP_WS_INIT);
-    if (forced != ESP_OK) return forced;
-#endif
-    ESP_LOGI(TAG, "stub: ws_init  // FW-13: real impl lands in WS client init");
-    return ESP_OK;
-}
+/* ws_init moved to firmware/components/ws/ws.c (FW-13 T-13-I) —
+ * the strong symbol resolves there via the linker. T-13-I
+ * atomic rename: ws_init_impl → ws_init + delete the dispatch
+ * bridge here. The mock_init_returns_get short-circuit for
+ * BOOT_STEP_WS_INIT now lives inside ws.c::ws_init. */

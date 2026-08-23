@@ -66,13 +66,22 @@
 #define CAMERA_PIN_HREF   23
 #define CAMERA_PIN_PCLK   22
 
-#define CAMERA_XCLK_FREQ_HZ  20000000  /* FW-10 follow-up: 10 MHz → 20 MHz to match the
-                                          * rural_home_assistant reference (cam_reader.c:29).
-                                          * The AI-Thinker ESP32-CAM's OV2640 PLL locks more
-                                          * reliably at 20 MHz; at 10 MHz the sensor's XCLK
-                                          * divide is too low and the I2S DMA ring never
-                                          * fills (we observed "Failed to get frame: timeout"
-                                          * every 4.2 s on first device-flash with 10 MHz). */
+#define CAMERA_XCLK_FREQ_HZ  10000000  /* FW-13 device-verify regression fix.
+                                          * Reverted from 20 MHz (commit 9188c31) back to 10 MHz.
+                                          * The 20 MHz bump was meant to fix a frame-timeout
+                                          * issue but introduced a sensor-probe regression:
+                                          * 'Detected camera not supported' (ESP_ERR_NOT_SUPPORTED)
+                                          * on AI-Thinker ESP32-CAM at /dev/cu.usbserial-130
+                                          * with MAC c8:f0:9e:9d:50:08. The 10 MHz value is
+                                          * the FW-10 verified-working baseline per the
+                                          * FW-10 closure blockquote (docs/firmware-milestones.md
+                                          * L976-977). The 20 MHz frame-timeout claim was
+                                          * either mis-attributed to XCLK or has another
+                                          * root cause that needs separate investigation.
+                                          * TODO FW-XX: re-investigate the 20 MHz frame-timeout
+                                          * with proper isolation (was it the LEDC channel,
+                                          * the sccb clock, the sensor PLL config?) and either
+                                          * fix it properly or document the 10 MHz limitation. */
 #define CAMERA_LEDC_CHANNEL  0
 
 /* Cached sensor_t pointer from the prior camera_init(). Resets

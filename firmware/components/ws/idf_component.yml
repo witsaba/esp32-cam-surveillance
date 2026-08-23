@@ -1,0 +1,17 @@
+## IDF component manifest for the ws component (FW-13).
+##
+## Declares the `espressif/esp_websocket_client` managed-component
+## dependency — ownership transferred from firmware/main/idf_component.yml
+## line 13 in T-13-C. The ws component now owns its own IDF dep;
+## main/idf_component.yml has only the camera + cJSON deps.
+##
+## Verify with:
+##   grep -n esp_websocket_client firmware/main/idf_component.yml
+##   grep -n esp_websocket_client firmware/components/ws/idf_component.yml
+## The first must return zero matches; the second must return the
+## declaration line below.
+dependencies:
+  espressif/esp_websocket_client: ==1.8.0
+
+description: "WS client wrapper for FW-13 hello + status frames + FW-15 streaming"
+url: "https://github.com/witsaba/esp32-cam-surveillance"

@@ -22,5 +22,7 @@
 /* FW-08 — station connect/disconnect. */
 #define esp_wifi_connect()                   mock_esp_wifi_connect()
 #define esp_wifi_disconnect()                mock_esp_wifi_disconnect()
+/* FW-13 — esp_wifi_sta_get_rssi() redirect target. */
+#define esp_wifi_sta_get_rssi(rssi)          mock_esp_wifi_sta_get_rssi(rssi)
 
 #endif  /* !MOCK_WIFI_USE_REAL */

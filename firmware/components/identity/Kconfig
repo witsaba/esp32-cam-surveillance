@@ -1,0 +1,33 @@
+# Kconfig — identity component (FW-13).
+#
+# The two FIRMWARE_IDENTITY_*_MAX_LEN symbols bound the NVS-read
+# name + description fields in device_identity_t. Defaults are
+# shorter than config.h's CONFIG_IDENTITY_NAME_MAX (32) +
+# CONFIG_IDENTITY_DESC_MAX (128) on purpose — FW-13's hello +
+# status payloads are short-form (backend parser surface
+# minimisation per design smell #2). The softAP /whoami +
+# /provision keep the longer config.h caps.
+
+menu "Identity"
+
+    config FIRMWARE_IDENTITY_NAME_MAX_LEN
+        int "Identity name max length (bytes; used in hello/status JSON)"
+        range 1 128
+        default 32
+        help
+            Maximum byte-length of the `name` field populated from
+            NVS `config.name` into device_identity_t. Mirrors the
+            cap used by the softAP /whoami endpoint.
+
+    config FIRMWARE_IDENTITY_DESCRIPTION_MAX_LEN
+        int "Identity description max length (bytes; used in hello/status JSON)"
+        range 1 256
+        default 64
+        help
+            Maximum byte-length of the `description` field populated
+            from NVS `config.description` into device_identity_t.
+            FW-13's hello + status JSON payloads use 64 (shorter than
+            the softAP's 128-byte cap) to minimise parser surface
+            area on the backend.
+
+endmenu

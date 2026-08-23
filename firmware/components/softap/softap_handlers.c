@@ -88,6 +88,7 @@
 #include "cJSON.h"
 
 #include "config.h"
+#include "identity.h"
 #include "softap.h"
 
 #ifndef CONFIG_HTTPD_REQ_MAX_BODY_LEN
@@ -98,17 +99,6 @@
 #endif
 
 static const char *TAG = "softap";
-
-/* Render a 6-byte MAC as 12 lowercase hex chars into out (size >= 13). */
-static void render_mac_lowercase(const uint8_t *mac, char *out)
-{
-    static const char hex[] = "0123456789abcdef";
-    for (int i = 0; i < 6; ++i) {
-        out[i * 2]     = hex[(mac[i] >> 4) & 0x0F];
-        out[i * 2 + 1] = hex[mac[i] & 0x0F];
-    }
-    out[12] = '\0';
-}
 
 /* ---------- /whoami GET handler ---------- */
 
@@ -126,7 +116,7 @@ esp_err_t whoami_get_handler_impl(httpd_req_t *req)
         return ESP_FAIL;
     }
     char mac_str[13];
-    render_mac_lowercase(mac, mac_str);
+    identity_mac_to_hex_lower(mac, mac_str, sizeof(mac_str));
 
     esp_chip_info_t chip;
     esp_chip_info(&chip);
