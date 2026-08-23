@@ -50,6 +50,7 @@
 #endif
 
 #include "config.h"
+#include "identity.h"
 
 static const char *TAG = "softap_home";
 
@@ -57,20 +58,14 @@ static const char *TAG = "softap_home";
  * Reused by softap_handlers.c::whoami_get_handler_impl but duplicated
  * here to avoid exposing it across modules (keep FW-05 modules
  * self-contained). If a third caller appears, lift to softap_util.c.
- *
+  *
  * IMPORTANT: this helper runs on the httpd worker task whose stack
  * is 4096 bytes (hardcoded in IDF v5.5.3 — not Kconfig-tunable).
  * The handler must keep its stack footprint small. The MAC hex
- * string (13 bytes) is the biggest stack local this helper needs. */
-static void mac_to_hex12(const uint8_t mac[6], char out[13])
-{
-    static const char hex[] = "0123456789abcdef";
-    for (int i = 0; i < 6; i++) {
-        out[i * 2 + 0] = hex[(mac[i] >> 4) & 0xf];
-        out[i * 2 + 1] = hex[mac[i] & 0xf];
-    }
-    out[12] = '\0';
-}
+ * string (13 bytes) is the biggest stack local this helper needs.
+ * The hex-encoding is delegated to identity_mac_to_hex_lower()
+ * (FW-13 identity shared module) — single source of truth for
+ * MAC → lower-hex conversion across the firmware. */
 
 /* Build the home page body into `out` (must be ≥ 1024 bytes).
  * `identity_name` and `identity_description` come from the in-memory
@@ -177,7 +172,7 @@ esp_err_t home_get_handler_impl(httpd_req_t *req)
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
 
     char mac_hex[13];
-    mac_to_hex12(mac, mac_hex);
+    identity_mac_to_hex_lower(mac, mac_hex, sizeof(mac_hex));
 
     const config_t *cfg = (const config_t *)req->user_ctx;
     const char *name = (cfg && cfg->identity.name[0]) ? cfg->identity.name : "";

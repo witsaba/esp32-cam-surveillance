@@ -44,13 +44,15 @@
 #include "mock_init_returns.h"
 #include "mock_esp_websocket_client_link.h"
 #include "mock_esp_event_link.h"
+#include "mock_esp_system_link.h"
 #include "boot_status.h"
 #include "wifi_event.h"
 #include "wifi.h"
 #include "esp_event.h"
 #else
-#include "esp_event.h"
-#include "esp_websocket_client.h"
+#include "esp_event.h>
+#include "esp_websocket_client.h>
+#include "esp_system.h>
 #include "wifi_event.h"
 #include "wifi.h"
 #endif
@@ -134,6 +136,45 @@ esp_err_t ws_init_impl(const config_t *cfg)
     if (!s_ws_handle) {
         ESP_LOGE(TAG, "ws_init: esp_websocket_client_init returned NULL");
         return ESP_FAIL;
+    }
+
+    /* FW-13.4 — URL-no-MAC guard. The captured URI MUST NOT
+     * contain the eFuse MAC substring anywhere. This is the
+     * bite-proof for the charter invariant + the Pass-11 guard
+     * trip. Production code never splices MAC into the URL
+     * (CONFIG_FIRMWARE_WS_URI_DEFAULT + PATH are static
+     * strings); the guard catches future bugs that would leak
+     * identity into the URI.
+     *
+     * We check the URI as the mock captured it (mock may have
+     * spliced MAC in via the Pass-11 gate). On device the mock
+     * is absent and the URI is exactly what ws_url_build wrote.
+     *
+     * Read the MAC once (for the substring check) without
+     * forcing a full identity_load — we only need the 12-hex
+     * representation. */
+    {
+        const char *uri_captured = NULL;
+#ifdef UNITY_HOST_BUILD
+        uri_captured = mock_esp_websocket_client_get_last_uri();
+#endif
+        /* Fallback to s_ws_config.uri (the device path — host
+         * builds without the mock wouldn't reach here, but the
+         * conditional ensures the variable is referenced). */
+        const char *uri_check = uri_captured ? uri_captured
+                                              : s_ws_config.uri;
+        uint8_t mac[6];
+        char    mac_hex[13] = {0};
+        if (uri_check &&
+            esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK &&
+            identity_mac_to_hex_lower(mac, mac_hex,
+                                          sizeof(mac_hex)) == ESP_OK &&
+            strstr(uri_check, mac_hex) != NULL) {
+            ESP_LOGE(TAG, "url_no_mac invariant violated: "
+                           "URI contains MAC substring (\"%s\" in %s)",
+                           mac_hex, uri_check);
+            return ESP_FAIL;
+        }
     }
 
     /* Step 4 + 5: install the event handlers via ws_event_handler
