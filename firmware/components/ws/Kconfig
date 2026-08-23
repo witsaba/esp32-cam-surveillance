@@ -98,7 +98,7 @@ menu "WebSocket Client"
         help
             The status frame fires every N milliseconds while
             WEBSOCKET_EVENT_CONNECTED. Suspended on
-            WEBSOCKET_EVENT_DISCONNECTED. Charter L1199 + PRD
-    § FR-6 set the cadence at 30 s.
+            WEBSOCKET_EVENT_DISCONNECTED. Charter L1199 plus PRD
+            section FR-6 set the cadence at 30 s.
 
 endmenu

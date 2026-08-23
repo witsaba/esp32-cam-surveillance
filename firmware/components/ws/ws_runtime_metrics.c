@@ -40,10 +40,11 @@ void ws_runtime_metrics_collect(ws_runtime_metrics_t *out)
 
     /* rssi_dbm — station RSSI in dBm. On host the mock returns
      * the primed value (default -50 dBm per mock_esp_wifi.c);
-     * on device it queries the wifi driver. */
-    int32_t rssi = 0;
+     * on device it queries the wifi driver. Note: IDF v5.5.3
+     * declares the parameter as `int *` (not int32_t *). */
+    int rssi = 0;
     if (esp_wifi_sta_get_rssi(&rssi) == ESP_OK) {
-        out->rssi_dbm = rssi;
+        out->rssi_dbm = (int32_t)rssi;
     }
 
     /* free_heap — esp_get_free_heap_size() (mock default 200 KB). */

@@ -32,6 +32,7 @@
 #include <stdio.h>
 
 #include "esp_log.h"
+#include "esp_mac.h"
 
 #ifdef UNITY_HOST_BUILD
 #include "mock_init_returns.h"

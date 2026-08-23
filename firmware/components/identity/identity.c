@@ -25,7 +25,8 @@
 #include "mock_nvs_flash_link.h"
 #else
 #include "esp_system.h"
-#include "nvs_flash.h>
+#include "esp_mac.h"
+#include "nvs_flash.h"
 #include "nvs.h"
 #endif
 

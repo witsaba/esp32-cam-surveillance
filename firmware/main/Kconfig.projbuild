@@ -1,12 +1,17 @@
 menu "ESP32-CAM Surveillance Firmware"
 
-    # FW-13 — source the identity + ws component Kconfig files so
-    # the project sees their CONFIG_FIRMWARE_IDENTITY_* and
-    # CONFIG_FIRMWARE_WS_* symbols. Mirrors the existing wifi
-    # component Kconfig (which is auto-sourced by IDF via the
-    # component directory's `Kconfig` file).
-    source "components/identity/Kconfig"
-    source "components/ws/Kconfig"
+    # FW-13 — the identity + ws component Kconfigs are auto-sourced
+    # by IDF via their idf_component_register() calls (mirrors the
+    # wifi/Kconfig pattern). The symbols CONFIG_FIRMWARE_IDENTITY_*
+    # and CONFIG_FIRMWARE_WS_* live in components/identity/Kconfig
+    # and components/ws/Kconfig respectively; sdkconfig.defaults
+    # mirrors the defaults.
+    #
+    # NOTE: do NOT use `source "components/identity/Kconfig"` here —
+    # the path resolves relative to Kconfig.projbuild's directory
+    # (firmware/main/), so `components/identity/Kconfig` looks for
+    # firmware/main/components/identity/Kconfig which doesn't exist.
+    # The auto-source via idf_component_register is the correct path.
 
     config FIRMWARE_CAMERA_JPEG_QUALITY
         int "JPEG quality (0=highest, 63=lowest, 18=balanced)"

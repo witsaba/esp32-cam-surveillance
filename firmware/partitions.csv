@@ -6,15 +6,22 @@
 # sufficient — see design § "NVS Layout" and docs/firmware-milestones.md
 # FW-02.4.
 #
-# The factory partition is sized at 1 MB + 64 KB to accommodate the
+# The factory partition is sized at 1 MB + 192 KB to accommodate the
 # websocket-client and camera managed components declared in
 # `firmware/main/idf_component.yml`. FW-10 (firmware-camera-init)
 # adds the esp32-camera driver (~69 KB static lib) which pushed the
 # post-link firmware.bin to ~982 KB; the partition grew from 0xF0000
-# to 0x110000 (1 MB + 64 KB headroom). The PRD M0 evidence gate is
-# superseded by the FW-05 verify-report amendment (256 KB → 960 KB).
+# to 0x110000 (1 MB + 64 KB headroom). FW-13 (firmware-ws-client-hello)
+# adds the esp_websocket_client managed component (~50 KB static lib)
+# plus the ws + identity component code (~5 KB), pushing the post-link
+# firmware.bin to ~1.09 MB. The factory partition grew again from
+# 0x110000 to 0x130000 (1 MB + 192 KB headroom) to fit with 0x1f630
+# (~123 KB) free. The PRD M0 evidence gate is superseded by the FW-05
+# verify-report amendment (256 KB → 960 KB) — see also the FW-13
+# closure blockquote in docs/firmware-milestones.md for the size
+# forecast table.
 
 # Name,   Type, SubType, Offset,   Size,    Flags
 nvs,      data, nvs,     0x9000,   0x6000,
 phy_init, data, phy,     0xf000,   0x1000,
-factory,  app,  factory, 0x10000,  0x110000,
+factory,  app,  factory, 0x10000,  0x130000,
