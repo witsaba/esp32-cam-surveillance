@@ -17,6 +17,7 @@
  * call-site remains (one-line adaptations if signatures differ).
  */
 #include "boot.h"
+#include "ws.h"
 
 #include "esp_log.h"
 
@@ -33,12 +34,17 @@ static const char *TAG = "boot";
 /* camera_init moved to firmware/components/camera/camera.c (FW-10) —
  * the strong symbol resolves there via the linker. */
 
+/* ws_init — strong symbol consumed by boot.c:153. Honours the
+ * mock_init_returns_get short-circuit (FW-03.2 bite-proof), then
+ * dispatches to the production init body in firmware/components/
+ * ws/ws.c::ws_init_impl. T-13-J renames ws_init_impl → ws_init
+ * and deletes this body (one atomic step); today the bridge keeps
+ * both the stub's short-circuit behaviour AND the real init body
+ * load-bearing for host tests. */
 esp_err_t ws_init(const config_t *cfg) {
-    (void)cfg;
 #ifdef UNITY_HOST_BUILD
     esp_err_t forced = mock_init_returns_get(BOOT_STEP_WS_INIT);
     if (forced != ESP_OK) return forced;
 #endif
-    ESP_LOGI(TAG, "stub: ws_init  // FW-13: real impl lands in WS client init");
-    return ESP_OK;
+    return ws_init_impl(cfg);
 }

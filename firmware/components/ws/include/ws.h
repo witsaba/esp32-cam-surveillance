@@ -32,6 +32,12 @@
 #include "esp_err.h"
 #include "identity.h"
 
+#ifdef UNITY_HOST_BUILD
+#include "mock_esp_websocket_client_link.h"
+#else
+#include "esp_websocket_client.h"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -84,6 +90,20 @@ typedef struct {
  * BOOT_STEP_WS_INIT), returns the forced error (mirrors the
  * stub_inits.c behaviour; T-13-J replaces that stub). */
 esp_err_t ws_init(const config_t *cfg);
+
+/* Production init body. Today (T-13-D GREEN) the symbol is
+ * named ws_init_impl to avoid a duplicate-symbol linker error
+ * against stub_inits.c::ws_init (the host runner compiles both).
+ * stub_inits.c::ws_init dispatches here after honouring the
+ * mock_init_returns_get short-circuit. T-13-J renames ws_init_impl
+ * → ws_init and deletes the stub_inits.c body in one atomic
+ * commit. */
+esp_err_t ws_init_impl(const config_t *cfg);
+
+/* Event handler seam (declared in ws_event_handler.c; here so
+ * ws.c can install them idempotently). */
+void ws_handle_set(esp_websocket_client_handle_t h);
+esp_err_t ws_event_handler_install(void);
 
 /* ---------- FW-13.1 text-frame URI helpers ----------
  *
