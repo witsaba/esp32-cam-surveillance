@@ -430,6 +430,11 @@ ALL_TESTS = [
     # FW-11.3 — single-owner guard. Green path on production
     # build; bite-proof runs under Pass 10 stub.
     "test_fw11_3_capture_task_start_records_supervision [fw-11.3][scenario-S1][green]",
+    # FW-11.4 — 30 s soak (loop-count semantics on host). S1
+    # (150 iterations = 2 captured + 148 drops) + S2 (heap
+    # bounded).
+    "test_fw11_4_one_fifty_iterations_yield_one_fifty_attempts [fw-11.4][scenario-S1][green]",
+    "test_fw11_4_heap_stays_bounded_over_soak [fw-11.4][scenario-S2][green]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -572,6 +577,9 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # FW11_3_GUARD_TEST_FILES below). The #ifdef inside the
     # file selects which one is compiled into each build.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_capture_guard.c'),
+    # FW-11.4 — 30 s soak (loop-count semantics on host). 2
+    # scenarios: 150 iterations + heap bounded.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_capture_soak.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
