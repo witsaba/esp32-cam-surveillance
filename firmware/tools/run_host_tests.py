@@ -187,6 +187,12 @@ def _common_cflags(extra_defines):
         '-DCONFIG_FIRMWARE_WS_NETWORK_TIMEOUT_MS=5000',
         '-DCONFIG_FIRMWARE_WS_TASK_STACK=8192',
         '-DCONFIG_FIRMWARE_WS_STATUS_PERIOD_MS=30000',
+        # FW-14 — reconnect backoff Kconfig mirrors. The symbols live
+        # in main/Kconfig.projbuild:41-49 (NOT components/ws/Kconfig);
+        # sdkconfig.defaults:32-33 already carries both defaults. The
+        # host build has no sdkconfig.h so we mirror them via -D.
+        '-DCONFIG_FIRMWARE_WS_RECONNECT_INITIAL_MS=2000',
+        '-DCONFIG_FIRMWARE_WS_RECONNECT_CAP_MS=30000',
     ]
     flags.extend(extra_defines)
     return flags
