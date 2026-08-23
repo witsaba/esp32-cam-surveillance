@@ -506,6 +506,14 @@ ALL_TESTS = [
     # 2 scenarios from REQ-WS-003 S1+S2.
     "test_mac_matches_efuse [fw-13.3][mac-efuse][scenario-S1]",
     "test_no_mac_in_nvs [fw-13.3][mac-efuse][scenario-S2]",
+    # FW-13.4 — URL-no-MAC guard (T-13-F). 1 green-path test
+    # (Pass 1) + 1 Pass 11 bite-proof. The Pass 11 test name
+    # carries the literal "url_no_mac" so the runner's grep can
+    # match it under -DWS_TEST_STUB_INJECT_MAC_INTO_URL=1.
+    # The _disabled test runs in Pass 1 (its #ifdef excludes
+    # only the bite-proof body) so we count both here.
+    "test_pass1_green_url_has_no_mac [fw-13.4][url-guard][scenario-S1]",
+    "test_pass11_mac_injected_url_rejected_disabled [fw-13.4][url-guard][scenario-S2][disabled]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -668,6 +676,10 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # FW-13.3 — hello MAC matches eFuse MAC + no mac key in NVS
     # (T-13-E). 2 scenarios from REQ-WS-003 S1+S2.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_mac_efuse.c'),
+    # FW-13.4 — URL-no-MAC guard (T-13-F). 1 green-path test +
+    # 1 Pass 11 bite-proof test, both in the same file with
+    # #ifdef WS_TEST_STUB_INJECT_MAC_INTO_URL guards.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_url_guard.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
@@ -745,6 +757,27 @@ FW11_3_GUARD_TEST_FILES = [
 # TEST_FAIL_MESSAGE so Pass 10 of run_host_tests.py can grep
 # for it.
 CAPTURE_BITE_PROOF_KEYWORD = "single_owner"
+
+# FW-13.4 — Pass 11 stub build includes ONLY the FW-13.4
+# guard file. The build defines -DWS_TEST_STUB_INJECT_MAC
+# _INTO_URL=1 so the mock's esp_websocket_client_init
+# splices the eFuse MAC hex into the URI path before
+# capture. The ws_init_impl URL guard MUST trip and the
+# production code logs a message containing the literal
+# "url_no_mac". Mirrors Pass 10 (CAPTURE_TEST_STUB_SECOND
+# _CALLER) shape exactly: the same compile flag is applied
+# to BOTH the production source (ws.c) AND the test file
+# (test_ws_url_guard.c). The green-path test is excluded by
+# the `#ifndef WS_TEST_STUB_INJECT_MAC_INTO_URL` inside the
+# file.
+FW13_4_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_url_guard.c'),
+]
+
+# Pass-11 keyword + bite-proof test marker. The literal
+# substring "url_no_mac" must appear in the guard tripwire's
+# message so Pass 11 of run_host_tests.py can grep for it.
+WS_URL_GUARD_BITE_PROOF_KEYWORD = "url_no_mac"
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
 # green-path test in that file is guarded by `#ifndef
@@ -1211,8 +1244,51 @@ def main():
           f"'{CAPTURE_BITE_PROOF_KEYWORD}' invariant as expected "
           f"(test failed with rc={fw11_3_rc}).")
 
+    # ----- Pass 11: FW-13.4 URL-no-MAC invariant stub build -----
+    # Compile test_ws_url_guard.c (and ws.c) with
+    # -DWS_TEST_STUB_INJECT_MAC_INTO_URL=1 so the mock's
+    # esp_websocket_client_init splices the eFuse MAC hex
+    # into the URI path before capture. The ws_init_impl URL
+    # guard MUST trip: production code logs a message with
+    # the literal "url_no_mac" and returns ESP_FAIL. The
+    # bite-proof test asserts the return code; the literal
+    # grep happens against the production log output + the
+    # test's marker line.
+    #
+    # Pass 11 expects:
+    #   - rc != 0 (ws_init returns ESP_FAIL; test asserts
+    #     non-OK + ESP_FAIL specifically)
+    #   - literal "url_no_mac" present in stdout (from the
+    #     production code's ESP_LOGE message + the test's
+    #     marker line)
+    #   - "test_pass11_mac_injected_url_rejected" test name
+    #     in stdout so the runner can match it to the expected
+    #     bite-proof.
+    # Mirrors Pass 10 (CAPTURE_TEST_STUB_SECOND_CALLER) shape
+    # exactly.
     print()
-    print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 + FW-10 + FW-11 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
+    print("=== Pass 11: FW-13.4 stub build (WS_TEST_STUB_INJECT_MAC_INTO_URL, guard file) ===")
+    fw13_4_bin = _build('fw13_4_tests_stub',
+                        ['-DWS_TEST_STUB_INJECT_MAC_INTO_URL=1'],
+                        FW13_4_GUARD_TEST_FILES, workdir)
+    fw13_4_rc, fw13_4_out = _run_binary(fw13_4_bin)
+    if fw13_4_rc == 0:
+        sys.exit(f"FAIL: FW-13.4 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The stub gate "
+                 f"didn't bypass the url_no_mac invariant. "
+                 f"Output:\n{fw13_4_out}")
+    if WS_URL_GUARD_BITE_PROOF_KEYWORD not in fw13_4_out:
+        sys.exit(f"FAIL: FW-13.4 stub build output does not "
+                 f"contain the literal '{WS_URL_GUARD_BITE_PROOF_KEYWORD}':\n{fw13_4_out}")
+    if "test_pass11_mac_injected_url_rejected" not in fw13_4_out:
+        sys.exit(f"FAIL: FW-13.4 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw13_4_out}")
+    print(f"OK: FW-13.4 stub build → guard tripped on "
+          f"'{WS_URL_GUARD_BITE_PROOF_KEYWORD}' invariant as expected "
+          f"(test failed with rc={fw13_4_rc}).")
+
+    print()
+    print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 + FW-10 + FW-11 + FW-13 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
     print(f"workdir kept at {workdir} for debugging; safe to rm -rf.")
 
 
