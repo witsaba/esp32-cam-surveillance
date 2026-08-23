@@ -544,6 +544,12 @@ ALL_TESTS = [
     "test_fw14_1_backoff_failures_4 [fw-14.1][row-4]",
     "test_fw14_1_backoff_failures_5 [fw-14.1][row-5][cap-reached]",
     "test_fw14_1_backoff_failures_6 [fw-14.1][row-6][cap-holds]",
+    # FW-14.2 — failure-counter lifecycle (R-19). Counter resets on
+    # CONNECTED; persists across back-to-back failures; CONNECTED
+    # clears the clean-CLOSE latch.
+    "test_fw14_2_counter_resets_on_connected [fw-14.2][counter][scenario-S1]",
+    "test_fw14_2_counter_persists_back_to_back [fw-14.2][counter][scenario-S2]",
+    "test_fw14_2_connect_clears_latch [fw-14.2][latch][scenario-S3]",
     # FW-05.5 — always-on /whoami listener on the STA interface.
     # 4 scenarios covering install, IP-up, disconnect, idempotency.
     "test_fw05_5_install_subscribes_both_events [fw-05.5][install][scenario-S1]",

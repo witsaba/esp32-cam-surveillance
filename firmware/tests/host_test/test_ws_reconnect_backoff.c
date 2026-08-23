@@ -162,3 +162,59 @@ TEST_CASE(
     assert_backoff_row(5, 30000u);
     assert_backoff_row(6, 30000u);
 }
+
+/* ---------- FW-14.2 — failure-counter lifecycle ---------- */
+
+/* S1: counter resets on CONNECTED. GIVEN consecutive_failures = 4,
+ * WHEN the connected semantics fire, THEN counter = 0 and the next
+ * disconnect schedules a 2000 ms reconnect again. */
+TEST_CASE(
+    "test_fw14_2_counter_resets_on_connected [fw-14.2][counter][scenario-S1]",
+    "[ws][fw-14.2][counter]")
+{
+    reset_state();
+    (void)ws_backoff_on_failure();
+    (void)ws_backoff_on_failure();
+    (void)ws_backoff_on_failure();
+    (void)ws_backoff_on_failure();
+    TEST_ASSERT_EQUAL_UINT32(4, ws_backoff_failure_count());
+
+    ws_backoff_on_connected();
+
+    TEST_ASSERT_EQUAL_UINT32(0, ws_backoff_failure_count());
+    TEST_ASSERT_EQUAL_UINT32(0, ws_backoff_current_delay_ms());
+    /* Next disconnect schedules row-1 again. */
+    assert_backoff_row(1, 2000u);
+}
+
+/* S2: counter persists across back-to-back failures with no
+ * intervening CONNECTED. The second schedule must be row-2. */
+TEST_CASE(
+    "test_fw14_2_counter_persists_back_to_back [fw-14.2][counter][scenario-S2]",
+    "[ws][fw-14.2][counter]")
+{
+    reset_state();
+    (void)ws_backoff_on_failure();
+    (void)ws_backoff_on_failure();
+
+    TEST_ASSERT_EQUAL_UINT32(2, ws_backoff_failure_count());
+    TEST_ASSERT_EQUAL_UINT32(4000u, ws_backoff_current_delay_ms());
+    TEST_ASSERT_EQUAL_INT(4000,
+        mock_esp_websocket_client_get_last_reconnect_timeout_ms());
+}
+
+/* S3: CONNECTED clears the clean-CLOSE latch; a later failure
+ * schedules normally again. */
+TEST_CASE(
+    "test_fw14_2_connect_clears_latch [fw-14.2][latch][scenario-S3]",
+    "[ws][fw-14.2][latch]")
+{
+    reset_state();
+    ws_backoff_latch_set(true);
+    TEST_ASSERT_TRUE(ws_backoff_latch_get());
+
+    ws_backoff_on_connected();
+
+    TEST_ASSERT_FALSE(ws_backoff_latch_get());
+    assert_backoff_row(1, 2000u);
+}
