@@ -7,6 +7,7 @@
  */
 #include "mock_esp_event.h"
 
+#include <stdbool.h>
 #include <string.h>
 
 #define MOCK_ESP_EVENT_MAX_CAPTURES 8
@@ -145,7 +146,20 @@ esp_err_t mock_esp_event_fire_handler(esp_event_base_t base,
                                        void *event_data)
 {
     g_fire_handler_count++;
-    /* Linear scan for first matching (base, id). */
+    /* Linear scan — fire ALL matching (base, id) handlers in
+     * registration order. Mirrors IDF's actual esp_event
+     * dispatcher: a single event with N registered handlers
+     * invokes all N, not just the first (per IDF docs at
+     * esp_event.h:99-101 "Multiple Handlers per Event"). The
+     * pre-existing mock fired only the first match, which
+     * broke any code path with multiple subscribers per
+     * (base, id) — e.g., FW-05.5's STA-bound /whoami listener
+     * subscribes alongside the FW-08 wifi component's
+     * IP_EVENT_STA_GOT_IP handler.
+     *
+     * Returns ESP_OK if at least one matching handler fired;
+     * ESP_ERR_NOT_FOUND if no subscribers match (matches IDF). */
+    bool any_fired = false;
     for (int i = 0; i < MOCK_ESP_EVENT_MAX_CAPTURES; ++i) {
         if (g_captures[i].in_use &&
             g_captures[i].base == base &&
@@ -153,8 +167,8 @@ esp_err_t mock_esp_event_fire_handler(esp_event_base_t base,
             g_captures[i].handler) {
             g_captures[i].handler(g_captures[i].arg,
                                    base, event_id, event_data);
-            return ESP_OK;
+            any_fired = true;
         }
     }
-    return ESP_ERR_NOT_FOUND;
+    return any_fired ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
