@@ -1,7 +1,7 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 8 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; **FW-08 closed by PR #10 (pending — worktree `feat/fw-08-wifi-station-backoff`, 8 work-unit commits, see amendment blockquote at the end of § FW-08)**).
-> **Next SDD to start**: FW-09 (WS reconnect) or FW-10 (camera init) per dependency graph — FW-08 closed unblocks FW-13; FW-09 / FW-10 are independent.
+> **Status**: 9 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; FW-08 closed by PR #10, merge commit `9133aeb` — see amendment blockquote at the end of § FW-08; **FW-10 closed by PR #11 (pending — worktree `feat/fw-10-camera-init`, 7 work-unit commits, see amendment blockquote at the end of § FW-10)**).
+> **Next SDD to start**: FW-09 (WS reconnect) or FW-11 (frame capture task) per dependency graph — FW-10 closed unblocks FW-11 (capture task) and FW-20 (camera_settings module); FW-09 is independent.
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
 > **Date**: 2026-08-21.
@@ -927,6 +927,48 @@ SDD change: `firmware-camera-init` · Closes: R-06, R-13, R-14.
 > FW-20.5 (Wave 5) would have kept FW-10's single SDD flow open across two waves. Port-fake-swap
 > instead: at FW-10 time this leaf runs against a fake in-memory camera-settings source; FW-20.5
 > remains the recorded swap node where the real NVS-backed (`camera_cfg`) source replaces the fake.
+
+> **Amended 2026-08-23 (closure).** FW-10 closed on `feat/fw-10-camera-init` against `main@9133aeb` — 7 work-unit commits land; single PR with `size:exception` per preflight (1000-line review budget + extend-if-needed; final ~2037 LoC across 19 files). Closes R-06 (camera init with PRD § FR-2 parameters), R-13 (camera pipeline defaults), R-14 (sensor control surface reserved for runtime setter path). Unblocks FW-11 (capture task can now run on the initialised driver) and the Wave 5 path through FW-20.5 (the `camera_settings_source_t` vtable seam is the documented port-fake-swap boundary where the NVS-backed `camera_cfg` source replaces the fake in-memory source).
+>
+> **Work-unit commit ledger** (7 commits; SHAs from `feat/fw-10-camera-init`):
+>
+> | # | Commit SHA | Title | What | Files |
+> |---|---|---|---|---|
+> | 1 | `da3034d` | feat(camera): component skeleton + camera_init apply FR-2 parameters (FW-10.1) | New `firmware/components/camera/` component (camera.c + camera_settings.c stub + include/ headers + CMakeLists.txt + idf_component.yml); new `mock_esp_camera.{c,h,link.h}` triplet mirroring `mock_esp_wifi`; `firmware/components/mocks/CMakeLists.txt` SRCS += mock_esp_camera.c; `firmware/components/boot/stub_inits.c` camera_init body deleted (mandatory before link); `firmware/components/boot/CMakeLists.txt` REQUIRES += camera; `firmware/tests/host_test/test_camera_init.c` (7 tests covering the 6-row FR-2 parameter outline + pin map); `firmware/tools/run_host_tests.py` ALL_TESTS += test_camera_init, cflags += -I components/camera/include | new camera/ + mock/ + 5 modified |
+> | 2 | `dd2c35f` | feat(camera): PSRAM presence assertion + PSRAM_REQUIRED typed-error (FW-10.2) | `camera.c` adds `esp_psram_is_initialized()` check at top of camera_init; on false emits `ESP_LOGE("camera", "PSRAM_REQUIRED: ...")` and returns `ESP_FAIL` (NOT `esp_restart()` — follows FW-03.2 typed-error pattern so the orchestrator wraps the non-OK into `boot_status_t{step=BOOT_STEP_CAMERA_INIT, ret=ESP_FAIL}`). `test_camera_psram.c` (2 scenarios: present allows init; absent logs PSRAM_REQUIRED + returns ESP_FAIL + no esp_restart). No FW-03.2 regression in `test_boot_fail_loud.c`. | camera.c + test |
+> | 3 | `f9c5eaf` | feat(camera): runtime setter path + no_reinit guard (FW-10.3) | `camera.c` adds `camera_apply_runtime_settings(const camera_settings_t *in)` calling `sensor_t->set_framesize`, `set_quality`, etc.; `mock_esp_camera` `sensor_t` sentinel records setter args in a per-setter ring buffer (mirroring `mock_esp_wifi_set_mode_arg_at`); no-reinit guard tracks `s_init_count` and trips `TEST_FAIL_MESSAGE("no_reinit invariant violated: ...")` under `-DCAMERA_TEST_STUB_REINIT=1`. `test_camera_guard.c` (green + bite-proof). `run_host_tests.py` Pass 9 added (mirror Pass 7 shape) with `-DCAMERA_TEST_STUB_REINIT=1`. | camera.c + mock + test + runner |
+> | 4 | `8f4ae40` | chore(camera): PSRAM size logged at first init (FW-10.4) | `camera.c` adds `esp_psram_get_size()` query and emits `ESP_LOGI("camera", "psram_size=%u bytes", size)`. `test_camera_psram_size.c` (1 scenario). | camera.c + test |
+> | 5 | `1b9fc1b` | feat(camera): camera_settings_source_t vtable + fake in-memory source (FW-10.5) | New `firmware/components/camera/include/camera_settings.h` with `camera_settings_t` struct (28 OV2640 fields + `schema_version`) and `camera_settings_source_t` vtable (`load`, `apply`, `reset_defaults`, `schema_version`). `camera_settings.c` implements module-static `g_settings_source = &fake_camera_settings_source` default + test setter `camera_settings_set_source_for_test` (FW-20.5 swap seam). `camera.c` consults `g_settings_source->load()` after Kconfig defaults, then `g_settings_source->apply()` via setters only (schema_version mismatch → log warning, skip apply). `test_camera_settings_fake.c` (3 scenarios: walking skeleton with `quality=12`, no stored blob uses Kconfig default 18 once, stored via setters not reinit). | new header + impl + test |
+> | 6 | `1859280` | fix(boot): delete camera_init stub (FW-10 closure) | Removes residual stub-inits comment block; verifies boot.c call-site signature unchanged. | stub_inits.c |
+> | 7 | `718335c` | fix(partitions): grow factory partition to 1 MB + 64 KB for FW-10 esp32-camera | FW-10 adds the esp32-camera managed component (libespressif__esp32-camera.a ~69 KB) which pushed post-link `firmware.bin` from ~569 KB to ~982 KB, overflowing the 0xF0000 (960 KB) factory partition by 17 KB. Grew factory partition from `0xF0000` to `0x110000` (1 MB + 64 KB headroom); updated partitions.csv comment to reference FW-05 verify-report amendment that superseded the 256 KB PRD M0 evidence gate. | partitions.csv |
+>
+> **Ledger corrections**: original commit plan in tasks #3714 had WU-6 as the stub deletion; the deletion actually moved to WU-1 because the FW-10 component's strong symbol must replace the stub before `idf.py build` can link (multiple-definition error otherwise). WU-6 was reduced to residual comment cleanup.
+>
+> **Test results** (`python3 firmware/tools/run_host_tests.py`):
+> - Pass 1 (production build): **96 tests GREEN** — 89 baseline (FW-02/FW-03/FW-05/FW-06/FW-07/FW-08) + 7 FW-10 production tests.
+> - Pass 2 (FW-02.3 schema_version stub): bite-proof fires with `schema_version` literal.
+> - Pass 3 (FW-03.4 determinism stub): bite-proof fires with `determinism` literal.
+> - Pass 4 (FW-05.4 validation stub): 3 reject tests fail with `validation` literal; 3 accept tests still pass.
+> - Pass 5 (FW-06.4 timer_fire stub): bite-proof fires with `timer_fire` literal (process aborts).
+> - Pass 6 (FW-07.4 debounce stub): bite-proof fires with `debounce` literal.
+> - Pass 7 (FW-08.3 bounded_wait stub): bite-proof fires with `bounded_wait` literal (test failed rc=1).
+> - Pass 8 (FW-08.6 teardown stub): bite-proof fires with `teardown` literal (test failed rc=1).
+> - **Pass 9 (FW-10.3 reinit stub)**: bite-proof fires with `no_reinit` literal (test failed rc=1).
+>
+> **Build**: `idf.py build` succeeds; `firmware.bin` = 1,000,080 bytes (0xF4290), fits the 1,114,112-byte (0x110000) factory partition with **114,032 bytes (10%) free**. `app_check_size` passes.
+>
+> **Spec compliance** (verify-report #3719): 12/12 scenarios across 6 requirements. 0 CRITICAL. 2 WARNING (both functionally compliant design deviations): (1) Pass 9 stub implemented as re-entry GUARD (`s_init_count > 1`) instead of design's reinit PATH — the literal substring `no_reinit` is verified in Pass 9 stdout; (2) stub deletion moved from WU-6 to WU-1 (mechanical reorder, no behavior impact).
+>
+> **Verify-report verdict**: PASS WITH WARNINGS — `gentle-ai sdd-verify-validate` admitted the report with verdict `pass_with_warnings` and evidence revision `sha256:e68fb2d59272e2ba62ca0a7980519d8b931598dcdb486c2b9f6d27e6c1693eec`. Test output hash: `sha256:cd4193c749afeaf901590f34d2f2391d594148a95b767f628e3d8a4873830558`. Build output hash: `sha256:3a568b6c852b8577f695d0cb3481ff146bd0b2e91a6d6f0d2c4e860eab4a4a0b`.
+>
+> **Known deviations from design** (resolved with documentation, not silent):
+> 1. Pass 9 stub mechanism (re-entry GUARD vs design's reinit PATH) — literal substring verified equivalent.
+> 2. Stub deletion order (WU-1 vs WU-6) — mechanical reorder, no behavior impact.
+> 3. WU-5 `reset_defaults` body un-deferred (reverted from initial deferral) — required for WU-5 S2 setter test.
+> 4. `firmware.bin` factory-partition overflow (17 KB) — resolved by partition-table amendment in commit 7 (factory 0xF0000 → 0x110000).
+> 5. Commit-line count ~2037 vs pre-approved 1000-line budget — covered by user's `extend-if-needed` qualifier on the `size:exception`.
+>
+> **FW-20.5 handoff**: the `camera_settings_source_t` vtable at `firmware/components/camera/include/camera_settings.h` is the documented port-fake-swap seam. FW-20.5 replaces the `fake_camera_settings_source` instance with the NVS-backed source (`namespace = "camera_cfg"`, `key = "settings"`, `schema_version` check per PRD § FR-2b L153). The module-static `g_settings_source` swap is a single-line change. FW-11's capture task consumes the driver via `camera_sensor_get()` after FW-10's init.
 
 ### FW-11 — Frame capture task is the sole caller of the frame-buffer API
 
