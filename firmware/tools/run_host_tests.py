@@ -518,6 +518,11 @@ ALL_TESTS = [
     # REQ-WS-005 S1+S2.
     "test_status_cadence_3_frames_in_90s [fw-13.5][status-cadence][scenario-S1]",
     "test_status_cadence_0_frames_when_disconnected [fw-13.5][status-cadence][scenario-S2]",
+    # FW-13.6 — status payload (T-13-H). 3 scenarios from
+    # REQ-WS-006 S1+S2+S3.
+    "test_status_payload_full_fields [fw-13.6][status-payload][scenario-S1]",
+    "test_status_reconnects_zero_in_fw13 [fw-13.6][status-payload][scenario-S2]",
+    "test_status_rssi_reflects_mock [fw-13.6][status-payload][scenario-S3]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -687,6 +692,9 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # FW-13.5 — status frame cadence (T-13-G). 2 scenarios:
     # 3 frames in 90 s + 0 frames when disconnected.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_status_cadence.c'),
+    # FW-13.6 — status frame payload (T-13-H). 3 scenarios:
+    # full 8-field payload, reconnects == 0, rssi_dbm reflects mock.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_status_payload.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
