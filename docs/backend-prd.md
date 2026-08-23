@@ -27,7 +27,7 @@ A single-process Go backend that accepts exactly **one persistent WebSocket per 
 | Many viewers per camera | Sustain 10 concurrent viewers on one camera at QVGA @ 5 fps with no frame stalls attributable to the hub |
 | Live means live | p95 frame age (camera capture → viewer WS write) < 500 ms at 5 fps |
 | Late/laggy viewers never hurt healthy ones | A stalled viewer receives dropped frames (bounded channel, drop-oldest); other viewers on the same camera show zero added latency |
-| The registry reflects reality | Device appears in `GET /api/cameras` within 60 s of joining the LAN (discovery cycle); status flips `online` within 2 s of camera WS connect |
+| The registry reflects reality | A device joining the LAN appears in `GET /api/cameras` within two discovery cycles (≤ ~2.5 min at default interval + sweep time); status flips `online` within 2 s of camera WS connect |
 | Energy goal honored end-to-end | With zero viewers, no camera is streaming: idle camera count with active streams = 0 within 5 min of last viewer leaving |
 | Survives backend restarts | All cameras reconnected and `online` ≤ 60 s after backend process restart |
 | Bounded resource usage | ≤ 150 MB RSS and < 1,500 goroutines at full envelope (30 cams + 300 viewers) |
@@ -79,7 +79,7 @@ The backend MUST NOT send binary data to cameras. Outbound traffic to cameras is
 
 - The ingest task publishes every binary JPEG frame to subject `cams.<mac>.frames` — raw bytes, no envelope, no base64. The MAC travels in the subject token, parsed once per connection at hello time (zero per-frame parsing).
 - Control-plane observations (hello, status ticks every 30 s, `config_ok`, `error` replies from the camera) are published as JSON text to `cams.<mac>.events`.
-- Core NATS semantics are load-bearing: at-most-once, no persistence, no replay. If nobody is watching a camera, its frames are published anyway while the session is active — but sessions only stay active under the viewer-refcount policy of FR-B-4, so idle publishing does not occur in practice.
+- Core NATS semantics are load-bearing: at-most-once, no persistence, no replay. Frames are published whenever a camera session is connected; sessions exist only under the viewer-refcount policy of FR-B-4 (wake on first viewer, sleep after the idle timer), so audience-less publishing happens only inside bounded windows (30 s stream-off grace, 5 min idle timer) — bounded by design, not by coordination.
 - Publishing is fire-and-forget; the ingest task MUST NEVER block on publish. Backpressure belongs to subscribers (FR-B-3), not the producer.
 
 ### FR-B-3 — Viewer hub (fan-out)
@@ -93,7 +93,7 @@ Connection rules:
 3. Each viewer owns a **bounded channel of 8 frames** (~120 KB worst case). On overflow: drop the OLDEST frame, enqueue the newest, increment a per-viewer `dropped_frames` counter surfaced in `GET /api/cameras/{mac}`. Latest-frame semantics: a surveillance viewer wants NOW, not a replay queue.
 4. The NATS-side subscription is a **single wildcard** `cams.*.frames` held for the process lifetime; frames route by subject token to the per-camera viewer set. No subscription churn per viewer.
 5. The NATS callback MUST do nothing except non-blocking enqueue. **It MUST NEVER perform a synchronous viewer write.** (Research landmine: a blocked flush exceeding the server's 2 s `write_deadline` makes NATS kill the entire client connection — every camera drops simultaneously.)
-6. Mandatory `SetPendingLimits(8, 131072)` per subscription-equivalent buffer and a mandatory `AsyncErrorCB` that logs `nats.ErrSlowConsumer` with the affected subject. Silent drops are forbidden — the default Go-client behavior hides them without the callback.
+6. Backpressure is two-layered and both layers are mandatory: (a) the single wildcard subscription carries `SetPendingLimits(8, 131072)` plus a mandatory `AsyncErrorCB` that logs `nats.ErrSlowConsumer` with the subject and cumulative drop count (`sub.Dropped()`) — the default Go client silently hides slow-consumer drops without it; this layer protects against process-level stall only; (b) per-viewer bounding is the depth-8 channel of rule 3, NOT NATS pending limits — one stalled viewer must never consume buffer shared by every camera's traffic.
 7. Keepalive: server ping every 10 s; missing pong for 30 s closes the viewer connection. Any client-to-server text/binary frame other than a pong → close `1008`. Viewers are read-mostly.
 
 ### FR-B-4 — On-demand streaming (viewer-refcount energy control)
@@ -329,7 +329,7 @@ Unparseable inbound text frames are logged and dropped — never crash the sessi
 | **B2** | Ingest: camera WS listener, hello admission, newest-wins eviction, frame → NATS publish, status transitions | Fake camera client (test harness) streams frames; second conn evicts first; unknown-MAC hello inserts row; disconnect flips status ≤ 2 s |
 | **B3** | Viewer hub: wildcard sub, router, per-viewer channels, writer-per-conn, ping/pong, drop counters | 10 fake viewers on 1 camera at 5 fps: zero panics, stalled viewer accrues `dropped_frames` while others see p95 inter-frame ≤ 220 ms; slow-consumer error path proven logged |
 | **B4** | On-demand control: session manager state machine, refcount, grace + idle timers, sleep/wake, manual pin | Wake-on-viewer < 10 s (dial + hello + stream on); last-viewer + 30 s grace → stream off; idle 5 min → sleep; restart recovery ≤ 60 s |
-| **B5** | Discovery: cron, CIDR walker, worker pool, `/whoami` validator, upsert/refresh, `unreachable` sweep | Integration test with stub HTTP devices: valid whoami registers, malformed skipped + logged, 254-host sweep < 15 s at 64 workers, self-gate skips when no LAN |
+| **B5** | Discovery: cron, CIDR walker, worker pool, `/whoami` validator, upsert/refresh, `unreachable` sweep. **Gate: the firmware plan's station-interface `/whoami` promise merged upstream** (Open question 4) — ESP32 detection activates then; every other acceptance is firmware-independent | Integration test with stub HTTP devices: valid whoami registers, malformed skipped + logged, 254-host sweep < 15 s at 64 workers, self-gate skips when no LAN |
 | **B6** | Hardening: latency instrumentation (frame-age histogram), soak 30 min at full envelope, restart-recovery proof, systemd unit, README deploy notes | Soak report: RSS ≤ 150 MB, goroutines < 1,500, p95 frame age ≤ 500 ms, zero silent-drop paths (counters reconcile) |
 
 Each milestone ends with `go vet ./... && go test ./...` green plus a manual smoke where hardware is involved (B2 onward: real ESP32-CAM; B5: real subnet sweep).
@@ -359,10 +359,42 @@ All resolved during planning (2026-08-23):
 1. ✅ **Fan-out transport** — Go WS hub over NATS subjects; direct NATS-WebSocket-to-browser rejected (auth/token scoping complexity lands in frontend for zero benefit at this scale).
 2. ✅ **Persistence** — live-only core NATS; JetStream named a non-goal with the migration path noted.
 3. ✅ **Transcoding/WASM** — JPEG passthrough; WASM verdict: zero benefit for native-JPEG pipelines (browsers decode JPEG natively; WebCodecs covers modern codec gaps elsewhere).
-4. ✅ **Camera visibility gap** — firmware serves `/whoami` ONLY on the provisioning softAP today (torn down at STA IP, FW-08.4). **Hard dependency: firmware gains a station-interface `GET /whoami` milestone (security-posture line amended) BEFORE B5 can detect ESP32 cameras.** Until it lands, B5 correctly registers only non-camera `/whoami` responders and WS-hello registration covers connected cameras.
+4. ✅ **Camera visibility gap (cross-document dependency)** — firmware serves `/whoami` ONLY on the provisioning softAP today (torn down at STA IP, FW-08.4). Per the task-graph method's cross-document rule, B5 depends on a **named, frozen promise in the firmware plan**: a station-interface `GET /whoami` milestone, with the firmware PRD's security-posture line amended. That upstream amendment is follow-up work on the firmware documents; until it exists upstream, B5 is gated (§ Milestones) and correctly registers only non-camera `/whoami` responders while WS-hello registration covers connected cameras.
 5. ✅ **Process topology** — single binary, embedded NATS, `NoSigs=true`, monitor endpoint behind config.
 6. ✅ **Scale envelope** — ≤ 30 cameras, ≤ 10 viewers each; budgets sized to that envelope in § NFRs.
 7. ✅ **Label ownership** — DB canonical; no device-push rename in v1.
+
+---
+
+## Milestone-derivation notes (for the task-graph authoring agent)
+
+This PRD is the input document for a milestones document authored with the task-graph milestone
+method (skill `task-graph-milestone-doc`, method v2 — `references/method.md` is normative). The
+project-specific bindings and seeds that agent needs, declared once here:
+
+- **Id prefix:** `BE-` is reserved for the backend milestones document (`BE-NN`; nodes
+  `BE-NN.p[.q[.r]]`, three levels below the milestone maximum). `FW-` is taken by
+  [`firmware-milestones.md`](firmware-milestones.md); prefixes are unique per repository.
+- **Evidence-gate binding:** `go test ./... -race` closes build-and-test leaves, declared in the
+  milestones doc's Method section; hardware-dependent leaves (B2 onward device smoke) name scoped
+  per-node exceptions, mirroring how the firmware doc binds `idf.py build`.
+- **Founding-method citation:** this repo has no `docs/adr/` and no ratified DAG-convention ADR
+  (recorded in `firmware-milestones.md` § Method and its Inconsistency Register items #1–#2). The
+  backend milestones doc inherits the same inline-bindings approach and cites
+  [`firmware-milestones.md`](firmware-milestones.md) § Method as the founding reference until an
+  ADR lands.
+- **Research-digest seed:** § References below carries the August-2026 findings with sources
+  (embedded-NATS pattern and gotchas, slow-consumer semantics, browser MJPEG rendering,
+  MediaMTX/go2rtc verdicts, gorilla revival). Phase 1 of the method still runs — verify each
+  citation resolves at authoring time and add newer findings; do not re-run the investigation
+  from scratch.
+- **Pre-reconciled inconsistencies:** backpressure layering (wildcard-sub pending limits vs
+  per-viewer channels, FR-B-3), discovery-latency wording (§ Goals), audience-less publishing
+  bounding (FR-B-2) were reconciled during PRD authoring on 2026-08-23. The Inconsistency Register
+  records them as pre-reconciled citing this section rather than re-litigating them.
+- **Cross-document edge:** B5's ESP32-detection half depends on the firmware plan's
+  station-interface `/whoami` promise (Open question 4). Encode it as a cross-document dependency
+  with the gate in the delivery-sequence table; never assume it.
 
 ---
 
