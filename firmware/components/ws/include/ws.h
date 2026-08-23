@@ -103,6 +103,14 @@ esp_err_t ws_init_impl(const config_t *cfg);
 /* Event handler seam (declared in ws_event_handler.c; here so
  * ws.c can install them idempotently). */
 void ws_handle_set(esp_websocket_client_handle_t h);
+
+/* Read-only accessor for the module-static handle. Tests use
+ * this to drive the mock (esp_websocket_client_start fires
+ * CONNECTED synchronously; the production on_ws_connected
+ * emits the hello). On device the IP-up handler drives
+ * _start, not tests. */
+esp_websocket_client_handle_t ws_handle_get(void);
+
 esp_err_t ws_event_handler_install(void);
 
 /* ---------- FW-13.1 text-frame URI helpers ----------

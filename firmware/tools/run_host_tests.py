@@ -498,6 +498,14 @@ ALL_TESTS = [
     "test_uri_path_is_cams [fw-13.1][uri-no-mac][scenario-S1]",
     "test_transport_is_tcp [fw-13.1][uri-no-mac][scenario-S2]",
     "test_no_mac_in_uri [fw-13.1][uri-no-mac][scenario-S3]",
+    # FW-13.2 — hello is first frame + full payload (T-13-E).
+    # 2 scenarios from REQ-WS-002 S1+S2.
+    "test_hello_first_after_connected [fw-13.2][hello-first][scenario-S1]",
+    "test_hello_full_payload [fw-13.2][hello-first][scenario-S2]",
+    # FW-13.3 — hello MAC matches eFuse + no NVS mac key (T-13-E).
+    # 2 scenarios from REQ-WS-003 S1+S2.
+    "test_mac_matches_efuse [fw-13.3][mac-efuse][scenario-S1]",
+    "test_no_mac_in_nvs [fw-13.3][mac-efuse][scenario-S2]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -654,6 +662,12 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # FW-13.1 — URI exactly /cams, TCP transport, no MAC substring
     # (T-13-D). 3 scenarios from REQ-WS-001 S1+S2+S3.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_uri_no_mac.c'),
+    # FW-13.2 — hello is first frame, full 6-field payload
+    # (T-13-E). 2 scenarios from REQ-WS-002 S1+S2.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_hello_first_frame.c'),
+    # FW-13.3 — hello MAC matches eFuse MAC + no mac key in NVS
+    # (T-13-E). 2 scenarios from REQ-WS-003 S1+S2.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_mac_efuse.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
