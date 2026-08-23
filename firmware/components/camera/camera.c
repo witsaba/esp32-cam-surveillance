@@ -34,6 +34,8 @@
 #include "mock_init_returns.h"
 #endif
 
+#include <string.h>
+
 #define TAG "camera"
 
 /* AI-Thinker ESP32-CAM pin map (PRD § FR-2 L136-144). Single

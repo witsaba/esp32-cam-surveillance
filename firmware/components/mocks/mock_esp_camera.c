@@ -31,30 +31,38 @@ static int             g_last_captured = 0;
 
 static sensor_t g_sensor_sentinel;
 
-/* Setter ring buffers — newest-first lookup. Capacity MOCK_CAMERA_
- * SET_RING_CAP (8). Out-of-range queries return -1. */
+/* Setter ring buffers — newest-first lookup. Each ring has
+ * its OWN head pointer so the six setters can be interleaved
+ * without polluting one another's lookup; out-of-range queries
+ * return -1. Capacity MOCK_CAMERA_SET_RING_CAP (8) per ring. */
 static int g_set_quality_args  [MOCK_CAMERA_SET_RING_CAP];
 static int g_set_framesize_args[MOCK_CAMERA_SET_RING_CAP];
 static int g_set_vflip_args    [MOCK_CAMERA_SET_RING_CAP];
 static int g_set_hmirror_args  [MOCK_CAMERA_SET_RING_CAP];
 static int g_set_pixformat_args[MOCK_CAMERA_SET_RING_CAP];
 static int g_set_grab_mode_args[MOCK_CAMERA_SET_RING_CAP];
-static size_t g_set_head = 0;
 
-static void record_set_int(int *ring, int value)
+static size_t g_set_quality_head   = 0;
+static size_t g_set_framesize_head = 0;
+static size_t g_set_vflip_head     = 0;
+static size_t g_set_hmirror_head   = 0;
+static size_t g_set_pixformat_head = 0;
+static size_t g_set_grab_mode_head = 0;
+
+static void record_set_int(int *ring, size_t *head, int value)
 {
-    if (g_set_head < MOCK_CAMERA_SET_RING_CAP) {
-        ring[g_set_head++] = value;
+    if (*head < MOCK_CAMERA_SET_RING_CAP) {
+        ring[(*head)++] = value;
     } else {
         memmove(ring, ring + 1, (MOCK_CAMERA_SET_RING_CAP - 1) * sizeof(int));
         ring[MOCK_CAMERA_SET_RING_CAP - 1] = value;
     }
 }
 
-static int ring_arg_at(const int *ring, int idx)
+static int ring_arg_at(const int *ring, size_t head, int idx)
 {
-    if (idx < 0 || (size_t)idx >= g_set_head) return -1;
-    return ring[g_set_head - 1 - (size_t)idx];
+    if (idx < 0 || (size_t)idx >= head) return -1;
+    return ring[head - 1 - (size_t)idx];
 }
 
 static int mock_init_status(sensor_t *s)        { (void)s; return 0; }
@@ -63,35 +71,35 @@ static int mock_reset(sensor_t *s)              { (void)s; return 0; }
 static int mock_set_vflip(sensor_t *s, int v)
 {
     (void)s;
-    record_set_int(g_set_vflip_args, v);
+    record_set_int(g_set_vflip_args, &g_set_vflip_head, v);
     return 0;
 }
 
 static int mock_set_hmirror(sensor_t *s, int v)
 {
     (void)s;
-    record_set_int(g_set_hmirror_args, v);
+    record_set_int(g_set_hmirror_args, &g_set_hmirror_head, v);
     return 0;
 }
 
 static int mock_set_quality(sensor_t *s, int q)
 {
     (void)s;
-    record_set_int(g_set_quality_args, q);
+    record_set_int(g_set_quality_args, &g_set_quality_head, q);
     return 0;
 }
 
 static int mock_set_framesize(sensor_t *s, int f)
 {
     (void)s;
-    record_set_int(g_set_framesize_args, f);
+    record_set_int(g_set_framesize_args, &g_set_framesize_head, f);
     return 0;
 }
 
 static int mock_set_pixformat(sensor_t *s, int p)
 {
     (void)s;
-    record_set_int(g_set_pixformat_args, p);
+    record_set_int(g_set_pixformat_args, &g_set_pixformat_head, p);
     return 0;
 }
 
@@ -103,7 +111,7 @@ static int mock_set_grab_mode(sensor_t *s, int m)
      * driver sets it internally); on host the mock provides it so
      * production source that wraps through can record args. */
     (void)s;
-    record_set_int(g_set_grab_mode_args, m);
+    record_set_int(g_set_grab_mode_args, &g_set_grab_mode_head, m);
     return 0;
 }
 
@@ -141,12 +149,12 @@ sensor_t *mock_esp_camera_sensor_get_sentinel(void)
     return &g_sensor_sentinel;
 }
 
-int mock_esp_camera_sensor_set_quality_arg_at  (int idx) { return ring_arg_at(g_set_quality_args,   idx); }
-int mock_esp_camera_sensor_set_framesize_arg_at(int idx) { return ring_arg_at(g_set_framesize_args, idx); }
-int mock_esp_camera_sensor_set_vflip_arg_at    (int idx) { return ring_arg_at(g_set_vflip_args,     idx); }
-int mock_esp_camera_sensor_set_hmirror_arg_at  (int idx) { return ring_arg_at(g_set_hmirror_args,   idx); }
-int mock_esp_camera_sensor_set_pixformat_arg_at(int idx) { return ring_arg_at(g_set_pixformat_args, idx); }
-int mock_esp_camera_sensor_set_grab_mode_arg_at(int idx) { return ring_arg_at(g_set_grab_mode_args, idx); }
+int mock_esp_camera_sensor_set_quality_arg_at  (int idx) { return ring_arg_at(g_set_quality_args,   g_set_quality_head,   idx); }
+int mock_esp_camera_sensor_set_framesize_arg_at(int idx) { return ring_arg_at(g_set_framesize_args, g_set_framesize_head, idx); }
+int mock_esp_camera_sensor_set_vflip_arg_at    (int idx) { return ring_arg_at(g_set_vflip_args,     g_set_vflip_head,     idx); }
+int mock_esp_camera_sensor_set_hmirror_arg_at  (int idx) { return ring_arg_at(g_set_hmirror_args,   g_set_hmirror_head,   idx); }
+int mock_esp_camera_sensor_set_pixformat_arg_at(int idx) { return ring_arg_at(g_set_pixformat_args, g_set_pixformat_head, idx); }
+int mock_esp_camera_sensor_set_grab_mode_arg_at(int idx) { return ring_arg_at(g_set_grab_mode_args, g_set_grab_mode_head, idx); }
 
 void mock_esp_camera_reset(void)
 {
@@ -189,7 +197,12 @@ void mock_esp_camera_reset(void)
     memset(g_set_hmirror_args,   0, sizeof(g_set_hmirror_args));
     memset(g_set_pixformat_args, 0, sizeof(g_set_pixformat_args));
     memset(g_set_grab_mode_args, 0, sizeof(g_set_grab_mode_args));
-    g_set_head = 0;
+    g_set_quality_head   = 0;
+    g_set_framesize_head = 0;
+    g_set_vflip_head     = 0;
+    g_set_hmirror_head   = 0;
+    g_set_pixformat_head = 0;
+    g_set_grab_mode_head = 0;
 }
 
 /* ---------- mock targets (called via the link-header redirect) ---------- */
