@@ -1,0 +1,7 @@
+## IDF component manifest for the identity component (FW-13).
+##
+## Leaf component; no managed-component deps. The CMakeLists.txt
+## REQUIRES clause covers the nvs_flash dependency.
+
+description: "Shared device-identity helper (MAC + name/description) for FW-13 hello/status payloads and FW-05 softAP"
+url: "https://github.com/witsaba/esp32-cam-surveillance"

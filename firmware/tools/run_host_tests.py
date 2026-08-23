@@ -139,6 +139,9 @@ def _common_cflags(extra_defines):
         f'-I{PROJECT_DIR}/components/camera/include',
         # FW-11 — capture component public headers.
         f'-I{PROJECT_DIR}/components/capture/include',
+        # FW-13 — identity + ws component public headers.
+        f'-I{PROJECT_DIR}/components/identity/include',
+        f'-I{PROJECT_DIR}/components/ws/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
         # FW-08 — Kconfig mirrors for the host build (the device
@@ -164,6 +167,12 @@ def _common_cflags(extra_defines):
         # provide this IDF constant, so we mirror its value here.
         # Value 2 per esp_camera.h (IDF v5.5.3).
         '-DCAMERA_FB_IN_PSRAM=2',
+        # FW-13 — identity component Kconfig mirrors (T-13-C).
+        # Mirror components/identity/Kconfig defaults so the host
+        # runner's -D cflag set matches the device sdkconfig.defaults
+        # (no sdkconfig.h on host).
+        '-DCONFIG_FIRMWARE_IDENTITY_NAME_MAX_LEN=32',
+        '-DCONFIG_FIRMWARE_IDENTITY_DESCRIPTION_MAX_LEN=64',
     ]
     flags.extend(extra_defines)
     return flags
@@ -213,6 +222,20 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_websocket_client.c'),
         # FW-11 — capture component (pure loop body + FreeRTOS wrapper).
         os.path.join(PROJECT_DIR, 'components', 'capture', 'capture.c'),
+        # FW-13 — identity component (shared MAC + NVS identity).
+        os.path.join(PROJECT_DIR, 'components', 'identity', 'identity.c'),
+        # FW-13 — ws component (skeleton stubs only; real impls land
+        # in T-13-D..T-13-I). The 6 .c files compile into the host
+        # build so the linker can resolve the strong `ws_init`
+        # symbol that boot.c:153 calls. Today the stub_inits.c
+        # symbol also exists (linker prefers the first definition
+        # seen; the host runner includes stub_inits.c before ws.c).
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws.c'),
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_text_frame.c'),
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_event_handler.c'),
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_status_timer.c'),
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_runtime_metrics.c'),
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_reconnects.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
@@ -449,6 +472,12 @@ ALL_TESTS = [
     # PSRAM decreased by frame-buffer allocation after first
     # fb_get().
     "test_fw11_5_psram_heap_decreases_by_frame_buffer_allocation [fw-11.5][scenario-S1][green]",
+    # FW-13 — identity_mac_to_hex_lower hex-encode surface (T-13-C).
+    # Three scenarios: canonical MAC, all-zero MAC, overflow rejection.
+    # Brings Pass 1 to 108 (was 105 after T-13-B).
+    "test_mac_hex_format [fw-13][identity][mac-hex]",
+    "test_mac_hex_zero [fw-13][identity][mac-hex][boundary]",
+    "test_mac_hex_overflow [fw-13][identity][mac-hex][overflow]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -598,6 +627,10 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # PSRAM decreased by frame-buffer allocation after first
     # fb_get().
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_capture_heap.c'),
+    # FW-13 — identity_mac_to_hex_lower (T-13-C). Three tests
+    # covering canonical MAC, all-zero MAC, and overflow
+    # rejection. Pure helper (no IDF mocks needed).
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_identity_mac_hex.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard

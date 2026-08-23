@@ -1,5 +1,13 @@
 menu "ESP32-CAM Surveillance Firmware"
 
+    # FW-13 — source the identity + ws component Kconfig files so
+    # the project sees their CONFIG_FIRMWARE_IDENTITY_* and
+    # CONFIG_FIRMWARE_WS_* symbols. Mirrors the existing wifi
+    # component Kconfig (which is auto-sourced by IDF via the
+    # component directory's `Kconfig` file).
+    source "components/identity/Kconfig"
+    source "components/ws/Kconfig"
+
     config FIRMWARE_CAMERA_JPEG_QUALITY
         int "JPEG quality (0=highest, 63=lowest, 18=balanced)"
         range 0 63

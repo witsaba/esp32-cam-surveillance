@@ -1,0 +1,104 @@
+# Kconfig — ws component tunables (FW-13).
+#
+# Eight symbols drive the WS client config + cadence:
+#
+#   FIRMWARE_WS_URI_DEFAULT       — base URI without path
+#                                    (charter L1180: default
+#                                    ws://example.local:9000)
+#   FIRMWARE_WS_PATH              — path component ("/cams" per
+#                                    PRD § FR-5; no MAC substring)
+#   FIRMWARE_WS_BUFFER_SIZE       — IDF dynamic buffer for
+#                                    streaming payloads (charter
+#                                    L1183: 16384 default)
+#   FIRMWARE_WS_PING_INTERVAL_SEC — WS keepalive ping interval
+#                                    (charter L1185: 10 s default)
+#   FIRMWARE_WS_PINGPONG_TIMEOUT_SEC — timeout to drop the
+#                                    connection (charter: 30 s)
+#   FIRMWARE_WS_NETWORK_TIMEOUT_MS — DNS + TCP connect timeout
+#                                    (charter: 5000 ms)
+#   FIRMWARE_WS_TASK_STACK        — FreeRTOS task stack for the
+#                                    WS client (charter: 8192)
+#   FIRMWARE_WS_STATUS_PERIOD_MS  — periodic status frame cadence
+#                                    (charter L1199: 30000 ms = 30 s)
+#
+# Defaults mirrored in firmware/sdkconfig.defaults so the host
+# runner's -D cflag mirror picks them up without needing a real
+# sdkconfig.
+
+menu "WebSocket Client"
+
+    config FIRMWARE_WS_URI_DEFAULT
+        string "Base WS URI (without path component)"
+        default "ws://example.local:9000"
+        help
+            Default base WS URI used by ws_url_build(). The path
+            component is concatenated from FIRMWARE_WS_PATH at
+            runtime. Production builds override this via
+            sdkconfig.defaults to point at the real backend.
+
+    config FIRMWARE_WS_PATH
+        string "WS path component (must not contain MAC substring)"
+        default "/cams"
+        help
+            Path appended to FIRMWARE_WS_URI_DEFAULT. Must be a
+            literal constant per charter L1196 + PRD § FR-5; the
+            FW-13.4 bite-proof asserts the URL never contains the
+            MAC substring.
+
+    config FIRMWARE_WS_BUFFER_SIZE
+        int "Dynamic buffer size for streaming payloads (bytes)"
+        range 1024 65536
+        default 16384
+        help
+            Buffer size for esp_websocket_client_config_t.buffer
+            _size. 16 KB comfortably holds a single QVGA JPEG
+            frame (~6-10 KB compressed) plus headroom for the
+            hello + status text frames.
+
+    config FIRMWARE_WS_PING_INTERVAL_SEC
+        int "WS ping interval (seconds; keepalive)"
+        range 1 300
+        default 10
+        help
+            Periodic WS PING frame sent every N seconds to keep
+            the connection alive and detect dead peers quickly.
+
+    config FIRMWARE_WS_PINGPONG_TIMEOUT_SEC
+        int "WS pingpong timeout (seconds; drop connection on missed PONG)"
+        range 5 300
+        default 30
+        help
+            Disconnect the WS link if no PONG frame arrives within
+            this many seconds after the last PING. The IDF client
+            auto-reconnects unless disable_auto_reconnect=true
+            (FW-13 hard invariant — FW-14 owns reconnect).
+
+    config FIRMWARE_WS_NETWORK_TIMEOUT_MS
+        int "WS network timeout (ms; DNS + TCP connect)"
+        range 1000 60000
+        default 5000
+        help
+            Timeout for the DNS resolution + TCP connect step.
+            The first attempt happens after IP_EVENT_STA_GOT_IP
+            fires (lazy start; see ws.c::ws_init).
+
+    config FIRMWARE_WS_TASK_STACK
+        int "FreeRTOS task stack for the WS client (bytes)"
+        range 2048 65536
+        default 8192
+        help
+            Stack size for the IDF WS client's internal task.
+            8192 comfortably holds the TCP stack + a single frame
+            buffer for streaming.
+
+    config FIRMWARE_WS_STATUS_PERIOD_MS
+        int "Periodic status frame period (ms)"
+        range 1000 300000
+        default 30000
+        help
+            The status frame fires every N milliseconds while
+            WEBSOCKET_EVENT_CONNECTED. Suspended on
+            WEBSOCKET_EVENT_DISCONNECTED. Charter L1199 + PRD
+    § FR-6 set the cadence at 30 s.
+
+endmenu
