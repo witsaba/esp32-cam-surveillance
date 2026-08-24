@@ -274,11 +274,24 @@ esp_err_t softap_stop(void)
     /* FW-05 ships a working body so FW-08 has a known-good
      * implementation to subscribe to. The handle and netif values
      * are not tracked across the host mock surface (the mocks
-     * discard them), so this function is best-effort. */
+     * discard them), so this function is best-effort.
+     *
+     * This stops the PROVISIONING AP ONLY — the STA connection
+     * MUST survive. The original body called esp_wifi_stop(),
+     * which tore down the ENTIRE radio including the STA that had
+     * just acquired its IP on the GOT_IP teardown path (device
+     * log: sta ip -> wifi state run->init -> STA_DISCONNECTED;
+     * the device vanished from the LAN while tasks kept running).
+     * Switching APSTA -> STA tears down the AP interface while
+     * preserving the associated station. */
     esp_err_t r = httpd_stop(NULL);
     if (r != ESP_OK && r != ESP_ERR_INVALID_ARG) return r;
-    r = esp_wifi_stop();
-    if (r != ESP_OK) return r;
+    r = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (r != ESP_OK) {
+        ESP_LOGE(TAG, "softap_stop failed: esp_wifi_set_mode: %s",
+                 esp_err_to_name(r));
+        return r;
+    }
     /* esp_netif_destroy returns void in IDF v5.5.3. */
     esp_netif_destroy(NULL);
     /* Clear the cfg snapshot so a subsequent softap_run_provisioning()

@@ -44,7 +44,12 @@ boot_status_t softap_run_provisioning(const config_t *cfg);
 
 /* Teardown. FW-08.4 will subscribe to STA-IP-up and call this. FW-05
  * ships a working body so FW-08 has a known-good implementation:
- *   httpd_stop(handle) + esp_wifi_stop() + esp_netif_destroy_default_netif(netif).
+ *   httpd_stop(handle) + esp_netif_destroy_default_netif(netif),
+ * plus an APSTA -> STA mode switch (esp_wifi_set_mode(WIFI_MODE_STA))
+ * that owns the transition — this stops the provisioning AP ONLY;
+ * the STA connection MUST survive (esp_wifi_stop() is NOT called:
+ * it would kill the whole radio, taking the freshly-associated STA
+ * down with it).
  * Returns ESP_OK on success; the failing esp_err_t on the first failure
  * (does NOT unwind partial state). */
 esp_err_t softap_stop(void);

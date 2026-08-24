@@ -4,7 +4,11 @@
  *   esp_wifi_set_mode(WIFI_MODE_AP)
  *   esp_wifi_set_config(WIFI_IF_AP, &cfg)
  *   esp_wifi_start()
- *   esp_wifi_stop()             (used by softap_stop; FW-08 future)
+ *   esp_wifi_stop()             (no longer used by production as of
+ *                              the 2026-08-24 GOT_IP-teardown fix —
+ *                              softap_stop() now switches APSTA -> STA
+ *                              instead of stopping the radio; kept for
+ *                              future power management)
  *
  * On host, the production source includes `mock_esp_wifi_link.h`
  * which `#define`s each production symbol to the mock symbol below.

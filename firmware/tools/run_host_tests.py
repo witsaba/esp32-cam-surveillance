@@ -460,6 +460,7 @@ ALL_TESTS = [
     # NEVER fire during GOT_IP handling (it killed the whole radio,
     # dropping the fresh STA association); the teardown ends in an
     # APSTA -> STA mode switch owned by softap_stop().
+    "got_ip_teardown_does_not_stop_sta_radio [fw-08.4][regression]",
     # FW-08.5 — softAP alive during joining (T-08-F).
     "test_fw08_5_pre_ip_up_keeps_softap_active_at_5s [fw-08.5][scenario-S1]",
     "test_fw08_5_pre_ip_up_retries_do_not_affect_softap [fw-08.5][scenario-S2]",

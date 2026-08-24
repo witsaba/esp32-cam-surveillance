@@ -133,6 +133,36 @@ TEST_CASE(
     TEST_ASSERT_EQUAL_INT(teardown_count_before + 1, teardown_count_after);
 }
 
+/* Regression (2026-08-24 device bug): the GOT_IP teardown path used
+ * to reach esp_wifi_stop(), which stops the ENTIRE wifi radio —
+ * including the STA that had JUST acquired its IP (device log:
+ * sta ip -> wifi state run->init -> STA_DISCONNECTED; the chip
+ * became unreachable over LAN while tasks kept running). The
+ * teardown now ends in an APSTA -> STA mode switch owned by
+ * softap_stop(); esp_wifi_stop MUST NOT appear anywhere in the
+ * GOT_IP event handling. */
+TEST_CASE(
+    "got_ip_teardown_does_not_stop_sta_radio [fw-08.4][regression]",
+    "[wifi-event][fw-08.4][teardown][no-radio-stop]")
+{
+    esp_err_t rc = wifi_init_with_mocks();
+    TEST_ASSERT_EQUAL_INT(ESP_OK, rc);
+
+    /* Fire IP_EVENT_STA_GOT_IP. */
+    drive_ip_got_ip();
+
+    /* The radio MUST stay up: zero esp_wifi_stop invocations
+     * across the whole GOT_IP handling. */
+    TEST_ASSERT_EQUAL_INT(0, mock_esp_wifi_stop_call_count());
+
+    /* The AP teardown still fired exactly once... */
+    TEST_ASSERT_EQUAL_INT(1, mock_softap_stop_call_count());
+
+    /* ...and ended in STA-only mode, not a stopped radio. */
+    wifi_mode_t last_mode = mock_esp_wifi_set_mode_arg_at(0);
+    TEST_ASSERT_EQUAL_INT(WIFI_MODE_STA, (int)last_mode);
+}
+
 #ifndef CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT
 /* S2 — Kconfig off keeps softAP alive. Only compiled when the
  * Kconfig symbol is NOT defined (i.e., the build was passed
