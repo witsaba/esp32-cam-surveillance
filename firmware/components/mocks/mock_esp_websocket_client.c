@@ -94,6 +94,7 @@ static size_t g_send_bin_partial_count  = 0;
 static size_t g_send_cont_msg_count     = 0;
 static size_t g_send_fin_count          = 0;
 static int    g_bin_fail_at_index       = -1;    /* -1 disabled */
+static bool   g_bin_fail_all            = false; /* persistent dead socket */
 static size_t g_bin_op_count            = 0;     /* all four verbs since reset */
 
 /* ---------- primable state (test entries) ---------- */
@@ -169,6 +170,7 @@ void mock_esp_websocket_client_reset_for_test(void)
     g_send_cont_msg_count    = 0;
     g_send_fin_count         = 0;
     g_bin_fail_at_index      = -1;
+    g_bin_fail_all           = false;
     g_bin_op_count           = 0;
 }
 
@@ -557,12 +559,12 @@ static int bin_record(uint8_t opcode, bool fin,
                       const char *data, int len, int rc)
 {
     if (!data || len < 0) return -1;
-    if (g_bin_fail_at_index >= 0 &&
-        (size_t)g_bin_fail_at_index == g_bin_op_count) {
-        g_bin_op_count++;
+    g_bin_op_count++;
+    if (g_bin_fail_all ||
+        (g_bin_fail_at_index >= 0 &&
+         (size_t)g_bin_fail_at_index == g_bin_op_count - 1)) {
         return -1;
     }
-    g_bin_op_count++;
 
     bin_frame_slot_t *slot = NULL;
     if (s_bin_ring_count < MOCK_WS_BIN_RING_CAP) {
@@ -621,6 +623,11 @@ int mock_esp_websocket_client_send_fin(
 void mock_esp_websocket_client_fail_at_index_set(int idx)
 {
     g_bin_fail_at_index = idx;
+}
+
+void mock_esp_websocket_client_fail_all_set(bool fail_all)
+{
+    g_bin_fail_all = fail_all;
 }
 
 size_t mock_esp_websocket_client_bin_op_call_count(void)

@@ -275,8 +275,11 @@ int mock_esp_websocket_client_get_config_reconnect_timeout_ms(void);
  * binary-send operation (counting send_bin / send_bin_partial /
  * send_cont_msg / send_fin together since reset) returns -1 and
  * records NOTHING. -1 disables. Used by REQ-ST-007 drain-drop
- * -count tests to simulate a dead socket mid-frame. */
-void   mock_esp_websocket_client_fail_at_index_set(int idx);
+ * -count tests to simulate a dead socket mid-frame.
+ * fail_all_set(true) makes EVERY binary-send op fail regardless
+ * of index (persistent dead socket). */
+void mock_esp_websocket_client_fail_at_index_set(int idx);
+void mock_esp_websocket_client_fail_all_set(bool fail_all);
 
 /* Total binary-send operations observed (all four verbs), and
  * per-verb counters. Reset by reset_for_test(). */
