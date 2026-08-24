@@ -34,6 +34,7 @@
 #include "mock_boot_button.h"
 #include "mock_init_returns.h"
 #include "mock_supervision_record.h"
+#include "mock_esp_event.h"
 #include "unity.h"
 
 #ifdef UNITY_HOST_BUILD
@@ -51,6 +52,14 @@ static void seed_configured_nvs(const char *ssid)
     mock_nvs_reset();
     mock_init_returns_reset();
     mock_supervision_reset();
+    /* FW-16: one normal boot now consumes one more event-mock
+     * slot (the ws /cams attach hook subscribes GOT_IP inside
+     * ws_init, FATAL on failure). Reset the capture table per
+     * test so accumulation across the 7 boot_run() invocations
+     * in this file can never starve it — same convention as the
+     * FW-13 ws fixtures ("Reset event-mock slot table to prevent
+     * NO_MEM under accumulated subscriptions"). */
+    mock_esp_event_reset();
     mock_boot_button_set(false);
     mock_nvs_seed_u8("config", "schema_version", CONFIG_SCHEMA_VERSION);
     mock_nvs_seed_str("config", "ssid", ssid);

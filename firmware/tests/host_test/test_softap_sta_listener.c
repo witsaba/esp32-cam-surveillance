@@ -108,8 +108,10 @@ TEST_CASE("test_fw05_5_ip_up_starts_httpd [fw-05.5][ip-up][scenario-S1]", "[soft
     /* Exactly one new httpd_start invocation. */
     TEST_ASSERT_EQUAL_INT(1, mock_httpd_start_call_count() - start_before);
 
-    /* Two new URI registrations — /whoami (FW-05.5) + /snapshot
-     * (diagnostic frame endpoint). */
+    /* Two new URI registrations from THIS module — /whoami
+     * (FW-05.5) + /snapshot (diagnostic frame endpoint). The FW-16
+     * /cams WebSocket endpoint is attached by the ws component's
+     * own GOT_IP subscription, not by this listener. */
     TEST_ASSERT_EQUAL_INT(
         2, mock_httpd_register_uri_handler_call_count() - register_before);
 

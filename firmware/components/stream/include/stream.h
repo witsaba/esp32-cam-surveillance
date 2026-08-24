@@ -1,15 +1,16 @@
-/* stream.h — public API for the FW-15 stream component.
+/* stream.h — public API for the FW-15/FW-16 stream component.
  *
  * Consumes the FW-11 depth-2 capture queue and ships each camera
- * frame as a binary WebSocket message (REQ-ST-001/002), fragment-
- * ing frames larger than CONFIG_FIRMWARE_WS_BUFFER_SIZE via
- * send_bin_partial → send_cont_msg* → send_fin (REQ-ST-003).
+ * frame as ONE complete binary WebSocket message through the
+ * viewer sink (FW-16 server mode: httpd_ws_send_frame_async with
+ * hd+fd captured at /cams handshake).
  *
  * Ownership (REQ-ST-005, amended capture.h contract): the stream
  * task owns the frame buffer from receive until AFTER the send
  * attempt — esp_camera_fb_return fires on success AND failure.
  *
- * Split per design: pure planner (stream_fragment.{c,h}) + thin
+ * Split per design: pure planner (stream_fragment.{c.h}, retained
+ * as a diagnostic — feeds the greppable parts= log metric) + thin
  * sender (stream_sender.c) + FreeRTOS task loop (stream.c),
  * mirroring the capture component's shape.
  */
@@ -64,18 +65,12 @@ bool stream_loop_iteration(void);
 
 /* ---------- sender ---------- */
 
-/* Map the fragment plan onto the IDF binary-send verbs and ship
- * one complete WS message:
- *   len ≤ chunk  → 1 × send_bin                      (REQ-ST-001)
- *   len > chunk  → send_bin_partial(first) →
- *                  send_cont_msg*(middles+last) →
- *                  send_fin()                        (REQ-ST-003)
- * Every slice stays ≤ CONFIG_FIRMWARE_WS_BUFFER_SIZE (zero-copy
- * into the caller's buffer). Returns the number of payload bytes
- * accepted (> 0 / == len) on success, -1 if any send attempt or
- * argument fails. On failure mid-sequence the message is left
- * unterminated — documented, accepted (IDF resets message state
- * on the next leading send). */
+/* Ship one complete binary WS message to the connected viewer:
+ *   no viewer / send failure  → -1 (caller: D4 drain-drop-count)
+ *   success                   → payload length accepted
+ * The sink (ws.h) is installed at /cams viewer accept; with the
+ * disconnected stubs this returns -1 and the loop keeps
+ * consuming. */
 int stream_send_frame(const uint8_t *buf, size_t len);
 
 #ifdef __cplusplus

@@ -26,6 +26,7 @@ typedef struct {
     int          method;
     esp_err_t  (*handler)(httpd_req_t *);
     void        *user_ctx;
+    bool         is_websocket;
     int          in_use;
 } handler_entry_t;
 
@@ -34,15 +35,47 @@ static int             g_register_count = 0;
 static int             g_start_count    = 0;
 static int             g_stop_count     = 0;
 
+/* FW-16 — captured WS async-send frames (bounded ring, oldest-
+ * first). Payloads are copied; cap sized for the rejection JSON
+ * + hello/status frames asserted in tests. */
+#define MOCK_HTTPD_WS_RING_CAP   8
+#define MOCK_HTTPD_WS_PART_CAP   512
+
+typedef struct {
+    int    type;
+    size_t len;
+    uint8_t data[MOCK_HTTPD_WS_PART_CAP];
+} mock_ws_frame_slot_t;
+
+static mock_ws_frame_slot_t g_ws_ring[MOCK_HTTPD_WS_RING_CAP];
+static size_t               g_ws_ring_count = 0;
+
+/* FW-16 — primed fd liveness: fds marked dead via
+ * mock_httpd_ws_kill_session report INVALID on the next probe. */
+#define MOCK_HTTPD_WS_DEAD_CAP 16
+static int g_ws_dead_fds[MOCK_HTTPD_WS_DEAD_CAP];
+static int g_ws_dead_count = 0;
+
+static bool ws_fd_marked_dead(int fd)
+{
+    for (int i = 0; i < g_ws_dead_count; ++i) {
+        if (g_ws_dead_fds[i] == fd) return true;
+    }
+    return false;
+}
+
 static char g_sentinel_handle;
 static httpd_handle_t g_current_server = &g_sentinel_handle;
 
 void mock_httpd_reset(void)
 {
     memset(g_handlers, 0, sizeof(g_handlers));
+    memset(g_ws_ring, 0, sizeof(g_ws_ring));
     g_register_count = 0;
     g_start_count    = 0;
     g_stop_count     = 0;
+    g_ws_ring_count  = 0;
+    g_ws_dead_count  = 0;
     g_current_server = &g_sentinel_handle;
 }
 
@@ -144,11 +177,12 @@ esp_err_t mock_httpd_register_uri_handler(httpd_handle_t server,
     /* Find a free slot. */
     for (int i = 0; i < MAX_HANDLERS; ++i) {
         if (!g_handlers[i].in_use) {
-            g_handlers[i].uri      = uri->uri;
-            g_handlers[i].method   = (int)uri->method;
-            g_handlers[i].handler  = uri->handler;
-            g_handlers[i].user_ctx = uri->user_ctx;
-            g_handlers[i].in_use   = 1;
+            g_handlers[i].uri          = uri->uri;
+            g_handlers[i].method       = (int)uri->method;
+            g_handlers[i].handler      = uri->handler;
+            g_handlers[i].user_ctx     = uri->user_ctx;
+            g_handlers[i].is_websocket = uri->is_websocket;
+            g_handlers[i].in_use       = 1;
             g_register_count++;
             return ESP_OK;
         }
@@ -216,4 +250,87 @@ esp_err_t mock_httpd_resp_set_status(httpd_req_t *req, const char *status)
 esp_err_t mock_httpd_resp_sendstr(httpd_req_t *req, const char *str)
 {
     return mock_httpd_resp_send(req, str, -1);
+}
+
+/* ---------- FW-16 WebSocket async-send surface ---------- */
+
+esp_err_t mock_httpd_ws_send_frame_async(httpd_handle_t hd, int fd,
+                                          httpd_ws_frame_t *pkt)
+{
+    (void)hd; (void)fd;
+    if (!pkt || !pkt->payload || pkt->len == 0) return ESP_ERR_INVALID_ARG;
+
+    if (g_ws_ring_count < MOCK_HTTPD_WS_RING_CAP) {
+        mock_ws_frame_slot_t *slot = &g_ws_ring[g_ws_ring_count++];
+        slot->type = (int)pkt->type;
+        size_t n = pkt->len < MOCK_HTTPD_WS_PART_CAP
+                     ? pkt->len : MOCK_HTTPD_WS_PART_CAP;
+        memcpy(slot->data, pkt->payload, n);
+        slot->len = n;
+        return ESP_OK;
+    }
+    /* Ring full: drop the oldest by shifting left. */
+    memmove(g_ws_ring, g_ws_ring + 1,
+            (MOCK_HTTPD_WS_RING_CAP - 1) * sizeof(mock_ws_frame_slot_t));
+    mock_ws_frame_slot_t *slot =
+        &g_ws_ring[MOCK_HTTPD_WS_RING_CAP - 1];
+    slot->type = (int)pkt->type;
+    size_t n = pkt->len < MOCK_HTTPD_WS_PART_CAP
+                 ? pkt->len : MOCK_HTTPD_WS_PART_CAP;
+    memcpy(slot->data, pkt->payload, n);
+    slot->len = n;
+    return ESP_OK;
+}
+
+int mock_httpd_req_to_sockfd(httpd_req_t *r)
+{
+    if (!r) return -1;
+    return ((mock_httpd_req_t *)r)->sockfd;
+}
+
+int mock_httpd_ws_send_call_count(void)
+{
+    return (int)g_ws_ring_count;
+}
+
+esp_err_t mock_httpd_ws_get_frame_at(size_t idx, int *type,
+                                      uint8_t *out, size_t cap,
+                                      size_t *len)
+{
+    if (!out || !len || idx >= g_ws_ring_count) return ESP_ERR_INVALID_ARG;
+    const mock_ws_frame_slot_t *slot = &g_ws_ring[idx];
+    if (type) *type = slot->type;
+    size_t n = slot->len < cap ? slot->len : cap;
+    memcpy(out, slot->data, n);
+    *len = n;
+    return ESP_OK;
+}
+
+httpd_ws_client_info_t mock_httpd_ws_session_alive(int fd)
+{
+    if (fd < 0 || ws_fd_marked_dead(fd)) {
+        return HTTPD_WS_CLIENT_INVALID;
+    }
+    return HTTPD_WS_CLIENT_WEBSOCKET;
+}
+
+void mock_httpd_ws_kill_session(int fd)
+{
+    if (fd < 0) return;
+    if (!ws_fd_marked_dead(fd) &&
+        g_ws_dead_count < MOCK_HTTPD_WS_DEAD_CAP) {
+        g_ws_dead_fds[g_ws_dead_count++] = fd;
+    }
+}
+
+void mock_httpd_last_registered_is_websocket(bool *flag)
+{
+    /* Most recently registered handler (highest in_use index). */
+    for (int i = MAX_HANDLERS - 1; i >= 0; --i) {
+        if (g_handlers[i].in_use) {
+            if (flag) *flag = g_handlers[i].is_websocket;
+            return;
+        }
+    }
+    if (flag) *flag = false;
 }

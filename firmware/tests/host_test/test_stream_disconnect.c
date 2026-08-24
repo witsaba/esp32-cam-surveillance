@@ -1,9 +1,9 @@
-/* test_stream_disconnect.c — FW-15.3/15.4 host scenarios for the
- * stream task loop under a DEAD socket (REQ-ST-005 / REQ-ST-007,
- * design D4).
+/* test_stream_disconnect.c — FW-15.3/15.4 + FW-16 host scenarios
+ * for the stream task loop under a DEAD socket (REQ-ST-005 /
+ * REQ-ST-007, design D4).
  *
  * Disconnect semantics = drain + drop + count:
- *   - any send rc < 0 aborts the frame's remaining fragments,
+ *   - any send failure aborts the frame's send attempt,
  *   - the fb is returned to the driver EXACTLY ONCE (success OR
  *     failure — consumer-owned post-receive, REQ-ST-005),
  *   - the stream drop counter increments,
@@ -13,14 +13,16 @@
  *
  * Scenarios:
  *   S1 (REQ-ST-005) — failed send still returns the fb exactly once.
- *   S2 (REQ-ST-007) — 3 queued frames against a dead socket: all 3
+ *   S2 (REQ-ST-007) — 4 queued frames against a dead socket: all 4
  *       are consumed (drained), each fb_returned exactly once,
- *       dropped == 3, sent == 0; a subsequent receive times out
+ *       dropped == 4, sent == 0; a subsequent receive times out
  *       bounded (queue empty — never blocked forever).
- *   S3 (REQ-ST-001/002 happy path through the LOOP) — healthy
- *       socket: one iteration sends one binary message and bumps
- *       `sent`; the greppable per-frame log line is emitted from
+ *   S3 (REQ-ST-001/002 happy path through the LOOP) — connected
+ *       viewer: one iteration sends one complete binary message and
+ *       bumps `sent`; the greppable per-frame log line is emitted from
  *       the send path (device-log evidence seam, REQ-ST-008/009).
+ *   S4 (FW-16) — NO viewer sink installed: every frame drops with
+ *       the same D4 accounting (drop-count when no viewer).
  */
 #include <stdbool.h>
 #include <stdint.h>
@@ -36,9 +38,7 @@
 #include "mock_esp_camera_link.h"
 #include "mock_supervision_record.h"
 #include "mock_init_returns.h"
-#include "mock_esp_websocket_client_link.h"
-#include "mock_esp_event_link.h"
-#include "mock_esp_system_link.h"
+#include "ws_sink_recorder.h"
 #include "unity.h"
 
 #ifdef UNITY_HOST_BUILD
@@ -47,27 +47,31 @@
 #include "unity_test_runner.h"
 #endif
 
-/* Full fixture: fresh mocks + armed capture-queue hooks + a real
- * ws_init pass so the sender's handle is live (or primed to fail). */
-static void stream_loop_with_mocks(void)
+/* Full fixture: fresh mocks + armed capture-queue hooks + ws_init
+ * module state + (optionally) a recorder viewer sink. */
+static void stream_loop_with_mocks(bool install_viewer)
 {
     mock_esp_camera_reset();
     mock_supervision_reset();
     mock_init_returns_reset();
-    mock_esp_websocket_client_reset_for_test();
-    mock_esp_event_reset();
     capture_counters_reset_for_test();
     stream_counters_reset_for_test();
-    ws_event_handler_reset_for_test();
-    TEST_ASSERT_EQUAL(ESP_OK, capture_task_start()); /* arms queue hooks */
-
-    uint8_t mac[6] = {0xc8, 0xf0, 0x9e, 0x9d, 0x50, 0x08};
-    mock_esp_read_mac_set_bytes(mac);
 
     config_t cfg;
     memset(&cfg, 0, sizeof(cfg));
     strncpy(cfg.wifi.ssid, "TestSSID", sizeof(cfg.wifi.ssid) - 1);
     TEST_ASSERT_EQUAL(ESP_OK, ws_init(&cfg));
+
+    if (install_viewer) {
+        ws_sink_recorder_reset();
+        TEST_ASSERT_EQUAL(ESP_OK, ws_sink_recorder_install());
+    } else {
+        /* No viewer: leave the disconnected stubs ws_install set
+         * during ws_init in place. */
+        ws_sink_recorder_reset();
+        ws_sink_install(NULL);
+    }
+    TEST_ASSERT_EQUAL(ESP_OK, capture_task_start()); /* arms queue hooks */
 }
 
 static camera_fb_t make_fb(uint8_t *storage, size_t len)
@@ -84,10 +88,10 @@ TEST_CASE(
     "test_fw15_failed_send_returns_fb_exactly_once [fw-15.3][req-st-005][scenario-S1]",
     "[stream][fw-15.3][fb-return]")
 {
-    stream_loop_with_mocks();
+    stream_loop_with_mocks(true);
 
-    /* Dead socket: the very first send operation fails. */
-    mock_esp_websocket_client_fail_at_index_set(0);
+    /* Dead socket: every send fails. */
+    ws_sink_recorder_fail_all_set(true);
 
     static uint8_t storage[8000];
     camera_fb_t fb = make_fb(storage, sizeof(storage));
@@ -110,8 +114,8 @@ TEST_CASE(
     "test_fw15_dead_socket_drains_all_frames [fw-15.3][req-st-007][scenario-S2]",
     "[stream][fw-15.3][drain]")
 {
-    stream_loop_with_mocks();
-    mock_esp_websocket_client_fail_all_set(true); /* persistent dead socket */
+    stream_loop_with_mocks(true);
+    ws_sink_recorder_fail_all_set(true); /* persistent dead socket */
 
     /* The producer side enqueues frames back-to-back while the
      * dead-socket consumer keeps draining. Queue depth is 2, so
@@ -147,7 +151,7 @@ TEST_CASE(
     "test_fw15_healthy_socket_loop_sends_and_counts [fw-15.3][req-st-002][scenario-S3]",
     "[stream][fw-15.3][happy-path]")
 {
-    stream_loop_with_mocks();
+    stream_loop_with_mocks(true);
 
     static uint8_t storage[4096];
     for (size_t i = 0; i < sizeof(storage); i++) storage[i] = (uint8_t)i;
@@ -157,15 +161,12 @@ TEST_CASE(
 
     TEST_ASSERT_TRUE(stream_loop_iteration());
 
-    /* Exactly one binary message, opcode 0x2, byte-exact payload. */
-    TEST_ASSERT_EQUAL_size_t(1, mock_esp_websocket_client_send_bin_call_count());
-    uint8_t op = 0xFF; bool fin = false;
-    static uint8_t out[MOCK_WS_BIN_PART_CAP];
+    /* Exactly one complete binary frame, byte-exact payload. */
+    TEST_ASSERT_EQUAL_size_t(1, ws_sink_recorder_bin_count());
+    static uint8_t out[24576];
     size_t out_len = 0;
-    TEST_ASSERT_EQUAL(ESP_OK, mock_esp_websocket_client_get_bin_frame_at(
-        0, &op, &fin, out, sizeof(out), &out_len));
-    TEST_ASSERT_EQUAL_HEX8(0x2, op);
-    TEST_ASSERT_TRUE(fin);
+    TEST_ASSERT_EQUAL(ESP_OK, ws_sink_recorder_get_bin_at(
+        0, out, sizeof(out), &out_len));
     TEST_ASSERT_EQUAL_size_t(sizeof(storage), out_len);
     TEST_ASSERT_EQUAL_MEMORY(storage, out, sizeof(storage));
 
@@ -173,4 +174,34 @@ TEST_CASE(
     TEST_ASSERT_EQUAL_INT(1, mock_esp_camera_fb_return_call_count());
     TEST_ASSERT_EQUAL_UINT32(1, stream_frames_sent_get());
     TEST_ASSERT_EQUAL_UINT32(0, stream_frames_dropped_get());
+}
+
+/* ---------- S4 — FW-16: no viewer → drop-count keeps draining ---------- */
+TEST_CASE(
+    "test_fw16_no_viewer_frame_dropped_and_counted [fw-16][server][scenario-S4]",
+    "[stream][fw-16][no-viewer]")
+{
+    /* No sink installed — ws_init left the disconnected stubs
+     * active, exactly like a booted device before any /cams
+     * handshake. */
+    stream_loop_with_mocks(false);
+
+    static uint8_t storage[3000];
+    camera_fb_t fb = make_fb(storage, sizeof(storage));
+    TEST_ASSERT_TRUE(capture_queue_send_drop_on_full(
+        capture_queue_for_test(), &fb));
+
+    /* Iteration consumes + returns the fb but reports failure. */
+    TEST_ASSERT_FALSE(stream_loop_iteration());
+
+    /* D4 accounting identical to a dead socket: fb returned once,
+     * dropped++ (not sent). Nothing reached any sink. */
+    TEST_ASSERT_EQUAL_INT(1, mock_esp_camera_fb_return_call_count());
+    TEST_ASSERT_EQUAL_size_t(0, ws_sink_recorder_bin_count());
+    TEST_ASSERT_EQUAL_UINT32(0, stream_frames_sent_get());
+    TEST_ASSERT_EQUAL_UINT32(1, stream_frames_dropped_get());
+
+    /* The queue drained — producer never wedges while idle. */
+    void *out = NULL;
+    TEST_ASSERT_FALSE(capture_queue_receive_timeout(&out, 20));
 }

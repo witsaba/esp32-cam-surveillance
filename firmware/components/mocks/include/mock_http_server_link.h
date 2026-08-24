@@ -28,4 +28,11 @@
 #define httpd_resp_set_status(req, status)     mock_httpd_resp_set_status(req, status)
 #define httpd_resp_sendstr(req, str)           mock_httpd_resp_sendstr(req, str)
 
+/* FW-16 — WebSocket server surface. */
+#define httpd_ws_send_frame_async(hd, fd, pkt) \
+    mock_httpd_ws_send_frame_async(hd, fd, pkt)
+#define httpd_req_to_sockfd(r)                 mock_httpd_req_to_sockfd(r)
+#define httpd_ws_get_fd_info(hd, fd) \
+    mock_httpd_ws_session_alive(fd)
+
 #endif  /* !MOCK_HTTP_USE_REAL */

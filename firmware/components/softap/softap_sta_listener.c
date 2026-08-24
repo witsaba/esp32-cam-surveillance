@@ -172,6 +172,17 @@ esp_err_t softap_sta_listener_install(void)
     return r;
 }
 
+/* FW-16 — read-only access to the live STA httpd instance. The
+ * ws component attaches its /cams WebSocket endpoint to THIS
+ * server via its own IP-up subscription instead of the softap
+ * component linking against ws — a softap→ws edge would close
+ * the softap→ws→wifi→softap dependency cycle and break static-
+ * link ordering. Returns NULL while the httpd is down. */
+httpd_handle_t softap_sta_listener_httpd_handle_get(void)
+{
+    return s_sta_httpd;
+}
+
 /* Test-only: query whether the listener is currently active. The
  * httpd handle is the source of truth. */
 bool softap_sta_listener_is_active(void)
