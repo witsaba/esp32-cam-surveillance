@@ -1,7 +1,7 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 12 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; FW-08 closed by PR #10, merge commit `9133aeb` — see amendment blockquote at the end of § FW-08; FW-10 closed by PR #11, merge commit `b05288d` — see amendment blockquote at the end of § FW-10; FW-11 closed by PR #12, merge commit `58f387e` — see amendment blockquote at the end of § FW-11; FW-13 closed by PR #13, merge commit `1d671c3` — see amendment blockquote at the end of § FW-13; **FW-05.5 closed (PR pending — worktree `feat/whoami-always-on`, 4 work-unit commits including mock fidelity fix, see amendment blockquote at the end of § FW-05.5; device-flash verify captured the `URI /whoami registered on STA interface` log line; HTTP round-trip from this Mac blocked by AP client isolation on `Liwaisi Wifi`)**).
-> **Next SDD to start**: FW-15 (stream task → WS binary) or FW-18 (control dispatcher) per dependency graph — FW-14 implemented on worktree `feat/fw-14-auto-reconnect` (PR pending; see amendment blockquote at the end of § FW-14).
+> **Status**: 12 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; FW-08 closed by PR #10, merge commit `9133aeb` — see amendment blockquote at the end of § FW-08; FW-10 closed by PR #11, merge commit `b05288d` — see amendment blockquote at the end of § FW-10; FW-11 closed by PR #12, merge commit `58f387e` — see amendment blockquote at the end of § FW-11; FW-13 closed by PR #13, merge commit `1d671c3` — see amendment blockquote at the end of § FW-13; **FW-05.5 closed (PR pending — worktree `feat/whoami-always-on`, 4 work-unit commits including mock fidelity fix, see amendment blockquote at the end of § FW-05.5; device-flash verify captured the `URI /whoami registered on STA interface` log line; HTTP round-trip from this Mac blocked by AP client isolation on `Liwaisi Wifi`)**; **FW-14 closed by PR #19, merge commit `224b51c`; FW-15 closed (PR pending — worktree `feat/fw-15-stream-task`, 4 work-unit commits, ~1585 LoC with maintainer-approved `size:exception`, see amendment blockquote at the end of § FW-15; host suite 152/152, device build green, `stream_task_start` confirmed on silicon)**).
+> **Next SDD to start**: FW-16 (soft recovery) or FW-18 (control dispatcher) per dependency graph — FW-15 implemented on worktree `feat/fw-15-stream-task` (PR pending; see amendment blockquote at the end of § FW-15).
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
 > **Date**: 2026-08-21.
@@ -773,6 +773,18 @@ flowchart TB
   class FW08_6 guard
 ```
 
+> **Amended 2026-08-24 (boot-order fix — GPIO 0 shared-pin conflict).** During FW-15 device-frame
+> verification, every boot produced continuous `esp_camera_fb_get` timeouts (sensor detected, zero
+> frames delivered). Staged `fb_get` probes inside the FR-1 sequence isolated the cause: FW-07.3's
+> `button_init` ran LAST and its `gpio_config` (input + internal pull-up on GPIO 0) reconfigured the
+> AI-Thinker camera XCLK output that `esp_camera_init` had claimed — destroying the sensor's master
+> clock for the lifetime of the boot. Fix: the button subsystem is now brought up BEFORE
+> `camera_init` (button claims the shared pin FIRST, camera claims it LAST). Runtime long-press
+> detection is unaffected: a pressed switch shorts GPIO 0 to GND, dominating the 10 MHz clock wave.
+> Post-fix evidence: 45 s full-boot monitor capture with **zero** frame timeouts; frames flow into
+> the depth-2 queue and the diagnostic `GET /snapshot` endpoint serves real JPEGs. The "button is
+> the last subsystem brought up" wording in earlier FW-07 notes is superseded.
+
 ### FW-08 — Wi-Fi station connects with exponential backoff and recovers from AP reboot
 
 SDD change: `firmware-wifi-station-backoff` · Closes: R-04, R-05, R-26 (softAP-teardown half).
@@ -1482,6 +1494,41 @@ SDD change: `firmware-stream-task` · Closes: R-17, R-18.
 - **Scenarios:**
   - **Scenario: idle stream keeps WS up.** Given the stream task running but the backend polling slowly, When 60 s elapses with no inbound messages from the backend, Then the WS remains connected (ping cadence sustains it).
 - **Depends on:** FW-15.3.
+
+> **Amended 2026-08-24 (FW-15 closure).** FW-15 implemented on worktree branch `feat/fw-15-stream-task`
+> against `main@224b51c` (post-FW-14 merge PR #19) — 4 work-unit commits (3 planned + 1 verify-fix);
+> single PR with `size:exception` per preflight (1000-line review budget + extend-if-needed; final
+> 20 files, +1536/−49 ≈ 1585 LoC). Closes R-17's ping halves at the config level (ping_interval=10 s /
+> pingpong_timeout=30 s already set by FW-13.1; FW-15 proves the stream workload coexists with that
+> cadence) and R-18 (fragmentation policy via `send_bin_partial` → `send_cont_msg` → `send_fin`).
+> Unblocks FW-19 (stream on/off + fps clamp) and FW-22 (idle-power decision observes the stream loop).
+>
+> **Examples-table correction (REQ-ST-003).** The FW-15.2 example row ~~`16001 | 2`~~ is
+> mathematically unsatisfiable under uniform chunking: 16001→2 requires a chunk smaller than 16001,
+> while 32768→2 requires chunk ≥ 16384. Superseded: the part count is
+> `ceil(len / CONFIG_FIRMWARE_WS_BUFFER_SIZE)` with `CONFIG_FIRMWARE_WS_BUFFER_SIZE=16384`, giving
+> `16001 | 1`; all other rows are unchanged and byte-exact reassembly is asserted in host tests.
+>
+> **Size gate.** `firmware.bin` = 1,120,448 B, fitting the 0x130000 factory partition with ~10 % free
+> — identical to the accepted FW-14 closure baseline; the literal <256 KB charter line was already
+> superseded by earlier amendments. No regression from FW-15 (~+2 KB).
+>
+> **Evidence.** Host suite `cd firmware && make test`: 152/152 PASS (12 new FW-15 tests covering
+> single-send, binary opcode 0x2, the part-count table incl. byte-exact reassembly, chunk source,
+> consumer-owned `fb_return`, bounded-timeout receive, disconnect drain+drop+count). Stub-build
+> duplicate-symbol gate clean. `idf.py build` green, `-Werror` clean in FW-15 files. Device flash on
+> AI-Thinker ESP32-CAM confirms `stream_task_start` spawns on silicon. REQ-ST-008/009 wire-cadence
+> scenarios (pong-deadline ≤ 30 s, ≥2 pings/30 s, idle keep-alive 60 s) remain pending backend-controlled
+> hardware smoke; the send path emits greppable `stream: frame len=… parts=…` log lines for that smoke.
+>
+> **Work-unit commit ledger** (4 commits on `feat/fw-15-stream-task`):
+>
+> | # | Commit SHA | Title | What |
+> |---|---|---|---|
+> | 1 | `cd459f5` | feat(firmware): bounded capture-queue receive + WS binary-send mocks (FW-15.1) | `capture_queue_receive_timeout` API + sync hooks; mock binary surface |
+> | 2 | `52c41c5` | feat(firmware): pure fragment planner + binary sender mapping (FW-15.2) | array-free planner + thin sender, zero-copy slices |
+> | 3 | `6fe0cd3` | feat(firmware): stream task loop + disconnect drain-drop-count (FW-15.3/15.4) | task loop, boot wiring, stub replacement, counters |
+> | 4 | `eab6670` | fix(firmware): commit mock fail_all_set + boot link edge left out of 6fe0cd3 (verify CRITICAL) | residue commit so HEAD is self-contained |
 
 ### FW-16 — Soft recovery reboots after the failure threshold
 

@@ -72,6 +72,7 @@ static httpd_handle_t s_sta_httpd = NULL;
 
 /* Forward decls — implemented in softap_handlers.c. */
 extern esp_err_t whoami_get_handler_impl(httpd_req_t *req);
+extern esp_err_t snapshot_get_handler_impl(httpd_req_t *req);
 
 /* IP-up handler: start the STA-bound httpd and register /whoami.
  * Idempotent — if the httpd is already running (e.g., duplicate
@@ -118,6 +119,23 @@ static void on_sta_got_ip_handler(void *arg,
         return;
     }
     ESP_LOGI(TAG, "URI /whoami registered on STA interface");
+
+    /* Diagnostic /snapshot — one real JPEG per GET, pulled from the
+     * capture queue (single-caller invariant intact). Bisect tool:
+     * 200 = camera alive; 503 no_frame = sensor/driver dead. */
+    httpd_uri_t snapshot_uri = {
+        .uri      = "/snapshot",
+        .method   = HTTP_GET,
+        .handler  = snapshot_get_handler_impl,
+        .user_ctx = NULL,
+    };
+    r = httpd_register_uri_handler(s_sta_httpd, &snapshot_uri);
+    if (r != ESP_OK) {
+        ESP_LOGE(TAG, "register /snapshot failed: %s", esp_err_to_name(r));
+        /* /whoami alone still has value; keep the listener up. */
+        return;
+    }
+    ESP_LOGI(TAG, "URI /snapshot registered on STA interface");
 }
 
 /* Disconnect handler: stop the httpd. Idempotent — safe to call

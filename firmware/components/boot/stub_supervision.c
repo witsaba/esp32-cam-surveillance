@@ -1,5 +1,7 @@
-/* stub_supervision.c — stubs for the 4 supervision-task interfaces
- * FW-03 owns as call-sites only.
+/* stub_supervision.c — stubs for the remaining supervision-task
+ * interfaces FW-03 owns as call-sites only. (The stream stub was
+ * DELETED in FW-15 — components/stream/stream.c provides the real
+ * strong symbol; the capture stub was deleted in FW-11.)
  *
  * Each stub returns ESP_OK on the green path; on the host build it
  * consults `mock_init_returns_get(step)` first AND records the
@@ -59,20 +61,11 @@ esp_err_t health_task_start(void) {
     return ESP_OK;
 }
 
-esp_err_t stream_task_start(void) {
-#ifdef UNITY_HOST_BUILD
-    esp_err_t forced = mock_init_returns_get(BOOT_STEP_SUPERVISION_STREAM);
-    if (forced != ESP_OK) return forced;
-    mock_supervision_record("stream");
-#endif
-    ESP_LOGI(TAG, "stub: stream_task_start  // FW-15: real impl lands in stream task");
-#ifndef UNITY_HOST_BUILD
-    xTaskCreate(stub_task_body, "stub_stream",
-                BOOT_TASK_STACK_SUPERVISION, NULL,
-                BOOT_TASK_PRIO_SUPERVISION, NULL);
-#endif
-    return ESP_OK;
-}
+/* stream_task_start — STUB DELETED in FW-15 (T-13-I pattern).
+ * The real implementation lives in components/stream/stream.c and
+ * provides the strong symbol; the linker resolves boot.c:173's
+ * call directly. `make test-stub` guards against any duplicate-
+ * definition regression. */
 
 esp_err_t control_task_start(void) {
 #ifdef UNITY_HOST_BUILD

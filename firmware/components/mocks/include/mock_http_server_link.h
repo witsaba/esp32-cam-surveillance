@@ -25,6 +25,7 @@
 #define httpd_req_recv(req, buf, max)          mock_httpd_req_recv(req, buf, max)
 #define httpd_resp_send(req, buf, len)         mock_httpd_resp_send(req, buf, len)
 #define httpd_resp_set_type(req, type)         mock_httpd_resp_set_type(req, type)
+#define httpd_resp_set_status(req, status)     mock_httpd_resp_set_status(req, status)
 #define httpd_resp_sendstr(req, str)           mock_httpd_resp_sendstr(req, str)
 
 #endif  /* !MOCK_HTTP_USE_REAL */

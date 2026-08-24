@@ -91,6 +91,17 @@
 #include "identity.h"
 #include "softap.h"
 
+/* Diagnostic /snapshot — pulls one queued frame via the capture
+ * queue (single-caller invariant on esp_camera_fb_get stays
+ * intact: the handler NEVER calls esp_camera_fb_get). */
+#include "capture.h"
+
+#ifdef UNITY_HOST_BUILD
+#include "mock_esp_camera_link.h"
+#else
+#include "esp_camera.h"
+#endif
+
 #ifndef CONFIG_HTTPD_REQ_MAX_BODY_LEN
 /* IDF default for v5.5.3; explicit here so the source compiles on
  * the host where sdkconfig.h is a stub. The host tests never POST
@@ -410,4 +421,45 @@ reject:
     ESP_LOGW(TAG, "provision: rejected (err=%s)", err_key ? err_key : "json");
     return send_400(req, err_key ? err_key : "json");
 #endif
+}
+
+/* ---------- diagnostic GET /snapshot handler ----------
+ *
+ * Serves ONE real JPEG frame per request. The frame comes from the
+ * depth-2 capture queue (capture_queue_receive_timeout), NOT from
+ * esp_camera_fb_get — R-16/FW-11.3 keep the capture task as the
+ * sole driver caller. Consumer-owned buffer: fb_return fires after
+ * the response bytes are handed to httpd, mirroring the FW-15
+ * stream-task ownership contract.
+ *
+ * Bisect semantics:
+ *   200 image/jpeg  — sensor + driver + queue alive; streaming
+ *                     failures live downstream (WS/network).
+ *   503 no_frame    — nothing produced within the bounded wait;
+ *                     camera hardware is not delivering frames,
+ *                     independent of any transport.
+ */
+esp_err_t snapshot_get_handler_impl(httpd_req_t *req)
+{
+    /* 2 s bounded wait: a healthy QVGA@5fps pipeline produces every
+     * ~200 ms, so 2 s is generous without wedging the httpd worker. */
+    const uint32_t SNAPSHOT_FRAME_WAIT_MS = 2000;
+
+    void *p = NULL;
+    if (!capture_queue_receive_timeout(&p, SNAPSHOT_FRAME_WAIT_MS) ||
+        p == NULL) {
+        ESP_LOGW(TAG, "snapshot: no frame within %u ms",
+                 (unsigned)SNAPSHOT_FRAME_WAIT_MS);
+        httpd_resp_set_status(req, "503 Camera Unavailable");
+        httpd_resp_sendstr(req, "{\"error\":\"no_frame\"}");
+        return ESP_FAIL;
+    }
+
+    camera_fb_t *fb = (camera_fb_t *)p;
+    ESP_LOGI(TAG, "snapshot: serving %u bytes", (unsigned)fb->len);
+    httpd_resp_set_type(req, "image/jpeg");
+    esp_err_t r = httpd_resp_send(req, (const char *)fb->buf,
+                                  (ssize_t)fb->len);
+    esp_camera_fb_return(fb);
+    return r;
 }

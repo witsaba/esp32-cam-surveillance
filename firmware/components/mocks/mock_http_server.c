@@ -201,6 +201,18 @@ esp_err_t mock_httpd_resp_set_type(httpd_req_t *req, const char *type)
     return m->captured_content_type ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
+/* Diagnostic /snapshot — record the HTTP status line the handler
+ * set (e.g. "503 Camera Unavailable") into captured_status. The
+ * stored value is the numeric code; send()/sendstr() only fill in
+ * the 200 default when no explicit status was set. */
+esp_err_t mock_httpd_resp_set_status(httpd_req_t *req, const char *status)
+{
+    if (!req || !status) return ESP_ERR_INVALID_ARG;
+    mock_httpd_req_t *m = (mock_httpd_req_t *)req;
+    m->captured_status = atoi(status);
+    return ESP_OK;
+}
+
 esp_err_t mock_httpd_resp_sendstr(httpd_req_t *req, const char *str)
 {
     return mock_httpd_resp_send(req, str, -1);

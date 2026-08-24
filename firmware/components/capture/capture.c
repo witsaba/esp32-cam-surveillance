@@ -18,10 +18,13 @@
  *            └─► c->frames_captured++
  *
  * The single-owner invariant (PRD § FR-2b) holds by
- * architecture: this file is the ONLY TU that calls
- * `esp_camera_fb_get` / `esp_camera_fb_return`. The FW-11.3
+ * architecture: this file is the ONLY producer TU that calls
+ * `esp_camera_fb_get`; it calls `esp_camera_fb_return` only on
+ * its own drop path. FW-15 amends the ownership wording (see
+ * capture.h): the STREAM task owns post-receive fb lifetime and
+ * returns buffers after the send attempt. The FW-11.3
  * guard tripwire (Pass 10 stub build with
- * -DCAPTURE_TEST_STUB_SECOND_CALLER=1) proves this
+ * -DCAPTURE_TEST_STUB_SECOND_CALLER=1) proves the fb_get
  * invariant is load-bearing by introducing a synthetic 2nd
  * caller via the test fixture.
  */
@@ -38,6 +41,24 @@
 #include "mock_esp_camera_link.h"
 #include "mock_supervision_record.h"
 #include "mock_init_returns.h"
+
+/* FW-15 (D2) — host sync hooks: pthread mutex + condvar with
+ * CLOCK_MONOTONIC so pthread_cond_timedwait is immune to wall
+ * clock adjustments. macOS has no pthread_condattr_setclock and
+ * its condvar waits against the wall clock, so there we use a
+ * CLOCK_REALTIME deadline with an un-attributed condvar (host
+ * test infra only — device uses FreeRTOS primitives). */
+#include <errno.h>
+#include <pthread.h>
+#include <time.h>
+
+#if !defined(__APPLE__)
+#define CAPTURE_QUEUE_HAS_SETCLOCK 1
+#define CAPTURE_QUEUE_WAIT_CLOCK   CLOCK_MONOTONIC
+#else
+#define CAPTURE_QUEUE_HAS_SETCLOCK 0
+#define CAPTURE_QUEUE_WAIT_CLOCK   CLOCK_REALTIME
+#endif
 #else
 /* Device — link the real esp32-camera managed component
  * via REQUIRES in the component CMakeLists.txt. */
@@ -45,6 +66,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+/* FW-15 (D2) — device sync hooks: FreeRTOS mutex +
+ * counting-semaphore-as-condvar. */
+#include "freertos/semphr.h"
 #endif
 
 #include "boot_priq.h" /* BOOT_TASK_STACK_SUPERVISION + BOOT_TASK_PRIO_SUPERVISION */
@@ -80,6 +104,14 @@ void capture_counters_reset_for_test(void)
 #endif
 }
 
+/* FW-15 host-only test seam: the module-static ring, so host
+ * tests can play producer into the SAME queue that
+ * capture_queue_receive_timeout consumes. */
+capture_queue_t *capture_queue_for_test(void)
+{
+    return &g_capture_queue;
+}
+
 /* ---------- host queue backend (depth-2 ring buffer) ----------
  *
  * The host capture_queue_t is a thin wrapper around a
@@ -90,24 +122,186 @@ void capture_counters_reset_for_test(void)
  * incrementing fb_drops. Mirrors the device xQueueSend(0)
  * non-blocking semantics.
  *
- * On device the function is a no-op — the wrapper writes
- * to xQueueHandle directly via the production code path
- * (the FreeRTOS queue API takes a real QueueHandle_t). To
- * keep the pure-function signature stable across hosts, we
- * implement the same shape on device but operate on a
- * real xQueueHandle through the same slots[].
+ * FW-15 sync hooks (design D2): when `q->sync_mtx` and
+ * `q->sync_cv` are non-NULL the queue ops take the mutex and
+ * signal the condvar (host) / give the counting semaphore
+ * (device) so a blocked consumer wakes on push. Stack
+ * queues with NULL hooks stay lock-free + pure.
  */
+
+/* Shared pop — caller holds the lock when hooks are armed. */
+static void queue_pop_unsafe(capture_queue_t *q, void **out)
+{
+    *out = q->slots[q->head];
+    q->head = (q->head + 1) % MOCK_CAPTURE_QUEUE_DEPTH;
+    q->count--;
+}
+
+#ifdef UNITY_HOST_BUILD
+
+static pthread_mutex_t g_queue_mtx;
+static pthread_cond_t  g_queue_cv;
+static bool            g_queue_cv_init_done;
+
+static bool capture_queue_receive_timeout_on(capture_queue_t *q,
+                                             void **out,
+                                             uint32_t timeout_ms);
+
+/* Arm the module-static queue's sync hooks. Called from
+ * capture_task_start; idempotent per reset cycle (the cond
+ * is re-initialised only once; capture_counters_reset_for
+ * _test clears the POINTERS, not the statics). */
+static void capture_queue_hooks_install(capture_queue_t *q)
+{
+    if (!g_queue_cv_init_done) {
+#if CAPTURE_QUEUE_HAS_SETCLOCK
+        pthread_condattr_t attr;
+        pthread_condattr_init(&attr);
+        pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+        pthread_cond_init(&g_queue_cv, &attr);
+        pthread_condattr_destroy(&attr);
+#else
+        pthread_cond_init(&g_queue_cv, NULL);
+#endif
+        pthread_mutex_init(&g_queue_mtx, NULL);
+        g_queue_cv_init_done = true;
+    }
+    q->sync_mtx = &g_queue_mtx;
+    q->sync_cv  = &g_queue_cv;
+}
+
 bool capture_queue_send_drop_on_full(capture_queue_t *q, void *fb)
 {
     if (!q || !fb) return false;
+    bool synced = (q->sync_mtx && q->sync_cv);
+    if (synced) pthread_mutex_lock((pthread_mutex_t *)q->sync_mtx);
     if (q->count >= MOCK_CAPTURE_QUEUE_DEPTH) {
+        if (synced) pthread_mutex_unlock((pthread_mutex_t *)q->sync_mtx);
         return false; /* full — caller drops + returns buffer */
     }
     q->slots[q->tail] = fb;
     q->tail = (q->tail + 1) % MOCK_CAPTURE_QUEUE_DEPTH;
     q->count++;
+    if (synced) {
+        pthread_cond_signal((pthread_cond_t *)q->sync_cv);
+        pthread_mutex_unlock((pthread_mutex_t *)q->sync_mtx);
+    }
     return true;
 }
+
+bool capture_queue_receive_timeout(void **out, uint32_t timeout_ms)
+{
+    return capture_queue_receive_timeout_on(&g_capture_queue,
+                                            out, timeout_ms);
+}
+
+/* Host receive: bounded wait on the static ring. NULL-hook
+ * queues fall back to a non-blocking pop (fast path for pure
+ * stack tests). */
+static bool capture_queue_receive_timeout_on(capture_queue_t *q,
+                                             void **out,
+                                             uint32_t timeout_ms)
+{
+    if (!q || !out) return false;
+    if (!(q->sync_mtx && q->sync_cv)) {
+        if (q->count == 0) return false;
+        queue_pop_unsafe(q, out);
+        return true;
+    }
+
+    struct timespec deadline;
+    clock_gettime(CAPTURE_QUEUE_WAIT_CLOCK, &deadline);
+    deadline.tv_sec  += timeout_ms / 1000U;
+    deadline.tv_nsec += (long)(timeout_ms % 1000U) * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L) {
+        deadline.tv_sec  += 1;
+        deadline.tv_nsec -= 1000000000L;
+    }
+
+    pthread_mutex_lock((pthread_mutex_t *)q->sync_mtx);
+    int rc = 0;
+    while (q->count == 0 && rc != ETIMEDOUT) {
+        rc = pthread_cond_timedwait((pthread_cond_t *)q->sync_cv,
+                                    (pthread_mutex_t *)q->sync_mtx,
+                                    &deadline);
+    }
+    if (q->count == 0) {
+        pthread_mutex_unlock((pthread_mutex_t *)q->sync_mtx);
+        return false;
+    }
+    queue_pop_unsafe(q, out);
+    pthread_mutex_unlock((pthread_mutex_t *)q->sync_mtx);
+    return true;
+}
+
+#else /* device build */
+
+/* Device hooks: mutex guards the ring; a counting semaphore
+ * (max depth, start 0) plays condvar. The producer gives it
+ * under lock on every successful push; the consumer takes
+ * it with the remaining budget between re-checks. */
+static SemaphoreHandle_t g_queue_mutex_handle;
+static SemaphoreHandle_t g_queue_sem_handle;
+
+static void capture_queue_hooks_install(capture_queue_t *q)
+{
+    if (!g_queue_mutex_handle) {
+        g_queue_mutex_handle = xSemaphoreCreateMutex();
+        g_queue_sem_handle   = xSemaphoreCreateCounting(
+            MOCK_CAPTURE_QUEUE_DEPTH, 0);
+    }
+    q->sync_mtx = (void *)g_queue_mutex_handle;
+    q->sync_cv  = (void *)g_queue_sem_handle;
+}
+
+bool capture_queue_send_drop_on_full(capture_queue_t *q, void *fb)
+{
+    if (!q || !fb) return false;
+    bool synced = (q->sync_mtx && q->sync_cv);
+    if (synced) xSemaphoreTake((SemaphoreHandle_t)q->sync_mtx, portMAX_DELAY);
+    if (q->count >= MOCK_CAPTURE_QUEUE_DEPTH) {
+        if (synced) xSemaphoreGive((SemaphoreHandle_t)q->sync_mtx);
+        return false; /* full — caller drops + returns buffer */
+    }
+    q->slots[q->tail] = fb;
+    q->tail = (q->tail + 1) % MOCK_CAPTURE_QUEUE_DEPTH;
+    q->count++;
+    if (synced) {
+        xSemaphoreGive((SemaphoreHandle_t)q->sync_cv);
+        xSemaphoreGive((SemaphoreHandle_t)q->sync_mtx);
+    }
+    return true;
+}
+
+bool capture_queue_receive_timeout(void **out, uint32_t timeout_ms)
+{
+    capture_queue_t *q = &g_capture_queue;
+    if (!out) return false;
+    if (!(q->sync_mtx && q->sync_cv)) {
+        if (q->count == 0) return false;
+        queue_pop_unsafe(q, out);
+        return true;
+    }
+
+    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
+    for (;;) {
+        xSemaphoreTake((SemaphoreHandle_t)q->sync_mtx, portMAX_DELAY);
+        if (q->count > 0) {
+            queue_pop_unsafe(q, out);
+            xSemaphoreGive((SemaphoreHandle_t)q->sync_mtx);
+            return true;
+        }
+        xSemaphoreGive((SemaphoreHandle_t)q->sync_mtx);
+
+        TickType_t now = xTaskGetTickCount();
+        if ((int32_t)(deadline - now) <= 0) return false;
+        /* Wait for a push (or the remaining budget). */
+        (void)xSemaphoreTake((SemaphoreHandle_t)q->sync_cv,
+                             deadline - now);
+    }
+}
+
+#endif /* UNITY_HOST_BUILD */
 
 /* ---------- pure loop body ----------
  *
@@ -232,6 +426,13 @@ esp_err_t capture_task_start(void)
 #endif
 
     ESP_LOGI(TAG, "capture_task_start: spawn FreeRTOS capture loop @ 5 fps");
+
+    /* FW-15 (D2): arm the cross-task sync hooks on the
+     * module-static queue so the stream task can consume it
+     * with a bounded wait. Stack-instantiated test queues are
+     * unaffected (their hooks stay NULL). */
+    capture_queue_hooks_install(&g_capture_queue);
+
 #ifndef UNITY_HOST_BUILD
     BaseType_t ret = xTaskCreate(capture_task_entry, "capture",
                                  BOOT_TASK_STACK_SUPERVISION, NULL,

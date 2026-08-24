@@ -231,6 +231,10 @@ int  mock_esp_camera_fb_get_call_count(void);
  * last reset. Used by the FW-11.2 drop scenario to assert
  * the dropped frame's buffer was returned to the driver. */
 bool mock_esp_camera_fb_return_was_called(void);
+/* FW-15 — exact number of esp_camera_fb_return calls since
+ * the last reset (REQ-ST-005: exactly once per consumed
+ * frame, success OR failure). */
+int  mock_esp_camera_fb_return_call_count(void);
 /* Frame-buffer allocation size (the .len field of the static
  * camera_fb_t). Defaults to 11520 (QVGA JPEG per FW-10
  * device-verify log). Primable for FW-11.5 tests. */

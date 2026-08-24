@@ -147,4 +147,5 @@ esp_err_t mock_httpd_register_uri_handler(httpd_handle_t server,
 int      mock_httpd_req_recv(httpd_req_t *req, char *buf, size_t max);
 esp_err_t mock_httpd_resp_send(httpd_req_t *req, const char *buf, ssize_t len);
 esp_err_t mock_httpd_resp_set_type(httpd_req_t *req, const char *type);
+esp_err_t mock_httpd_resp_set_status(httpd_req_t *req, const char *status);
 esp_err_t mock_httpd_resp_sendstr(httpd_req_t *req, const char *str);

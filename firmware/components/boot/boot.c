@@ -166,20 +166,23 @@ boot_status_t boot_run_normal(const config_t *cfg)
         }
     }
 
-    BOOT_CHECK_STEP(BOOT_STEP_CAMERA_INIT,          camera_init(cfg));
-    BOOT_CHECK_STEP(BOOT_STEP_WS_INIT,              ws_init(cfg));
-    BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_HEALTH,   health_task_start());
-    BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_CAPTURE,  capture_task_start());
-    BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_STREAM,   stream_task_start());
-    BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_CONTROL,  control_task_start());
-
-    /* FW-07.3 — initialize the button driver and register the
-     * runtime factory-reset cb. The button driver is the last
-     * subsystem brought up; the cfg arg is currently unused
-     * (the button driver does not consume wifi credentials or
-     * identity). A future phase may consult cfg to suppress
-     * the cb in special operating modes (e.g. OTA in
-     * progress). */
+    /* FW-07.3 — initialize the button driver BEFORE camera_init.
+     *
+     * HARDWARE CONSTRAINT (AI-Thinker ESP32-CAM): GPIO 0 is shared
+     * between the boot button and the camera XCLK. The camera's
+     * esp_camera_init claims GPIO 0 as a 10 MHz clock OUTPUT; the
+     * button's gpio_config (input + internal pull-up) would then
+     * reconfigure the same pin and destroy the sensor's master
+     * clock — every subsequent esp_camera_fb_get times out
+     * (reproduced 2026-08-24 with staged fb_get probes: frames OK
+     * through ws_init, NULL immediately after button_init when it
+     * ran last).
+     *
+     * Ordering rule: the button claims the pin FIRST; the camera
+     * claims it LAST. Runtime long-press detection still works:
+     * pressing the button shorts GPIO 0 to GND, which dominates
+     * the XCLK square wave, so the polled low-level duration is
+     * unaffected. */
     (void)cfg;
     esp_err_t bi_r = button_init();
     if (bi_r != ESP_OK) {
@@ -198,6 +201,13 @@ boot_status_t boot_run_normal(const config_t *cfg)
                  boot_step_str(s.step), esp_err_to_name(s.ret));
         return s;
     }
+
+    BOOT_CHECK_STEP(BOOT_STEP_CAMERA_INIT,          camera_init(cfg));
+    BOOT_CHECK_STEP(BOOT_STEP_WS_INIT,              ws_init(cfg));
+    BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_HEALTH,   health_task_start());
+    BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_CAPTURE,  capture_task_start());
+    BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_STREAM,   stream_task_start());
+    BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_CONTROL,  control_task_start());
 
 #undef BOOT_CHECK_STEP
 
