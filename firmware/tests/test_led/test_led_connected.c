@@ -57,11 +57,11 @@ TEST_CASE(
     TEST_ASSERT_GREATER_THAN_INT(stop_count_before,
                                  mock_esp_timer_stop_call_count());
 
-    /* GPIO level held OFF = level 1 under active-LOW default. */
+    /* GPIO level held OFF = level 0 (active-HIGH flash LED). */
     int pin = -1, level = -1;
     mock_gpio_set_level_capture(&pin, &level);
     TEST_ASSERT_EQUAL_INT(GPIO_NUM_4, pin);
-    TEST_ASSERT_EQUAL_INT(1, level);
+    TEST_ASSERT_EQUAL_INT(0, level);
 
     /* No NEW start_periodic on the idle transition. */
     TEST_ASSERT_EQUAL_INT(1, mock_esp_timer_start_periodic_call_count());
@@ -93,11 +93,11 @@ TEST_CASE(
     TEST_ASSERT_GREATER_THAN_INT(stop_count_before,
                                  mock_esp_timer_stop_call_count());
 
-    /* GPIO level held ON = level 0 under active-LOW default. */
+    /* GPIO level held ON = level 1 (active-HIGH flash LED). */
     int pin = -1, level = -1;
     mock_gpio_set_level_capture(&pin, &level);
     TEST_ASSERT_EQUAL_INT(GPIO_NUM_4, pin);
-    TEST_ASSERT_EQUAL_INT(0, level);
+    TEST_ASSERT_EQUAL_INT(1, level);
 
     /* No NEW start_periodic on the streaming transition. */
     TEST_ASSERT_EQUAL_INT(1, mock_esp_timer_start_periodic_call_count());
