@@ -256,6 +256,7 @@ def _build(basename, extra_defines, test_files, workdir):
         # sources register as each lands).
         os.path.join(PROJECT_DIR, 'components', 'stream', 'stream_fragment.c'),
         os.path.join(PROJECT_DIR, 'components', 'stream', 'stream_sender.c'),
+        os.path.join(PROJECT_DIR, 'components', 'stream', 'stream.c'),
         # FW-13 — identity component (shared MAC + NVS identity).
         os.path.join(PROJECT_DIR, 'components', 'identity', 'identity.c'),
         # FW-13 — ws component (skeleton stubs only; real impls land
@@ -592,6 +593,10 @@ ALL_TESTS = [
     # 8 KB single binary send + oversized byte-exact fragmentation.
     "test_fw15_8k_frame_ships_as_single_binary_event [fw-15.2][req-st-001][scenario-S5]",
     "test_fw15_oversized_frame_fragments_byte_exact [fw-15.2][req-st-003][scenario-S6]",
+    # FW-15.3 — stream task loop (REQ-ST-005/007 + loop happy path).
+    "test_fw15_failed_send_returns_fb_exactly_once [fw-15.3][req-st-005][scenario-S1]",
+    "test_fw15_dead_socket_drains_all_frames [fw-15.3][req-st-007][scenario-S2]",
+    "test_fw15_healthy_socket_loop_sends_and_counts [fw-15.3][req-st-002][scenario-S3]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -777,6 +782,10 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # FW-15.2 — pure fragment planner: REQ-ST-003/004 part-count
     # table + byte-exact offset partition. No mocks needed.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_stream_fragment.c'),
+    # FW-15.3 — disconnect drain-drop-count + loop happy path
+    # (REQ-ST-005/007). 3 scenarios: failed-send fb return, dead-
+    # socket drain, healthy-socket send+count through the loop.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_stream_disconnect.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard

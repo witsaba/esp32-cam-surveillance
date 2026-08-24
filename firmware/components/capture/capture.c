@@ -18,10 +18,13 @@
  *            └─► c->frames_captured++
  *
  * The single-owner invariant (PRD § FR-2b) holds by
- * architecture: this file is the ONLY TU that calls
- * `esp_camera_fb_get` / `esp_camera_fb_return`. The FW-11.3
+ * architecture: this file is the ONLY producer TU that calls
+ * `esp_camera_fb_get`; it calls `esp_camera_fb_return` only on
+ * its own drop path. FW-15 amends the ownership wording (see
+ * capture.h): the STREAM task owns post-receive fb lifetime and
+ * returns buffers after the send attempt. The FW-11.3
  * guard tripwire (Pass 10 stub build with
- * -DCAPTURE_TEST_STUB_SECOND_CALLER=1) proves this
+ * -DCAPTURE_TEST_STUB_SECOND_CALLER=1) proves the fb_get
  * invariant is load-bearing by introducing a synthetic 2nd
  * caller via the test fixture.
  */

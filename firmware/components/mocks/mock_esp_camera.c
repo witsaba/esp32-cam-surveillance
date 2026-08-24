@@ -37,6 +37,9 @@ static int             g_last_captured = 0;
 static camera_fb_t  g_fb;
 static int          g_fb_get_count   = 0;
 static bool         g_fb_return_flag = false;
+/* FW-15 — exact fb_return call count (REQ-ST-005 "exactly once
+ * per frame, success OR failure"). Reset by mock_esp_camera_reset. */
+static int          g_fb_return_count = 0;
 static size_t       g_fb_size        = 11520; /* QVGA JPEG default */
 
 /* heap_caps_get_free_size() mock state — primable per-cap. The
@@ -191,6 +194,7 @@ void mock_esp_camera_reset(void)
     memset(&g_fb, 0, sizeof(g_fb));
     g_fb_get_count     = 0;
     g_fb_return_flag   = false;
+    g_fb_return_count  = 0;
     g_fb_size          = 11520;
     g_caps_free_spiram   = 4000000;
     g_caps_free_internal = 200000;
@@ -271,6 +275,8 @@ size_t mock_esp_psram_get_size(void)
 
 int  mock_esp_camera_fb_get_call_count(void)   { return g_fb_get_count; }
 bool mock_esp_camera_fb_return_was_called(void) { return g_fb_return_flag; }
+/* FW-15 — exact fb_return count since reset (REQ-ST-005). */
+int  mock_esp_camera_fb_return_call_count(void) { return g_fb_return_count; }
 void mock_esp_camera_fb_size_set(size_t len)    { g_fb_size = len; }
 void mock_esp_camera_heap_caps_set(uint32_t spiram, uint32_t internal)
 {
@@ -304,6 +310,7 @@ void mock_esp_camera_fb_return(camera_fb_t *fb)
 {
     (void)fb;
     g_fb_return_flag = true;
+    g_fb_return_count++;
     /* The real driver would return the buffer to its free
      * pool; on host we just clear the buf slot so the next
      * fb_get() returns the same struct again (matches
