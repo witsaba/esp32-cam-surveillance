@@ -149,6 +149,9 @@ def _common_cflags(extra_defines):
         f'-I{PROJECT_DIR}/components/ws/include',
         # FW-15 — stream component public headers.
         f'-I{PROJECT_DIR}/components/stream/include',
+        # FW-16 — health component public headers (window core +
+        # task surface).
+        f'-I{PROJECT_DIR}/components/health/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
         # FW-08 — Kconfig mirrors for the host build (the device
@@ -253,6 +256,9 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'stream', 'stream_fragment.c'),
         os.path.join(PROJECT_DIR, 'components', 'stream', 'stream_sender.c'),
         os.path.join(PROJECT_DIR, 'components', 'stream', 'stream.c'),
+        # FW-16 — health component (pure window core + task glue;
+        # sources register as each lands).
+        os.path.join(PROJECT_DIR, 'components', 'health', 'health_window.c'),
         # FW-13 — identity component (shared MAC + NVS identity).
         os.path.join(PROJECT_DIR, 'components', 'identity', 'identity.c'),
         # FW-13 — ws component. FW-16 server mode: ws_server.c
@@ -595,6 +601,19 @@ ALL_TESTS = [
     "test_snapshot_queued_frame_served_as_jpeg [snapshot][scenario-S1]",
     "test_snapshot_empty_queue_returns_503 [snapshot][scenario-S2]",
     "test_snapshot_listener_registers_both_uris [snapshot][scenario-S3]",
+    # FW-16.1 — pure sliding-window threshold core (R-FW16-1.1).
+    # Brings Pass 1 to 158 (was 153).
+    "test_soft_recovery_29_in_window_failures_do_not_trigger [fw-16.1][window][scenario-S1]",
+    "test_soft_recovery_30th_in_window_failure_triggers [fw-16.1][window][scenario-S2]",
+    "test_soft_recovery_31_in_window_failures_hold_trigger [fw-16.1][window][scenario-S3]",
+    "test_soft_recovery_15_failures_over_20_minutes_pruned_no_trigger [fw-16.1][window][scenario-S4]",
+    "test_soft_recovery_window_boundary_entry_kept_then_expired [fw-16.1][window][boundary]",
+    # FW-16.1 — episode coalescing (R-FW16-1.1). Brings Pass 1 to
+    # 162 (was 158).
+    "test_soft_recovery_paired_burst_advances_counter_exactly_one [fw-16.1][coalesce][scenario-C1]",
+    "test_soft_recovery_got_ip_closes_episode_next_drop_counts [fw-16.1][coalesce][scenario-C2]",
+    "test_soft_recovery_initial_latch_closed_first_drop_ever_counts [fw-16.1][coalesce][scenario-C3]",
+    "test_soft_recovery_distinct_episodes_accumulate_to_threshold [fw-16.1][coalesce][scenario-C4]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -777,6 +796,14 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # via the capture queue (single-caller invariant intact), 503
     # on empty queue, dual URI registration with /whoami.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_snapshot_endpoint.c'),
+    # FW-16.1 — pure sliding-window threshold core (R-FW16-1.1).
+    # 29→no-trigger, 30th in-window→trigger, 31→holds, 15-over-
+    # 20-min pruned false, lazy-prune boundary edge. Zero IDF deps.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_soft_recovery_window.c'),
+    # FW-16.1 — episode coalescing (R-FW16-1.1, AD2): paired burst
+    # = exactly one increment; GOT_IP re-arms the next fault;
+    # initial latch closed.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_soft_recovery_coalesce.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
