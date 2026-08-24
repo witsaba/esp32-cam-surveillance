@@ -147,6 +147,8 @@ def _common_cflags(extra_defines):
         # FW-13 — identity + ws component public headers.
         f'-I{PROJECT_DIR}/components/identity/include',
         f'-I{PROJECT_DIR}/components/ws/include',
+        # FW-15 — stream component public headers.
+        f'-I{PROJECT_DIR}/components/stream/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
         # FW-08 — Kconfig mirrors for the host build (the device
@@ -250,6 +252,10 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'mocks', 'mock_esp_websocket_client.c'),
         # FW-11 — capture component (pure loop body + FreeRTOS wrapper).
         os.path.join(PROJECT_DIR, 'components', 'capture', 'capture.c'),
+        # FW-15 — stream component (planner + sender + task loop;
+        # sources register as each lands).
+        os.path.join(PROJECT_DIR, 'components', 'stream', 'stream_fragment.c'),
+        os.path.join(PROJECT_DIR, 'components', 'stream', 'stream_sender.c'),
         # FW-13 — identity component (shared MAC + NVS identity).
         os.path.join(PROJECT_DIR, 'components', 'identity', 'identity.c'),
         # FW-13 — ws component (skeleton stubs only; real impls land
@@ -575,6 +581,17 @@ ALL_TESTS = [
     "test_fw15_empty_queue_receive_times_out_bounded [fw-15.1][req-st-006][scenario-S1]",
     "test_fw15_queued_item_received_with_exact_pointer [fw-15.1][req-st-006][scenario-S2]",
     "test_fw15_waiting_consumer_wakes_on_producer_push [fw-15.1][req-st-006][scenario-S3]",
+    # FW-15.2 — pure fragment planner (REQ-ST-003/004). 4 scenarios:
+    # part-count table, boundary/degenerate rows, byte-exact
+    # partition via offsets, out-of-range clamp.
+    "test_fw15_part_count_table_matches_chunk_boundaries [fw-15.2][req-st-003][scenario-S1]",
+    "test_fw15_part_count_boundary_and_degenerate_rows [fw-15.2][req-st-003][scenario-S2]",
+    "test_fw15_fragment_offsets_partition_len_exactly [fw-15.2][req-st-003][scenario-S3]",
+    "test_fw15_fragment_offset_out_of_range_clamps_to_len [fw-15.2][req-st-003][scenario-S4]",
+    # FW-15.2 — sender mapping (REQ-ST-001/002/003). 2 scenarios:
+    # 8 KB single binary send + oversized byte-exact fragmentation.
+    "test_fw15_8k_frame_ships_as_single_binary_event [fw-15.2][req-st-001][scenario-S5]",
+    "test_fw15_oversized_frame_fragments_byte_exact [fw-15.2][req-st-003][scenario-S6]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -757,6 +774,9 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # (REQ-ST-006), single-send/opcode (REQ-ST-001/002), disconnect
     # drain-drop-count (REQ-ST-007). Files register as each lands.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_stream_loop.c'),
+    # FW-15.2 — pure fragment planner: REQ-ST-003/004 part-count
+    # table + byte-exact offset partition. No mocks needed.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_stream_fragment.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard

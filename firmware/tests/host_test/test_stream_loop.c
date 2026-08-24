@@ -24,6 +24,7 @@
  */
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -34,6 +35,15 @@
 #include "mock_init_returns.h"
 #include "boot.h"
 #include "unity.h"
+
+/* FW-15.2 sender surface. */
+#include "stream_fragment.h"
+#include "stream.h"
+#include "ws.h"
+#include "config.h"
+#include "mock_esp_websocket_client_link.h"
+#include "mock_esp_event_link.h"
+#include "mock_esp_system_link.h"
 
 #ifdef UNITY_HOST_BUILD
 #include "unity_host_test_runner.h"
@@ -161,4 +171,117 @@ TEST_CASE(
     /* Woke on the ~30 ms push, NOT on the 2000 ms timeout. */
     TEST_ASSERT_LESS_OR_EQUAL_UINT32(1000, elapsed);
     TEST_ASSERT_GREATER_OR_EQUAL_UINT32(20, elapsed);
+}
+
+/* ==================== FW-15.2 sender scenarios ==================== */
+
+/* Sender fixture: fresh mocks + a REAL ws_init pass so the handle
+ * is bound exactly like production (ws.c's s_ws_handle is a
+ * different static than the event-handler TU's — only ws_init
+ * sets both). Mirrors test_ws_hello_first_frame.c reset_state. */
+static void stream_sender_with_mocks(void)
+{
+    mock_esp_camera_reset();
+    mock_supervision_reset();
+    mock_init_returns_reset();
+    mock_esp_websocket_client_reset_for_test();
+    mock_esp_event_reset();
+    capture_counters_reset_for_test();
+    ws_event_handler_reset_for_test();
+
+    uint8_t mac[6] = {0xc8, 0xf0, 0x9e, 0x9d, 0x50, 0x08};
+    mock_esp_read_mac_set_bytes(mac);
+
+    config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    strncpy(cfg.wifi.ssid, "TestSSID", sizeof(cfg.wifi.ssid) - 1);
+    TEST_ASSERT_EQUAL(ESP_OK, ws_init(&cfg));
+}
+
+/* ---------- S5 — REQ-ST-001/002: 8 KB frame → ONE binary event ---------- */
+TEST_CASE(
+    "test_fw15_8k_frame_ships_as_single_binary_event [fw-15.2][req-st-001][scenario-S5]",
+    "[stream][fw-15.2][single-send]")
+{
+    stream_sender_with_mocks();
+
+    static uint8_t frame[8192];
+    for (size_t i = 0; i < sizeof(frame); i++) frame[i] = (uint8_t)(i & 0xFF);
+
+    int rc = stream_send_frame(frame, sizeof(frame));
+    TEST_ASSERT_EQUAL_INT((int)sizeof(frame), rc);
+
+    /* Exactly ONE send verb fired, and it was send_bin. */
+    TEST_ASSERT_EQUAL_size_t(1, mock_esp_websocket_client_send_bin_call_count());
+    TEST_ASSERT_EQUAL_size_t(0, mock_esp_websocket_client_send_bin_partial_call_count());
+    TEST_ASSERT_EQUAL_size_t(0, mock_esp_websocket_client_send_cont_msg_call_count());
+    TEST_ASSERT_EQUAL_size_t(0, mock_esp_websocket_client_send_fin_call_count());
+
+    /* The single recorded frame: opcode 0x2 (binary), FIN=1,
+     * byte-exact payload. */
+    uint8_t op = 0xFF; bool fin = false;
+    static uint8_t out[MOCK_WS_BIN_PART_CAP];
+    size_t out_len = 0;
+    TEST_ASSERT_EQUAL(ESP_OK, mock_esp_websocket_client_get_bin_frame_at(
+        0, &op, &fin, out, sizeof(out), &out_len));
+    TEST_ASSERT_EQUAL_HEX8(0x2, op);
+    TEST_ASSERT_TRUE(fin);
+    TEST_ASSERT_EQUAL_size_t(sizeof(frame), out_len);
+    TEST_ASSERT_EQUAL_MEMORY(frame, out, sizeof(frame));
+}
+
+/* ---------- S6 — REQ-ST-003: oversized frame fragments byte-exactly ---------- */
+TEST_CASE(
+    "test_fw15_oversized_frame_fragments_byte_exact [fw-15.2][req-st-003][scenario-S6]",
+    "[stream][fw-15.2][fragment-send]")
+{
+    stream_sender_with_mocks();
+
+    /* 20000 bytes @ chunk 16384 → 2 parts:
+     * partial(16384) + fin(3616). */
+    static uint8_t big[20000];
+    for (size_t i = 0; i < sizeof(big); i++) big[i] = (uint8_t)((i * 7) & 0xFF);
+
+    int rc = stream_send_frame(big, sizeof(big));
+    TEST_ASSERT_EQUAL_INT((int)sizeof(big), rc);
+
+    /* Mapping for N=2: partial → cont → fin (send_fin carries no
+     * payload in IDF v1.8.0 — the last payload slice rides a
+     * continuation). */
+    TEST_ASSERT_EQUAL_size_t(0, mock_esp_websocket_client_send_bin_call_count());
+    TEST_ASSERT_EQUAL_size_t(1, mock_esp_websocket_client_send_bin_partial_call_count());
+    TEST_ASSERT_EQUAL_size_t(1, mock_esp_websocket_client_send_cont_msg_call_count());
+    TEST_ASSERT_EQUAL_size_t(1, mock_esp_websocket_client_send_fin_call_count());
+
+    /* Reassemble the ring in order: partial (opcode 0x2, FIN=0),
+     * continuation (opcode 0x0, FIN=0), then the empty FIN
+     * terminator (opcode 0x0, FIN=1). Concatenation must equal
+     * the original bytes. */
+    static uint8_t reassembled[sizeof(big)];
+    size_t total = 0;
+    uint8_t op; bool fin; size_t flen;
+    static uint8_t part[MOCK_WS_BIN_PART_CAP];
+
+    TEST_ASSERT_EQUAL(ESP_OK, mock_esp_websocket_client_get_bin_frame_at(
+        0, &op, &fin, part, sizeof(part), &flen));
+    TEST_ASSERT_EQUAL_HEX8(0x2, op);
+    TEST_ASSERT_FALSE(fin);
+    TEST_ASSERT_EQUAL_size_t(CONFIG_FIRMWARE_WS_BUFFER_SIZE, flen);
+    memcpy(reassembled + total, part, flen); total += flen;
+
+    TEST_ASSERT_EQUAL(ESP_OK, mock_esp_websocket_client_get_bin_frame_at(
+        1, &op, &fin, part, sizeof(part), &flen));
+    TEST_ASSERT_EQUAL_HEX8(0x0, op);
+    TEST_ASSERT_FALSE(fin);
+    TEST_ASSERT_EQUAL_size_t(sizeof(big) - total, flen);
+    memcpy(reassembled + total, part, flen); total += flen;
+
+    TEST_ASSERT_EQUAL(ESP_OK, mock_esp_websocket_client_get_bin_frame_at(
+        2, &op, &fin, NULL, 0, &flen));
+    TEST_ASSERT_EQUAL_HEX8(0x0, op);
+    TEST_ASSERT_TRUE(fin);
+    TEST_ASSERT_EQUAL_size_t(0, flen);
+
+    TEST_ASSERT_EQUAL_size_t(total, sizeof(big));
+    TEST_ASSERT_EQUAL_MEMORY(big, reassembled, sizeof(big));
 }
