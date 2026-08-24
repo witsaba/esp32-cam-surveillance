@@ -108,19 +108,20 @@ TEST_CASE("test_fw05_5_ip_up_starts_httpd [fw-05.5][ip-up][scenario-S1]", "[soft
     /* Exactly one new httpd_start invocation. */
     TEST_ASSERT_EQUAL_INT(1, mock_httpd_start_call_count() - start_before);
 
-    /* Exactly one new URI registration — for /whoami. */
+    /* Two new URI registrations — /whoami (FW-05.5) + /snapshot
+     * (diagnostic frame endpoint). */
     TEST_ASSERT_EQUAL_INT(
-        1, mock_httpd_register_uri_handler_call_count() - register_before);
+        2, mock_httpd_register_uri_handler_call_count() - register_before);
 
     /* The listener reports active. */
     TEST_ASSERT_TRUE(softap_sta_listener_is_active());
 
-    /* The most-recently registered URI is /whoami. */
+    /* The most-recently registered URI is /snapshot. */
     const char *uri = NULL;
     int          method = -1;
     mock_httpd_last_registered_uri(&uri, &method);
     TEST_ASSERT_NOT_NULL(uri);
-    TEST_ASSERT_EQUAL_STRING("/whoami", uri);
+    TEST_ASSERT_EQUAL_STRING("/snapshot", uri);
     TEST_ASSERT_EQUAL_INT(HTTP_GET, method);
 }
 
