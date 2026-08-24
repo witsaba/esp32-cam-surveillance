@@ -32,6 +32,20 @@
  *   - The signature for `esp_websocket_client_close` in v1.8.0 is
  *     `(handle, timeout)` (2 args), not `(handle, code, reason, timeout)`.
  *     The mock matches the v1.8.0 IDF API exactly.
+ *
+ * FW-14 additions (auto-reconnect backoff):
+ *   - `esp_websocket_client_set_reconnect_timeout` redirect captures
+ *     the requested delay; tests read it via
+ *     `mock_esp_websocket_client_get_last_reconnect_timeout_ms()`
+ *     (+ call count).
+ *   - `mock_esp_websocket_client_fire_closed(code)` fires the
+ *     CLOSED handler with a populated `close_status_code`. The
+ *     pinned v1.8.0 component has NO
+ *     `esp_websocket_client_get_close_code()` accessor — the close
+ *     status code arrives on the event payload
+ *     (`esp_websocket_event_data_t.close_status_code`, populated by
+ *     the dispatcher for every event), so production derives
+ *     clean-CLOSE from the payload, and this mock carries it there.
  */
 #pragma once
 
@@ -98,9 +112,23 @@ typedef struct {
     const char *headers;
     const char *subprotocol;
     const char *user_agent;
+    /* FW-14 — reconnect-policy config fields (mirrors v1.8.0). */
+    bool        enable_close_reconnect;
+    int         reconnect_timeout_ms;
     /* Opaque padding — the mock never reads past `transport`. */
     int         _placeholder[16];
 } esp_websocket_client_config_t;
+
+/* esp_websocket_event_data_t — minimal stub mirroring the pinned
+ * v1.8.0 layout for the fields production code reads on host.
+ * The real dispatcher populates `close_status_code` for EVERY
+ * event from client state; tests prime it via
+ * `mock_esp_websocket_client_fire_closed(code)`. */
+typedef struct {
+    const char *data_ptr;
+    int         data_len;
+    int         close_status_code;  /*!< RFC 6455 close status code (0 if none / client-initiated) */
+} esp_websocket_event_data_t;
 
 /* Text frame buffer capacity. Sized to comfortably hold a single
  * hello frame (~256 bytes) + a single status frame (~384 bytes). */
@@ -182,6 +210,12 @@ esp_err_t mock_esp_websocket_client_fire_event(esp_websocket_event_id_t event_id
 /* Fire DISCONNECTED specifically — convenience for FW-13.5 S2. */
 void mock_esp_websocket_client_fire_disconnected(void);
 
+/* Fire CLOSED with the given RFC 6455 close status code. The
+ * handler receives a stack `esp_websocket_event_data_t` whose
+ * `close_status_code` is `code` (mirrors the v1.8.0 dispatcher,
+ * which populates the payload for every event). */
+void mock_esp_websocket_client_fire_closed(int close_status_code);
+
 /* ---------- mock targets (link-header redirects) ---------- */
 
 esp_websocket_client_handle_t mock_esp_websocket_client_init(
@@ -203,3 +237,27 @@ esp_err_t mock_esp_websocket_register_events(
     esp_websocket_event_id_t event,
     esp_event_handler_t event_handler,
     void *event_handler_arg);
+
+/* FW-14 — reconnect-delay setter redirect (v1.8.0 signature).
+ * Captures `reconnect_timeout_ms` for test inspection. Note: the
+ * real v1.8.0 client REJECTS this call with ESP_ERR_INVALID_STATE
+ * when auto_reconnect is disabled; the mock accepts it so tests
+ * can assert on the requested schedule (the ws_backoff module's
+ * own state is authoritative at runtime). */
+esp_err_t mock_esp_websocket_client_set_reconnect_timeout(
+    esp_websocket_client_handle_t client,
+    int reconnect_timeout_ms);
+
+/* ---------- FW-14 inspection (test entries) ---------- */
+
+/* Last value passed to set_reconnect_timeout (-1 if never called). */
+int mock_esp_websocket_client_get_last_reconnect_timeout_ms(void);
+
+/* Number of set_reconnect_timeout calls observed since last reset. */
+size_t mock_esp_websocket_client_set_reconnect_timeout_call_count(void);
+
+/* enable_close_reconnect flag of the most recent `_init`. */
+bool mock_esp_websocket_client_get_enable_close_reconnect(void);
+
+/* reconnect_timeout_ms config field of the most recent `_init`. */
+int mock_esp_websocket_client_get_config_reconnect_timeout_ms(void);

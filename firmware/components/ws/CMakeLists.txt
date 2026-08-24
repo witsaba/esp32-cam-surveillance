@@ -21,6 +21,7 @@ idf_component_register(
          "ws_status_timer.c"
          "ws_runtime_metrics.c"
          "ws_reconnects.c"
+         "ws_backoff.c"
     INCLUDE_DIRS "include"
     REQUIRES identity wifi capture esp_websocket_client
 )

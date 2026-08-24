@@ -71,6 +71,11 @@ static size_t g_close_count          = 0;
 static size_t g_send_text_count      = 0;
 static size_t g_register_events_count = 0;
 
+/* FW-14 — set_reconnect_timeout capture. */
+static int   g_last_reconnect_timeout_ms = -1;
+static bool  g_reconnect_timeout_valid   = false;
+static size_t g_set_reconnect_timeout_count = 0;
+
 /* ---------- primable state (test entries) ---------- */
 
 void mock_esp_websocket_client_set_inject_mac_into_url(bool inject)
@@ -131,6 +136,9 @@ void mock_esp_websocket_client_reset_for_test(void)
     g_close_count            = 0;
     g_send_text_count        = 0;
     g_register_events_count  = 0;
+    g_last_reconnect_timeout_ms = -1;
+    g_reconnect_timeout_valid   = false;
+    g_set_reconnect_timeout_count = 0;
 }
 
 /* ---------- inspection (test entries) ---------- */
@@ -206,8 +214,11 @@ size_t mock_esp_websocket_client_register_events_call_count(void) { return g_reg
 
 /* Helper — invokes a registered handler if present. Looks up the
  * specific event_id first; falls back to the wildcard slot. Returns
- * ESP_OK if a handler was found and invoked. */
-static esp_err_t fire_handler_for(esp_websocket_event_id_t event_id)
+ * ESP_OK if a handler was found and invoked. `event_data` is passed
+ * through verbatim (NULL for most events; CLOSED carries a stack
+ * esp_websocket_event_data_t via mock_..._fire_closed). */
+static esp_err_t fire_handler_for_data(esp_websocket_event_id_t event_id,
+                                        void *event_data)
 {
     esp_event_handler_t cb = NULL;
     void *arg = NULL;
@@ -223,10 +234,15 @@ static esp_err_t fire_handler_for(esp_websocket_event_id_t event_id)
     }
     if (!cb) return ESP_ERR_NOT_FOUND;
     /* The IDF passes the WS event base as the second arg, and the
-     * event_id as the third. We pass NULL for `event_data` (callers
-     * needing real data use the IDF-side event loop, not the mock). */
-    cb(arg, NULL, (int32_t)event_id, NULL);
+     * event_id as the third. */
+    cb(arg, NULL, (int32_t)event_id, event_data);
     return ESP_OK;
+}
+
+/* NULL-event_data wrapper kept for the existing call sites. */
+static esp_err_t fire_handler_for(esp_websocket_event_id_t event_id)
+{
+    return fire_handler_for_data(event_id, NULL);
 }
 
 esp_err_t mock_esp_websocket_client_fire_event(esp_websocket_event_id_t event_id)
@@ -237,6 +253,14 @@ esp_err_t mock_esp_websocket_client_fire_event(esp_websocket_event_id_t event_id
 void mock_esp_websocket_client_fire_disconnected(void)
 {
     (void)fire_handler_for(WEBSOCKET_EVENT_DISCONNECTED);
+}
+
+void mock_esp_websocket_client_fire_closed(int close_status_code)
+{
+    esp_websocket_event_data_t ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.close_status_code = close_status_code;
+    (void)fire_handler_for_data(WEBSOCKET_EVENT_CLOSED, &ev);
 }
 
 /* ---------- mock targets (link-header redirects) ---------- */
@@ -455,4 +479,40 @@ esp_err_t mock_esp_websocket_register_events(
     s_handler_args[event] = event_handler_arg;
     s_handler_registered[event] = true;
     return ESP_OK;
+}
+
+/* ---------- FW-14 mock targets + inspection ---------- */
+
+esp_err_t mock_esp_websocket_client_set_reconnect_timeout(
+    esp_websocket_client_handle_t client,
+    int reconnect_timeout_ms)
+{
+    (void)client;
+    g_set_reconnect_timeout_count++;
+    g_last_reconnect_timeout_ms = reconnect_timeout_ms;
+    g_reconnect_timeout_valid   = true;
+    /* The real v1.8.0 client returns ESP_ERR_INVALID_STATE when
+     * auto_reconnect is disabled; the mock accepts so tests can
+     * assert the requested schedule. */
+    return ESP_OK;
+}
+
+int mock_esp_websocket_client_get_last_reconnect_timeout_ms(void)
+{
+    return g_reconnect_timeout_valid ? g_last_reconnect_timeout_ms : -1;
+}
+
+size_t mock_esp_websocket_client_set_reconnect_timeout_call_count(void)
+{
+    return g_set_reconnect_timeout_count;
+}
+
+bool mock_esp_websocket_client_get_enable_close_reconnect(void)
+{
+    return s_last_config_valid ? s_last_config.enable_close_reconnect : false;
+}
+
+int mock_esp_websocket_client_get_config_reconnect_timeout_ms(void)
+{
+    return s_last_config_valid ? s_last_config.reconnect_timeout_ms : -1;
 }

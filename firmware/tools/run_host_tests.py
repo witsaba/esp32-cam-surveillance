@@ -46,6 +46,11 @@ mock surface. Ten compile passes:
            with 'single_owner' in the message. Wired in this
            PR (FW-11 apply cycle).
 
+  Pass 12 — stub build (-DWS_TEST_STUB_ENABLE_CLOSE_RECONNECT): the
+           FW-14 clean-CLOSE sleep-invariant guard's bite-proof
+           MUST FAIL with 'close_no_reconnect' in the message.
+           Wired in the FW-14 apply cycle.
+
 Exits 0 only when all passes satisfy their expected outcomes.
 Exits 1 on any unexpected pass/fail pattern (regression in either
 direction).
@@ -187,6 +192,12 @@ def _common_cflags(extra_defines):
         '-DCONFIG_FIRMWARE_WS_NETWORK_TIMEOUT_MS=5000',
         '-DCONFIG_FIRMWARE_WS_TASK_STACK=8192',
         '-DCONFIG_FIRMWARE_WS_STATUS_PERIOD_MS=30000',
+        # FW-14 — reconnect backoff Kconfig mirrors. The symbols live
+        # in main/Kconfig.projbuild:41-49 (NOT components/ws/Kconfig);
+        # sdkconfig.defaults:32-33 already carries both defaults. The
+        # host build has no sdkconfig.h so we mirror them via -D.
+        '-DCONFIG_FIRMWARE_WS_RECONNECT_INITIAL_MS=2000',
+        '-DCONFIG_FIRMWARE_WS_RECONNECT_CAP_MS=30000',
     ]
     flags.extend(extra_defines)
     return flags
@@ -253,6 +264,9 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_status_timer.c'),
         os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_runtime_metrics.c'),
         os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_reconnects.c'),
+        # FW-14 — reconnect backoff module (owns the reconnect loop;
+        # disable_auto_reconnect stays true per design #3805).
+        os.path.join(PROJECT_DIR, 'components', 'ws', 'ws_backoff.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
@@ -526,6 +540,29 @@ ALL_TESTS = [
     "test_status_payload_full_fields [fw-13.6][status-payload][scenario-S1]",
     "test_status_reconnects_zero_in_fw13 [fw-13.6][status-payload][scenario-S2]",
     "test_status_rssi_reflects_mock [fw-13.6][status-payload][scenario-S3]",
+    # FW-14.1 — exponential backoff schedule (R-19, FR-4). 6-row
+    # table: 2000/4000/8000/16000/30000/30000 via the ws_backoff
+    # module surface + setter capture + one-shot arming + WARN log.
+    "test_fw14_1_backoff_failures_1 [fw-14.1][row-1]",
+    "test_fw14_1_backoff_failures_2 [fw-14.1][row-2]",
+    "test_fw14_1_backoff_failures_3 [fw-14.1][row-3]",
+    "test_fw14_1_backoff_failures_4 [fw-14.1][row-4]",
+    "test_fw14_1_backoff_failures_5 [fw-14.1][row-5][cap-reached]",
+    "test_fw14_1_backoff_failures_6 [fw-14.1][row-6][cap-holds]",
+    # FW-14.2 — failure-counter lifecycle (R-19). Counter resets on
+    # CONNECTED; persists across back-to-back failures; CONNECTED
+    # clears the clean-CLOSE latch.
+    "test_fw14_2_counter_resets_on_connected [fw-14.2][counter][scenario-S1]",
+    "test_fw14_2_counter_persists_back_to_back [fw-14.2][counter][scenario-S2]",
+    "test_fw14_2_connect_clears_latch [fw-14.2][latch][scenario-S3]",
+    # FW-14 Phase 4 — event wiring end-to-end: ERROR parity with
+    # DISCONNECTED, clean-CLOSE latch orderings, non-clean close,
+    # event-driven counter reset.
+    "test_fw14_error_arms_timer_like_disconnected [fw-14][error-parity][scenario-S1]",
+    "test_fw14_clean_close_latches_before_disconnect [fw-14][latch-order][scenario-S2]",
+    "test_fw14_clean_close_cancels_pending_timer [fw-14][latch-order][scenario-S3]",
+    "test_fw14_non_clean_close_does_not_latch [fw-14][latch-order][scenario-S4]",
+    "test_fw14_connected_event_resets_counter_end_to_end [fw-14][counter-wiring][scenario-S5]",
     # FW-05.5 — always-on /whoami listener on the STA interface.
     # 4 scenarios covering install, IP-up, disconnect, idempotency.
     "test_fw05_5_install_subscribes_both_events [fw-05.5][install][scenario-S1]",
@@ -706,6 +743,10 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # FW-13.6 — status frame payload (T-13-H). 3 scenarios:
     # full 8-field payload, reconnects == 0, rssi_dbm reflects mock.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_status_payload.c'),
+    # FW-14 — ws_backoff module (reconnect loop owner). Leaf tests:
+    # 6-row FR-4 backoff table + counter lifecycle + event wiring +
+    # latch orderings land across the FW-14 apply commits.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_reconnect_backoff.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
@@ -804,6 +845,26 @@ FW13_4_GUARD_TEST_FILES = [
 # substring "url_no_mac" must appear in the guard tripwire's
 # message so Pass 11 of run_host_tests.py can grep for it.
 WS_URL_GUARD_BITE_PROOF_KEYWORD = "url_no_mac"
+
+# FW-14 — Pass 12 stub build includes ONLY the FW-14 close-guard
+# file. The build defines -DWS_TEST_STUB_ENABLE_CLOSE_RECONNECT=1,
+# which compiles the clean-CLOSE latch check OUT of
+# ws_event_handler.c's failure path (simulating the regression
+# where a clean CLOSE no longer suppresses reconnect scheduling).
+# The bite-proof test asserts NOTHING was scheduled after
+# CLOSED(1000) + DISCONNECTED; under the stub it fails with the
+# literal "close_no_reconnect". Mirrors Pass 11
+# (WS_TEST_STUB_INJECT_MAC_INTO_URL) shape exactly: the same
+# compile flag is applied to BOTH the production sources AND the
+# test file.
+FW14_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_close_guard.c'),
+]
+
+# Pass-12 keyword + bite-proof test marker. The literal substring
+# "close_no_reconnect" must appear in the bite-proof's failure
+# message so Pass 12 of run_host_tests.py can grep for it.
+WS_CLOSE_GUARD_BITE_PROOF_KEYWORD = "close_no_reconnect"
 
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
 # green-path test in that file is guarded by `#ifndef
@@ -1312,6 +1373,43 @@ def main():
     print(f"OK: FW-13.4 stub build → guard tripped on "
           f"'{WS_URL_GUARD_BITE_PROOF_KEYWORD}' invariant as expected "
           f"(test failed with rc={fw13_4_rc}).")
+
+    # ----- Pass 12: FW-14 clean-CLOSE sleep-invariant stub build -----
+    # Compile test_ws_close_guard.c (and the production sources) with
+    # -DWS_TEST_STUB_ENABLE_CLOSE_RECONNECT=1 so the latch check in
+    # ws_event_handler.c's failure path is compiled out. The
+    # bite-proof test drives ws_init → CLOSED(1000) → DISCONNECTED
+    # and asserts NOTHING was scheduled. Under the stub the failure
+    # path schedules anyway and TEST_FAIL_MESSAGE fires with the
+    # literal "close_no_reconnect". Pass 12 expects:
+    #   - rc != 0 (TEST_FAIL_MESSAGE exits non-zero)
+    #   - literal "close_no_reconnect" present in stdout (from the
+    #     test's marker line AND from the TEST_FAIL_MESSAGE body)
+    #   - "test_pass12_clean_close_must_not_schedule" test name in
+    #     stdout so the runner can match it to the expected
+    #     bite-proof.
+    # Mirrors Pass 11 (WS_TEST_STUB_INJECT_MAC_INTO_URL) shape
+    # exactly.
+    print()
+    print("=== Pass 12: FW-14 stub build (WS_TEST_STUB_ENABLE_CLOSE_RECONNECT, guard file) ===")
+    fw14_bin = _build('fw14_tests_stub',
+                      ['-DWS_TEST_STUB_ENABLE_CLOSE_RECONNECT=1'],
+                      FW14_GUARD_TEST_FILES, workdir)
+    fw14_rc, fw14_out = _run_binary(fw14_bin)
+    if fw14_rc == 0:
+        sys.exit(f"FAIL: FW-14 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The stub gate "
+                 f"didn't bypass the close_no_reconnect invariant. "
+                 f"Output:\n{fw14_out}")
+    if WS_CLOSE_GUARD_BITE_PROOF_KEYWORD not in fw14_out:
+        sys.exit(f"FAIL: FW-14 stub build output does not "
+                 f"contain the literal '{WS_CLOSE_GUARD_BITE_PROOF_KEYWORD}':\n{fw14_out}")
+    if "test_pass12_clean_close_must_not_schedule" not in fw14_out:
+        sys.exit(f"FAIL: FW-14 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw14_out}")
+    print(f"OK: FW-14 stub build → guard tripped on "
+          f"'{WS_CLOSE_GUARD_BITE_PROOF_KEYWORD}' invariant as expected "
+          f"(test failed with rc={fw14_rc}).")
 
     print()
     print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 + FW-10 + FW-11 + FW-13 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
