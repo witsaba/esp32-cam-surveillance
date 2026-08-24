@@ -239,7 +239,7 @@ void ws_event_handler_on_ws_error(void *handler_arg,
 {
     (void)handler_arg;
     (void)base;
-    (int32_t)event_id;
+    (void)event_id;
     (void)event_data;
     ESP_LOGW(TAG, "ws transport error");
     ws_failure_stop_and_schedule();
