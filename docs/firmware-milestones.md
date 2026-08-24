@@ -1422,6 +1422,21 @@ SDD change: `firmware-auto-reconnect` · Closes: R-19.
 > **Test results** (full 12-pass runner): Pass 1 (production) = **140 tests GREEN** (126 baseline + 6 FW-14.1 rows + 3 FW-14.2 lifecycle + 5 event-wiring scenarios); Passes 2-11 bite-proofs fire as expected; **Pass 12** (`-DWS_TEST_STUB_ENABLE_CLOSE_RECONNECT=1`) fires the `close_no_reconnect` sleep invariant as its expected failure. Kconfig note: `FIRMWARE_WS_RECONNECT_INITIAL_MS`/`CAP_MS` already existed in `main/Kconfig.projbuild:41-49` + `sdkconfig.defaults:32-33`; only host-runner cflag mirrors were added (no Kconfig duplication).
 >
 > **Amended 2026-08-24 (verify closure).** Two post-apply corrections landed on the same branch: `2ef093a` (`fix(ws): silence unused-value cast breaking -Werror device build`) — `(int32_t)event_id;` at `ws_event_handler.c:242` is a no-effect statement that IDF GCC 14 promotes to `-Werror=unused-value` while host clang only warns, so the first `idf.py build` failed and was fixed with the sibling handlers' `(void)` idiom (one scoped correction); and `dbcc876` (`docs: restore backend milestone + PRD docs dropped from branch`) — the apply phase's docs commit had accidentally deleted the out-of-scope backend-workstream files `docs/backend-milestones.md` + `docs/backend-prd.md`, caught by diffstat review before PR open and restored from `main`. Final branch delta: **11 files, 1040 insertions / 29 deletions (~1069 changed lines)** vs the MAINTAINER-APPROVED 1000-line budget + extend-if-needed. Post-fix evidence: host suite ALL GREEN (Pass 1 = 140/140; Pass 12 bites as designed); `idf.py build` SUCCEEDS (`firmware.bin` fits the `0x130000` factory partition, ~10 % free); device flash on AI-Thinker ESP32-CAM at `/dev/cu.usbserial-130` succeeded (app version `2ef093a`) but boot entered the **provisioning branch** (`config: schema_version mismatch: stored=0 compiled=1 — restoring defaults` → softAP up), so the live WS-backoff loop was NOT observable this session — the board needs re-provisioning via `POST /provision` before a disconnect can exercise the schedule on silicon (same infrastructure-constraint family as the FW-13 closure). Verify verdict: **SUCCESS** — all 4 requirements / 7 scenarios covered by passing host tests; build proof green; device smoke best-effort/partial per the project testing contract.
+>
+> **Device-flash verify (complete, 2026-08-24).** After the user re-provisioned the board, the live reconnect loop was captured on the AI-Thinker ESP32-CAM at `/dev/cu.usbserial-130`. With no reachable backend (default `ws://example.local:9000/cams` URI — `/provision` carries only wifi + identity fields, not the backend host), every connect attempt fails with `ESP_ERR_ESP_TLS_CANNOT_RESOLVE_HOSTNAME`, exercising the full FR-4 schedule end-to-end:
+>
+> ```
+> W (9618) ws_backoff: ws failure #1; reconnect in 2000 ms
+> W (9628) ws_backoff: ws failure #2; reconnect in 4000 ms
+> I (13638) ws_backoff: reconnect fired after backoff (4000 ms)
+> W (20688) ws_backoff: ws failure #3; reconnect in 8000 ms
+> W (20698) ws_backoff: ws failure #4; reconnect in 16000 ms
+> I (36698) ws_backoff: reconnect fired after backoff (16000 ms)
+> W (43748) ws_backoff: ws failure #5; reconnect in 30000 ms
+> W (43758) ws_backoff: ws failure #6; reconnect in 30000 ms
+> ```
+>
+> Every FR-4 row observed on silicon including the 30 s cap; the one-shot timer fires each delay and the client restarts — infinite retry confirmed. Two observations recorded as follow-ups: (1) each failed attempt emits BOTH an ERROR and a DISCONNECTED event, and per spec wording ("consecutive disconnect/error events", FW-14.2 S2) both count — so the schedule advances two rows per wall-clock attempt; compliant with the spec as written, but if FR-4's intent is one row per *attempt*, a follow-up should debounce paired ERROR+DISCONNECTED into one increment. (2) `ws_status_timer_stop failed: ESP_ERR_INVALID_STATE` logs at E-level when the status timer was never started (CONNECTED never happened) — cosmetic; log-level nit for a follow-up cleanup commit.
 
 ### FW-15 — Stream task forwards JPEG frames as binary WebSocket messages, with fragmentation
 
