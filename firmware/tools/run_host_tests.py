@@ -199,6 +199,10 @@ def _common_cflags(extra_defines):
         # host build has no sdkconfig.h so we mirror them via -D.
         '-DCONFIG_FIRMWARE_WS_RECONNECT_INITIAL_MS=2000',
         '-DCONFIG_FIRMWARE_WS_RECONNECT_CAP_MS=30000',
+        # FW-16 — soft-recovery Kconfig mirrors (main/Kconfig
+        # .projbuild:51-59; sdkconfig.defaults carries both).
+        '-DCONFIG_FIRMWARE_SOFT_RECOVERY_FAILS=30',
+        '-DCONFIG_FIRMWARE_SOFT_RECOVERY_WINDOW_MIN=10',
     ]
     flags.extend(extra_defines)
     return flags
@@ -259,6 +263,7 @@ def _build(basename, extra_defines, test_files, workdir):
         # FW-16 — health component (pure window core + task glue;
         # sources register as each lands).
         os.path.join(PROJECT_DIR, 'components', 'health', 'health_window.c'),
+        os.path.join(PROJECT_DIR, 'components', 'health', 'health.c'),
         # FW-13 — identity component (shared MAC + NVS identity).
         os.path.join(PROJECT_DIR, 'components', 'identity', 'identity.c'),
         # FW-13 — ws component. FW-16 server mode: ws_server.c
