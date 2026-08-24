@@ -569,6 +569,12 @@ ALL_TESTS = [
     "test_fw05_5_ip_up_starts_httpd [fw-13.5][ip-up][scenario-S1]",
     "test_fw05_5_disconnect_stops_httpd [fw-05.5][disconnect][scenario-S2]",
     "test_fw05_5_idempotent_ip_up [fw-05.5][idempotent][scenario-S3]",
+    # FW-15.1 — bounded-timeout receive (REQ-ST-006). 3 scenarios:
+    # empty-queue ≈T timeout, queued-item exact-pointer receive,
+    # cross-thread producer wakes a waiting consumer early.
+    "test_fw15_empty_queue_receive_times_out_bounded [fw-15.1][req-st-006][scenario-S1]",
+    "test_fw15_queued_item_received_with_exact_pointer [fw-15.1][req-st-006][scenario-S2]",
+    "test_fw15_waiting_consumer_wakes_on_producer_push [fw-15.1][req-st-006][scenario-S3]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -747,6 +753,10 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # 6-row FR-4 backoff table + counter lifecycle + event wiring +
     # latch orderings land across the FW-14 apply commits.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_reconnect_backoff.c'),
+    # FW-15 — stream component surface: bounded receive timeout
+    # (REQ-ST-006), single-send/opcode (REQ-ST-001/002), disconnect
+    # drain-drop-count (REQ-ST-007). Files register as each lands.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_stream_loop.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard

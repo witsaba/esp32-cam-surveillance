@@ -76,6 +76,26 @@ static int   g_last_reconnect_timeout_ms = -1;
 static bool  g_reconnect_timeout_valid   = false;
 static size_t g_set_reconnect_timeout_count = 0;
 
+/* FW-15 — binary-send surface: ring {opcode, fin, data copy},
+ * per-verb counters, and a primable fail-at-index injection. */
+typedef struct {
+    uint8_t opcode;
+    bool    fin;
+    size_t  len;
+    uint8_t data[MOCK_WS_BIN_PART_CAP];
+} bin_frame_slot_t;
+
+static bin_frame_slot_t s_bin_ring[MOCK_WS_BIN_RING_CAP];
+static size_t           s_bin_ring_count = 0;   /* frames recorded (saturates at ring cap) */
+static size_t           s_bin_ring_total = 0;   /* total recorded ever (for idx math) */
+
+static size_t g_send_bin_count          = 0;
+static size_t g_send_bin_partial_count  = 0;
+static size_t g_send_cont_msg_count     = 0;
+static size_t g_send_fin_count          = 0;
+static int    g_bin_fail_at_index       = -1;    /* -1 disabled */
+static size_t g_bin_op_count            = 0;     /* all four verbs since reset */
+
 /* ---------- primable state (test entries) ---------- */
 
 void mock_esp_websocket_client_set_inject_mac_into_url(bool inject)
@@ -139,6 +159,17 @@ void mock_esp_websocket_client_reset_for_test(void)
     g_last_reconnect_timeout_ms = -1;
     g_reconnect_timeout_valid   = false;
     g_set_reconnect_timeout_count = 0;
+
+    /* FW-15 — binary surface. */
+    memset(s_bin_ring, 0, sizeof(s_bin_ring));
+    s_bin_ring_count     = 0;
+    s_bin_ring_total     = 0;
+    g_send_bin_count     = 0;
+    g_send_bin_partial_count = 0;
+    g_send_cont_msg_count    = 0;
+    g_send_fin_count         = 0;
+    g_bin_fail_at_index      = -1;
+    g_bin_op_count           = 0;
 }
 
 /* ---------- inspection (test entries) ---------- */
@@ -515,4 +546,123 @@ bool mock_esp_websocket_client_get_enable_close_reconnect(void)
 int mock_esp_websocket_client_get_config_reconnect_timeout_ms(void)
 {
     return s_last_config_valid ? s_last_config.reconnect_timeout_ms : -1;
+}
+
+/* ---------- FW-15 binary-send surface ---------- */
+
+/* Shared recorder. Returns -1 when the fail-at-index injection
+ * fires (nothing recorded); otherwise appends the frame to the
+ * ring (oldest-first, bounded) and returns `rc`. */
+static int bin_record(uint8_t opcode, bool fin,
+                      const char *data, int len, int rc)
+{
+    if (!data || len < 0) return -1;
+    if (g_bin_fail_at_index >= 0 &&
+        (size_t)g_bin_fail_at_index == g_bin_op_count) {
+        g_bin_op_count++;
+        return -1;
+    }
+    g_bin_op_count++;
+
+    bin_frame_slot_t *slot = NULL;
+    if (s_bin_ring_count < MOCK_WS_BIN_RING_CAP) {
+        slot = &s_bin_ring[s_bin_ring_count++];
+    } else {
+        /* Ring full: drop the oldest by shifting left. */
+        memmove(s_bin_ring, s_bin_ring + 1,
+                (MOCK_WS_BIN_RING_CAP - 1) * sizeof(bin_frame_slot_t));
+        slot = &s_bin_ring[MOCK_WS_BIN_RING_CAP - 1];
+    }
+    slot->opcode = opcode;
+    slot->fin    = fin;
+    size_t n = (len >= 0 && (size_t)len <= MOCK_WS_BIN_PART_CAP)
+                 ? (size_t)len : MOCK_WS_BIN_PART_CAP;
+    if (n > 0) memcpy(slot->data, data, n);
+    slot->len = n;
+    s_bin_ring_total++;
+    return rc;
+}
+
+int mock_esp_websocket_client_send_bin(
+    esp_websocket_client_handle_t client,
+    const char *data, int len, int timeout_ticks)
+{
+    (void)client; (void)timeout_ticks;
+    g_send_bin_count++;
+    return bin_record(0x2, true, data, len, len);
+}
+
+int mock_esp_websocket_client_send_bin_partial(
+    esp_websocket_client_handle_t client,
+    const char *data, int len, int timeout_ticks)
+{
+    (void)client; (void)timeout_ticks;
+    g_send_bin_partial_count++;
+    return bin_record(0x2, false, data, len, len);
+}
+
+int mock_esp_websocket_client_send_cont_msg(
+    esp_websocket_client_handle_t client,
+    const char *data, int len, int timeout_ticks)
+{
+    (void)client; (void)timeout_ticks;
+    g_send_cont_msg_count++;
+    return bin_record(0x0, false, data, len, len);
+}
+
+int mock_esp_websocket_client_send_fin(
+    esp_websocket_client_handle_t client, int timeout_ticks)
+{
+    (void)client; (void)timeout_ticks;
+    g_send_fin_count++;
+    return bin_record(0x0, true, "", 0, 0);
+}
+
+void mock_esp_websocket_client_fail_at_index_set(int idx)
+{
+    g_bin_fail_at_index = idx;
+}
+
+size_t mock_esp_websocket_client_bin_op_call_count(void)
+{
+    return g_bin_op_count;
+}
+
+size_t mock_esp_websocket_client_send_bin_call_count(void)
+{
+    return g_send_bin_count;
+}
+
+size_t mock_esp_websocket_client_send_bin_partial_call_count(void)
+{
+    return g_send_bin_partial_count;
+}
+
+size_t mock_esp_websocket_client_send_cont_msg_call_count(void)
+{
+    return g_send_cont_msg_count;
+}
+
+size_t mock_esp_websocket_client_send_fin_call_count(void)
+{
+    return g_send_fin_count;
+}
+
+esp_err_t mock_esp_websocket_client_get_bin_frame_at(
+    size_t idx, uint8_t *opcode, bool *fin,
+    uint8_t *out, size_t out_cap, size_t *out_len)
+{
+    if (!out_len) return ESP_ERR_INVALID_ARG;
+    if (idx >= s_bin_ring_total) { *out_len = 0; return ESP_ERR_NOT_FOUND; }
+    /* idx 0 = oldest recorded; the ring holds the newest
+     * MOCK_WS_BIN_RING_CAP frames in order. */
+    size_t first_kept = (s_bin_ring_total > MOCK_WS_BIN_RING_CAP)
+                          ? s_bin_ring_total - MOCK_WS_BIN_RING_CAP : 0;
+    const bin_frame_slot_t *s = &s_bin_ring[idx - first_kept];
+    if (opcode) *opcode = s->opcode;
+    if (fin)    *fin    = s->fin;
+    size_t n = s->len < out_cap ? s->len : out_cap;
+    if (n > 0 && out) memcpy(out, s->data, n);
+    *out_len = s->len;
+    return (s->len <= out_cap) ? ESP_OK : ESP_ERR_INVALID_SIZE;
 }

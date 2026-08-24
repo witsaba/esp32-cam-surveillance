@@ -261,3 +261,59 @@ bool mock_esp_websocket_client_get_enable_close_reconnect(void);
 
 /* reconnect_timeout_ms config field of the most recent `_init`. */
 int mock_esp_websocket_client_get_config_reconnect_timeout_ms(void);
+
+/* ---------- FW-15 binary-send surface ---------- */
+
+/* Binary frame ring capacity (frames, newest at head) and the
+ * per-slot payload cap. Sized so a full fragmented 48 KB frame
+ * (3 × 16 KB parts) plus slack reassembles byte-exactly in
+ * tests. Host-only memory; device never links this file. */
+#define MOCK_WS_BIN_RING_CAP 8
+#define MOCK_WS_BIN_PART_CAP 65536
+
+/* Primable failure injection: when set to N >= 0, the Nth
+ * binary-send operation (counting send_bin / send_bin_partial /
+ * send_cont_msg / send_fin together since reset) returns -1 and
+ * records NOTHING. -1 disables. Used by REQ-ST-007 drain-drop
+ * -count tests to simulate a dead socket mid-frame. */
+void   mock_esp_websocket_client_fail_at_index_set(int idx);
+
+/* Total binary-send operations observed (all four verbs), and
+ * per-verb counters. Reset by reset_for_test(). */
+size_t mock_esp_websocket_client_bin_op_call_count(void);
+size_t mock_esp_websocket_client_send_bin_call_count(void);
+size_t mock_esp_websocket_client_send_bin_partial_call_count(void);
+size_t mock_esp_websocket_client_send_cont_msg_call_count(void);
+size_t mock_esp_websocket_client_send_fin_call_count(void);
+
+/* Copy binary frame `idx` (0 = OLDEST recorded) into `out`.
+ * Writes the wire opcode (0x2 binary / 0x0 continuation) and
+ * FIN flag, the payload length, and up to out_cap payload
+ * bytes. Returns ESP_OK; ESP_ERR_NOT_FOUND when idx is out of
+ * range; ESP_ERR_INVALID_SIZE when out_cap < len (bytes are
+ * still copied truncated — assert len first for byte-exact
+ * reassembly). */
+esp_err_t mock_esp_websocket_client_get_bin_frame_at(
+    size_t idx, uint8_t *opcode, bool *fin,
+    uint8_t *out, size_t out_cap, size_t *out_len);
+
+/* ---------- FW-15 mock targets (link-header redirects) ----------
+ * Mirrors the v1.8.0 IDF signatures: int return (payload length,
+ * or -1 on failure); send_fin returns 0/-1. Each call appends one
+ * {opcode, fin, data copy} slot to the binary ring:
+ *   send_bin         → opcode 0x2, fin=1
+ *   send_bin_partial → opcode 0x2, fin=0   (first fragment)
+ *   send_cont_msg    → opcode 0x0, fin=0   (middle fragments)
+ *   send_fin         → opcode 0x0, fin=1, len=0 (terminator)
+ */
+int mock_esp_websocket_client_send_bin(
+    esp_websocket_client_handle_t client,
+    const char *data, int len, int timeout_ticks);
+int mock_esp_websocket_client_send_bin_partial(
+    esp_websocket_client_handle_t client,
+    const char *data, int len, int timeout_ticks);
+int mock_esp_websocket_client_send_cont_msg(
+    esp_websocket_client_handle_t client,
+    const char *data, int len, int timeout_ticks);
+int mock_esp_websocket_client_send_fin(
+    esp_websocket_client_handle_t client, int timeout_ticks);

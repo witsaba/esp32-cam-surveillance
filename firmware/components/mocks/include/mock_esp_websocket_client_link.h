@@ -33,4 +33,15 @@
 #define esp_websocket_client_set_reconnect_timeout(h, ms) \
     mock_esp_websocket_client_set_reconnect_timeout(h, ms)
 
+/* FW-15 — binary-send surface (v1.8.0 signatures; int return =
+ * payload length, or -1 on failure; send_fin returns 0/-1). */
+#define esp_websocket_client_send_bin(h, d, l, t) \
+    mock_esp_websocket_client_send_bin(h, d, l, t)
+#define esp_websocket_client_send_bin_partial(h, d, l, t) \
+    mock_esp_websocket_client_send_bin_partial(h, d, l, t)
+#define esp_websocket_client_send_cont_msg(h, d, l, t) \
+    mock_esp_websocket_client_send_cont_msg(h, d, l, t)
+#define esp_websocket_client_send_fin(h, t) \
+    mock_esp_websocket_client_send_fin(h, t)
+
 #endif  /* !MOCK_WS_USE_REAL */
