@@ -7,6 +7,10 @@
  */
 #include "mock_softap.h"
 
+/* The stop contract mirror calls into the wifi mock (APSTA -> STA
+ * mode switch) — see mock_softap_stop() below. */
+#include "mock_esp_wifi.h"
+
 static esp_err_t g_stop_return   = ESP_OK;
 static bool      g_is_active     = false;
 
@@ -27,6 +31,12 @@ void mock_softap_reset(void)
 esp_err_t mock_softap_stop(void)
 {
     g_stop_count++;
+    /* Mirror the production contract (2026-08-24 GOT_IP-teardown
+     * fix): softap_stop() switches APSTA -> STA instead of calling
+     * esp_wifi_stop(), so the freshly-associated STA keeps its IP.
+     * Modeling the mode switch here keeps the wifi-event suites'
+     * "LAST set_mode == WIFI_MODE_STA" assertions load-bearing. */
+    (void)mock_esp_wifi_set_mode(WIFI_MODE_STA);
     return g_stop_return;
 }
 

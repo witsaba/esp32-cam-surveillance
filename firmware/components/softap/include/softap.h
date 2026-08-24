@@ -21,6 +21,12 @@
 #include "config.h"
 #include "esp_err.h"
 
+#ifdef UNITY_HOST_BUILD
+#include "mock_http_server_link.h"
+#else
+#include "esp_http_server.h"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -38,7 +44,12 @@ boot_status_t softap_run_provisioning(const config_t *cfg);
 
 /* Teardown. FW-08.4 will subscribe to STA-IP-up and call this. FW-05
  * ships a working body so FW-08 has a known-good implementation:
- *   httpd_stop(handle) + esp_wifi_stop() + esp_netif_destroy_default_netif(netif).
+ *   httpd_stop(handle) + esp_netif_destroy_default_netif(netif),
+ * plus an APSTA -> STA mode switch (esp_wifi_set_mode(WIFI_MODE_STA))
+ * that owns the transition — this stops the provisioning AP ONLY;
+ * the STA connection MUST survive (esp_wifi_stop() is NOT called:
+ * it would kill the whole radio, taking the freshly-associated STA
+ * down with it).
  * Returns ESP_OK on success; the failing esp_err_t on the first failure
  * (does NOT unwind partial state). */
 esp_err_t softap_stop(void);
@@ -67,6 +78,11 @@ esp_err_t softap_sta_listener_install(void);
 /* FW-05.5 — test entry. Returns true while the STA-bound httpd
  * is serving (i.e., the device is connected to a wifi network).
  * On host, the link-header redirects to the mock equivalent. */
+/* FW-16 — live STA httpd handle (NULL while the listener is
+ * down). The ws component reads this on IP-up to attach the /cams
+ * WebSocket endpoint without a softap→ws link dependency. */
+httpd_handle_t softap_sta_listener_httpd_handle_get(void);
+
 bool softap_sta_listener_is_active(void);
 
 /* FW-05.5 — test entry. Clears module-static state between

@@ -49,9 +49,10 @@
 
 static const char *TAG = "ws_event";
 
-/* Module-static state. The ws_handle is set by ws.c::ws_init_impl
- * (via ws_handle_set()) and read by the IP-up handler. */
-static esp_websocket_client_handle_t s_ws_handle = NULL;
+/* The outbound-client handle lives in ws.c as a single source of
+ * truth (ws_handle_set/ws_handle_get). FW-16 server mode never
+ * sets it in production; the retained FW-14 suites bind a mock
+ * session for their isolated unit tests. */
 
 /* Idempotency: ws_event_handler_install() returns immediately if
  * already installed (mirrors the wifi component's idempotency
@@ -73,14 +74,6 @@ void ws_event_handler_reset_for_test(void)
     s_event_handlers_installed = false;
 }
 
-/* Accessors used by ws.c to pass the handle to the event
- * handlers. ws_event_handler_install reads s_ws_handle and binds
- * the CONNECTED/DISCONNECTED subscriptions to it. */
-void ws_handle_set(esp_websocket_client_handle_t h)
-{
-    s_ws_handle = h;
-}
-
 /* ---------- handler bodies ---------- */
 
 /* IP_EVENT_STA_GOT_IP — fire esp_websocket_client_start (lazy
@@ -98,6 +91,7 @@ void ws_event_handler_on_sta_got_ip(void *arg,
     (void)event_id;
     (void)event_data;
 
+    esp_websocket_client_handle_t s_ws_handle = ws_handle_get();
     if (s_ws_handle == NULL) {
         ESP_LOGW(TAG, "sta_got_ip fired before ws_init set handle; "
                        "ignoring");
@@ -307,14 +301,14 @@ esp_err_t ws_event_handler_install(void)
      * call inside ws.c is the actual subscription; this local
      * call is a no-op on device (the WS event loop is a private
      * loop, not the IDF default loop). */
-    r = esp_websocket_register_events(s_ws_handle,
+    r = esp_websocket_register_events(ws_handle_get(),
                                        WEBSOCKET_EVENT_CONNECTED,
                                        (esp_event_handler_t)
                                          ws_event_handler_on_ws_connected,
                                        NULL);
     if (r != ESP_OK) return r;
 
-    r = esp_websocket_register_events(s_ws_handle,
+    r = esp_websocket_register_events(ws_handle_get(),
                                        WEBSOCKET_EVENT_DISCONNECTED,
                                        (esp_event_handler_t)
                                          ws_event_handler_on_ws_disconnected,
@@ -322,14 +316,14 @@ esp_err_t ws_event_handler_install(void)
     if (r != ESP_OK) return r;
 
     /* FW-14 — ERROR parity + CLOSED latch subscription. */
-    r = esp_websocket_register_events(s_ws_handle,
+    r = esp_websocket_register_events(ws_handle_get(),
                                        WEBSOCKET_EVENT_ERROR,
                                        (esp_event_handler_t)
                                          ws_event_handler_on_ws_error,
                                        NULL);
     if (r != ESP_OK) return r;
 
-    r = esp_websocket_register_events(s_ws_handle,
+    r = esp_websocket_register_events(ws_handle_get(),
                                        WEBSOCKET_EVENT_CLOSED,
                                        (esp_event_handler_t)
                                          ws_event_handler_on_ws_closed,

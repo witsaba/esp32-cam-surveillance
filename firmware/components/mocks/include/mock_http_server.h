@@ -23,6 +23,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "esp_err.h"
 
@@ -91,7 +92,8 @@ struct mock_httpd_req;
 typedef struct mock_httpd_req httpd_req_t;
 
 /* The IDF httpd_uri_t holds (uri, method, handler, user_ctx, ...).
- * Only these four are relevant on host. */
+ * Only these five are relevant on host — is_websocket matters to
+ * the FW-16 /cams endpoint registration assertions. */
 typedef int httpd_method_t;
 #define HTTP_GET  0
 #define HTTP_POST 1
@@ -101,7 +103,34 @@ typedef struct {
     httpd_method_t method;
     esp_err_t (*handler)(httpd_req_t *);
     void        *user_ctx;
+    bool         is_websocket;
 } httpd_uri_t;
+
+/* Minimal WebSocket frame surface (mirrors IDF's httpd_ws_frame_t
+ * fields used by the FW-16 server path: final/type/payload/len). */
+typedef enum {
+    HTTPD_WS_TYPE_CONTINUE = 0x0,
+    HTTPD_WS_TYPE_TEXT     = 0x1,
+    HTTPD_WS_TYPE_BINARY   = 0x2,
+    HTTPD_WS_TYPE_CLOSE    = 0x8,
+    HTTPD_WS_TYPE_PING     = 0x9,
+    HTTPD_WS_TYPE_PONG     = 0xA,
+} httpd_ws_type_t;
+
+typedef struct {
+    bool             final;
+    bool             fragmented;
+    httpd_ws_type_t  type;
+    uint8_t         *payload;
+    size_t           len;
+} httpd_ws_frame_t;
+
+/* Mirrors IDF's httpd_ws_client_info_t (fd session state). */
+typedef enum {
+    HTTPD_WS_CLIENT_INVALID   = 0,
+    HTTPD_WS_CLIENT_HTTP      = 1,
+    HTTPD_WS_CLIENT_WEBSOCKET = 2,
+} httpd_ws_client_info_t;
 
 typedef struct mock_httpd_req {
     size_t content_len;
@@ -114,6 +143,9 @@ typedef struct mock_httpd_req {
     int    captured_status;
     char  *captured_content_type;
     void  *user_ctx;
+    int    method;   /* HTTP_GET / HTTP_POST — primed by WS tests */
+    int    sockfd;   /* primed by WS tests; returned by
+                       mock_httpd_req_to_sockfd() */
 } mock_httpd_req_t;
 
 /* ---------- handler dispatch registry ---------- */
@@ -149,3 +181,24 @@ esp_err_t mock_httpd_resp_send(httpd_req_t *req, const char *buf, ssize_t len);
 esp_err_t mock_httpd_resp_set_type(httpd_req_t *req, const char *type);
 esp_err_t mock_httpd_resp_set_status(httpd_req_t *req, const char *status);
 esp_err_t mock_httpd_resp_sendstr(httpd_req_t *req, const char *str);
+
+/* ---------- FW-16 WebSocket async-send surface ---------- */
+/* Records the frame (type + payload copy, bounded ring) and
+ * returns ESP_OK. */
+esp_err_t mock_httpd_ws_send_frame_async(httpd_handle_t hd, int fd,
+                                          httpd_ws_frame_t *pkt);
+/* Returns the req's primed sockfd (-1 when NULL). */
+int      mock_httpd_req_to_sockfd(httpd_req_t *r);
+
+int      mock_httpd_ws_send_call_count(void);
+esp_err_t mock_httpd_ws_get_frame_at(size_t idx, int *type,
+                                      uint8_t *out, size_t cap,
+                                      size_t *len);
+void     mock_httpd_last_registered_is_websocket(bool *flag);
+
+/* FW-16 viewer-session liveness: the WS server probes its fd
+ * before every send. Tests mark a session dead with
+ * mock_httpd_ws_kill_session(fd); probe_fd_info then reports
+ * INVALID for it. */
+httpd_ws_client_info_t mock_httpd_ws_session_alive(int fd);
+void                   mock_httpd_ws_kill_session(int fd);

@@ -115,38 +115,20 @@ esp_err_t ws_event_handler_install(void);
 /* ---------- FW-13.1 text-frame URI helpers ----------
  *
  * These live here so host tests can call them (the test surface
- * for FW-13.1 asserts on URI parsing + URI composition; the
- * runtime callers are ws.c::ws_init (compose) + the WS event
- * handlers (parse, future-proof)). */
-
-/* Compose the WS URI from CONFIG_FIRMWARE_WS_URI_DEFAULT +
- * CONFIG_FIRMWARE_WS_PATH (both Kconfig-mirrored via -D cflags
- * on host). Writes at most `out_len` bytes to `out` (NUL-
- * terminated on success). The FW-13.4 URL-no-MAC guard
- * asserts no MAC substring appears in the composed URI.
- *
- * Returns:
- *   - ESP_OK on success (NUL-terminated in `out`).
- *   - ESP_ERR_INVALID_ARG if `out` is NULL or `out_len == 0`.
- *   - ESP_ERR_INVALID_SIZE if the composed URI would not fit
- *     in `out_len` bytes.
- *
- * Real impl lands in T-13-D GREEN. The T-13-C skeleton returns
- * ESP_OK + empty string. */
-esp_err_t ws_url_build(char *out, size_t out_len);
+ * for FW-13.1 asserts on URI parsing; the runtime caller was the
+ * client-era lazy-start wiring). The ws_url_build() composer was
+ * removed in FW-16 with the outbound-client lifecycle — server
+ * mode registers a path endpoint, there is no outbound URL. */
 
 /* Parse the URI's path component into `path_out` (NUL-
  * terminated on success). Accepts the `ws://host:port/path`
- * shape from IDF v5.5.3's esp_websocket_client_config_t.uri.
+ * shape.
  *
  * Returns:
  *   - ESP_OK on success.
  *   - ESP_ERR_INVALID_ARG if `uri` or `path_out` is NULL.
  *   - ESP_ERR_INVALID_SIZE if `path_len` would not fit the
- *     parsed path.
- *
- * Real impl lands in T-13-D GREEN. The T-13-C skeleton returns
- * ESP_OK + empty string. */
+ *     parsed path. */
 esp_err_t ws_text_frame_parse_uri_path(const char *uri,
                                         char *path_out,
                                         size_t path_len);
@@ -211,6 +193,42 @@ void ws_status_timer_reset_handle_for_test(void);
 /* Populate `out` from the current runtime (timer + wifi rssi +
  * free heap + capture fb_drops + ws reconnects). */
 void ws_runtime_metrics_collect(ws_runtime_metrics_t *out);
+
+/* ---------- FW-16 server-mode sink seam ----------
+ *
+ * The device is a WebSocket SERVER (single inbound viewer on the
+ * /cams endpoint). All frame emission — binary camera frames,
+ * hello + status text — goes through this small function-pointer
+ * table installed at viewer-accept time:
+ *
+ *   on-device  — ws_server.c binds hd+fd and sends via
+ *                httpd_ws_send_frame_async()
+ *   host tests — ws_sink_recorder (tests/host_include) records
+ *                frames for byte-exact assertions
+ *
+ * With NO sink installed (boot default, and re-installed on
+ * viewer close) the accessors report disconnected and sends fail
+ * with ESP_ERR_INVALID_STATE — the stream task maps any failure
+ * to the D4 drop-count path. */
+typedef struct {
+    esp_err_t (*send_bin)(const uint8_t *buf, size_t len);
+    esp_err_t (*send_text)(const char *buf, size_t len);
+    bool (*is_connected)(void);
+} ws_sink_t;
+
+/* Install `vt` as the active sink. NULL installs the built-in
+ * disconnected stubs (also the boot default set by ws_init). */
+void ws_sink_install(const ws_sink_t *vt);
+
+/* True only while a viewer sink is installed and reports live. */
+bool ws_sink_connected(void);
+
+/* Push one complete binary message (camera frame). Returns
+ * ESP_OK or the sink's error (never blocks). */
+esp_err_t ws_sink_send_bin(const uint8_t *buf, size_t len);
+
+/* Push one complete text message (hello / status JSON). */
+esp_err_t ws_sink_send_text(const char *buf, size_t len);
 
 #ifdef __cplusplus
 }

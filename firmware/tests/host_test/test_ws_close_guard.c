@@ -62,7 +62,15 @@ TEST_CASE(
     mock_esp_event_reset();
     ws_event_handler_reset_for_test();
     mock_log_reset();
-    TEST_ASSERT_EQUAL(ESP_OK, ws_init(&s_test_cfg));
+    /* FW-16 server mode: self-wire the retained FW-14 event chain
+     * against a mock client session (ws_init no longer creates
+     * the outbound client nor installs handlers). */
+    esp_websocket_client_handle_t h =
+        mock_esp_websocket_client_init(
+            &(esp_websocket_client_config_t){0});
+    TEST_ASSERT_NOT_NULL(h);
+    ws_handle_set(h);
+    TEST_ASSERT_EQUAL(ESP_OK, ws_event_handler_install());
 
     /* Clean CLOSE handshake followed by the disconnect event. With
      * the production latch in place NOTHING would be scheduled;

@@ -162,19 +162,14 @@ esp_err_t wifi_event_subscribe(wifi_event_id_t id,
 
 esp_err_t wifi_stop(void)
 {
-    /* FW-08.4 + FW-08.6 — tear down the softAP and transition
-     * the wifi mode from APSTA → STA so the captive-portal
-     * attack window closes (charter L767, L781). Called by
-     * wifi_event.c::on_sta_got_ip_handler() when
-     * CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=y. */
-    esp_err_t r = softap_stop();
-    if (r != ESP_OK) return r;
-    /* The post-teardown mode switch is owned by T-08-F; for
-     * now we issue the STA-only mode change so the wifi stack
-     * is in a consistent state after teardown. The T-08-F
-     * APSTA-at-init branch re-asserts the mode if needed. */
-    r = esp_wifi_set_mode(WIFI_MODE_STA);
-    return r;
+    /* FW-08.4 + FW-08.6 — tear down the provisioning softAP so
+     * the captive-portal attack window closes (charter L767,
+     * L781). Called by wifi_event.c::on_sta_got_ip_handler()
+     * when CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=y.
+     * Pure delegation: softap_stop() owns the APSTA -> STA mode
+     * switch (the STA association MUST survive the teardown),
+     * so no separate esp_wifi_set_mode() here. */
+    return softap_stop();
 }
 
 esp_err_t wifi_init(const config_t *cfg)

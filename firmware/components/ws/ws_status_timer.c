@@ -1,15 +1,15 @@
 /* ws_status_timer.c — periodic 30 s status-timer implementation
- * (FW-13, T-13-G GREEN).
+ * (FW-13, T-13-G GREEN; FW-16 server-mode rewiring).
  *
  * The timer fires every CONFIG_FIRMWARE_WS_STATUS_PERIOD_MS ms
- * (default 30000 = 30 s). The callback reads
- * runtime_metrics_collect + ws_text_frame_build_status +
- * esp_websocket_client_send_text to emit the status frame.
+ * (default 30000 = 30 s). The callback reads runtime metrics +
+ * identity, builds the JSON, and pushes the status frame through
+ * the viewer sink (httpd_ws_send_frame_async on device).
  *
  * Lifecycle:
  *   ws_status_timer_init()   — create the periodic handle (once)
- *   ws_status_timer_start()  — arm on WEBSOCKET_EVENT_CONNECTED
- *   ws_status_timer_stop()   — disarm on WEBSOCKET_EVENT_DISCONNECTED
+ *   ws_status_timer_start()  — arm on /cams viewer accept
+ *   ws_status_timer_stop()   — disarm on viewer socket close
  *
  * The module-static handle is exposed via
  * ws_status_timer_handle_get() so host tests can advance it
@@ -44,7 +44,11 @@ static uint64_t g_status_period_us = 0;
 #define WS_STATUS_BUF_LEN 512
 
 /* The periodic callback. Reads runtime metrics + identity,
- * builds the JSON, sends as text frame on the current WS handle.
+ * builds the JSON, sends as a text frame through the viewer
+ * sink. Silently skips (after one WARN) when no viewer is
+ * connected — the timer is stopped on socket close anyway; this
+ * guards the race where the callback fires between close and
+ * stop.
  *
  * The host mock fires the callback synchronously via
  * mock_esp_timer_fire_callback or the advance_periodic helper,
@@ -53,9 +57,8 @@ static uint64_t g_status_period_us = 0;
 static void ws_status_timer_cb(void *arg)
 {
     (void)arg;
-    esp_websocket_client_handle_t h = ws_handle_get();
-    if (!h) {
-        ESP_LOGW(TAG, "status timer fired without ws handle");
+    if (!ws_sink_connected()) {
+        ESP_LOGW(TAG, "status timer fired without an active viewer");
         return;
     }
 
@@ -84,19 +87,13 @@ static void ws_status_timer_cb(void *arg)
                        "returned 0; skipping send");
         return;
     }
-    int sent = esp_websocket_client_send_text(h, buf, (int)len,
-#ifdef UNITY_HOST_BUILD
-                                               0
-#else
-                                               pdMS_TO_TICKS(500)
-#endif
-                                               );
-    if (sent < 0) {
-        ESP_LOGE(TAG, "status cb: send failed: %d", sent);
+    esp_err_t sr = ws_sink_send_text(buf, len);
+    if (sr != ESP_OK) {
+        ESP_LOGE(TAG, "status cb: send failed: %s", esp_err_to_name(sr));
     } else {
-        ESP_LOGD(TAG, "status sent: %d bytes (uptime=%lld s "
+        ESP_LOGD(TAG, "status sent: %u bytes (uptime=%lld s "
                        "rssi=%d heap=%u fb_drops=%u reconnects=%u)",
-                 sent,
+                 (unsigned)len,
                  (long long)(metrics.uptime_us / 1000000),
                  (int)metrics.rssi_dbm,
                  (unsigned)metrics.free_heap,

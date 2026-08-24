@@ -307,6 +307,63 @@ TEST_CASE(
     mock_httpd_req_free(req);
 }
 
+/* Regression (device-verified 2026-08-24): the STA-interface listener
+ * registers /whoami with user_ctx=NULL by design ("reads the live
+ * identity via config_load() on every request"), but the handler
+ * returned bare ESP_FAIL on NULL — httpd closed the connection with
+ * ZERO bytes, so every LAN caller got `curl: (52) Empty reply from
+ * server` while the provisioning-time /whoami kept working. NULL
+ * user_ctx MUST serve identity from NVS instead of failing. */
+TEST_CASE(
+    "whoami_serves_identity_with_null_user_ctx [fw-05][regression]",
+    "[softap][fw-05][regression]")
+{
+    mock_nvs_reset();
+    mock_esp_system_reset();
+    mock_httpd_reset();
+    mock_log_reset();
+    seed_whoami_mocks();
+
+    /* Seed NVS exactly like a provisioned boot would have loaded:
+     * namespace "config" with schema + identity fields. The handler
+     * must surface THESE values through its config_load fallback. */
+    mock_nvs_seed_u8("config", "schema_version", CONFIG_SCHEMA_VERSION);
+    mock_nvs_seed_str("config", "name", "Estudio");
+    mock_nvs_seed_str("config", "description",
+                      "Camara en el estudio de trabajo");
+
+    /* Fresh mock req: user_ctx is NULL by default — the exact shape
+     * the STA listener hands the handler on device. Direct invocation
+     * (no registry) keeps the unit focused on the handler contract. */
+    mock_httpd_req_t *req = mock_httpd_req_new();
+    TEST_ASSERT_NOT_NULL(req);
+
+    extern esp_err_t whoami_get_handler_impl(httpd_req_t *req);
+    esp_err_t rc = whoami_get_handler_impl((httpd_req_t *)req);
+
+    TEST_ASSERT_EQUAL_INT(ESP_OK, rc);
+    TEST_ASSERT_NOT_NULL(req->captured_response_buffer);
+    TEST_ASSERT_EQUAL_STRING("application/json",
+                             req->captured_content_type);
+
+    cJSON *root = cJSON_Parse(req->captured_response_buffer);
+    TEST_ASSERT_NOT_NULL(root);
+    TEST_ASSERT_TRUE(cJSON_IsObject(root));
+
+    cJSON *name_item = cJSON_GetObjectItemCaseSensitive(root, "name");
+    cJSON *desc_item = cJSON_GetObjectItemCaseSensitive(root, "description");
+    cJSON *mac_item  = cJSON_GetObjectItemCaseSensitive(root, "mac");
+    TEST_ASSERT_TRUE(cJSON_IsString(name_item));
+    TEST_ASSERT_TRUE(cJSON_IsString(desc_item));
+    TEST_ASSERT_EQUAL_STRING("Estudio", name_item->valuestring);
+    TEST_ASSERT_EQUAL_STRING("Camara en el estudio de trabajo",
+                             desc_item->valuestring);
+    TEST_ASSERT_EQUAL_STRING("c8f09e9d5008", mac_item->valuestring);
+
+    cJSON_Delete(root);
+    mock_httpd_req_free(req);
+}
+
 /* Regression test for engram #3627 — device flash caught missing
  * esp_wifi_init() because the host mock doesn't enforce the
  * "init must precede set_mode" invariant. Asserting the call

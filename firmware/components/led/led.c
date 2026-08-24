@@ -67,6 +67,10 @@
 typedef struct {
     uint32_t period_us;   /* half-period for blink; 0 = solid-on */
     int      is_solid;    /* 1 = solid ON, no timer (BOOTING/STREAMING) */
+    int      is_off;      /* 1 = drive level OFF + stop timer
+                           * (CONNECTED_IDLE — GPIO 4 is the AI-Thinker
+                           * flash LED; a heartbeat here wastes serious
+                           * power once the system is healthy) */
 } led_state_cfg_t;
 
 static led_state_cfg_t led_state_cfg(led_state_t s);
@@ -192,7 +196,15 @@ esp_err_t led_set_state(led_state_t s)
     g_state = s;
     led_state_cfg_t cfg = led_state_cfg(s);
 
-    if (cfg.is_solid) {
+    if (cfg.is_off) {
+        /* Steady-state OFF (CONNECTED_IDLE): stop the periodic and
+         * hold the level OFF. No timer, no toggles, no flash-LED
+         * drain while the system is healthy. */
+        if (g_periodic_handle) {
+            esp_timer_stop(g_periodic_handle);
+        }
+        gpio_set_level(CONFIG_FIRMWARE_LED_GPIO, led_level_off());
+    } else if (cfg.is_solid) {
         /* BOOTING / STREAMING: stop the periodic, hold level ON. */
         if (g_periodic_handle) {
             esp_timer_stop(g_periodic_handle);
@@ -292,8 +304,10 @@ static led_state_cfg_t led_state_cfg(led_state_t s)
             out.is_solid  = 0;
             break;
         case LED_STATE_CONNECTED_IDLE:
-            out.period_us = (uint32_t)CONFIG_FIRMWARE_LED_PERIOD_IDLE_HEARTBEAT_MS * 500u;
+            /* Steady state = LED OFF (see is_off rationale above). */
+            out.period_us = 0;
             out.is_solid  = 0;
+            out.is_off    = 1;
             break;
         case LED_STATE_STREAMING:
             out.period_us = 0;

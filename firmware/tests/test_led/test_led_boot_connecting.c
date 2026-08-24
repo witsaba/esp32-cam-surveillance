@@ -66,8 +66,8 @@ TEST_CASE(
     int pin = -1, level = -1;
     mock_gpio_set_level_capture(&pin, &level);
     TEST_ASSERT_EQUAL_INT(GPIO_NUM_4, pin);
-    /* Active-LOW default: ON → level = 0. */
-    TEST_ASSERT_EQUAL_INT(0, level);
+    /* Active-HIGH flash LED: ON → level = 1. */
+    TEST_ASSERT_EQUAL_INT(1, level);
 
     TEST_ASSERT_EQUAL_INT(0, mock_esp_timer_start_periodic_call_count());
     /* gpio_set_level called at least once on BOOTING entry.

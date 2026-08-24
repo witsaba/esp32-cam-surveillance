@@ -173,7 +173,9 @@ TEST_CASE(
 
     install_and_fire_ip_up();
 
-    /* Two registrations total: /whoami (FW-05.5) + /snapshot. */
+    /* Two registrations total: /whoami (FW-05.5) + /snapshot.
+     * The FW-16 /cams WebSocket endpoint is attached by the ws
+     * component on its own IP-up subscription. */
     TEST_ASSERT_EQUAL_INT(2, mock_httpd_register_uri_handler_call_count());
 
     /* Most recently registered is /snapshot… */

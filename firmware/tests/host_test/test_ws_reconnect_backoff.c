@@ -68,9 +68,18 @@ static void reset_state(void)
     mock_esp_event_reset();
     ws_event_handler_reset_for_test();
     mock_log_reset();
-    /* Bring up a real WS session so ws_backoff_on_failure sees a
-     * live handle (the FR-4 setter fires against it). */
-    TEST_ASSERT_EQUAL(ESP_OK, ws_init(&s_test_cfg));
+    /* FW-16 server mode: ws_init no longer creates the outbound
+     * client nor installs the event chain. These retained FW-14
+     * unit tests self-wire the session instead — mock client
+     * handle (needed by set_reconnect_timeout capture) plus the
+     * CONNECTED/DISCONNECTED/CLOSED subscriptions that used to
+     * come from ws_init → ws_event_handler_install(). */
+    esp_websocket_client_handle_t h =
+        mock_esp_websocket_client_init(
+            &(esp_websocket_client_config_t){0});
+    TEST_ASSERT_NOT_NULL(h);
+    ws_handle_set(h);
+    TEST_ASSERT_EQUAL(ESP_OK, ws_event_handler_install());
 #endif
 }
 

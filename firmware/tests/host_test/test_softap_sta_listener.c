@@ -96,8 +96,9 @@ TEST_CASE("test_fw05_5_ip_up_starts_httpd [fw-05.5][ip-up][scenario-S1]", "[soft
      * fire_handler now invokes ALL matching subscribers (see
      * mock_esp_event.c multi-handler fix). The FW-08 wifi
      * component also subscribes to IP_EVENT_STA_GOT_IP; its
-     * handler is a real function that calls esp_wifi_stop +
-     * softap_stop on device, but on host it just does whatever
+     * handler is a real function that calls softap_stop on
+     * device (AP-only teardown + APSTA -> STA mode switch; the
+     * STA association survives), but on host it just does whatever
      * the wifi_event.c on_sta_got_ip_handler does in the host
      * build (no-op stub under UNITY_HOST_BUILD when no stub
      * gate is set). Our listener fires regardless. */
@@ -108,8 +109,10 @@ TEST_CASE("test_fw05_5_ip_up_starts_httpd [fw-05.5][ip-up][scenario-S1]", "[soft
     /* Exactly one new httpd_start invocation. */
     TEST_ASSERT_EQUAL_INT(1, mock_httpd_start_call_count() - start_before);
 
-    /* Two new URI registrations — /whoami (FW-05.5) + /snapshot
-     * (diagnostic frame endpoint). */
+    /* Two new URI registrations from THIS module — /whoami
+     * (FW-05.5) + /snapshot (diagnostic frame endpoint). The FW-16
+     * /cams WebSocket endpoint is attached by the ws component's
+     * own GOT_IP subscription, not by this listener. */
     TEST_ASSERT_EQUAL_INT(
         2, mock_httpd_register_uri_handler_call_count() - register_before);
 

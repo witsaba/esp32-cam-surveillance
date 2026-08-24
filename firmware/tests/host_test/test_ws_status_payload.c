@@ -1,4 +1,5 @@
-/* test_ws_status_payload.c — FW-13.6 REQ-WS-006 (status payload).
+/* test_ws_status_payload.c — FW-13.6 REQ-WS-006 (status payload;
+ * FW-16 server-mode fixture).
  *
  * Three scenarios verify the status frame carries the full
  * documented 8-field payload with correct types:
@@ -6,15 +7,16 @@
  *   S1 — Full payload present. Parse the status JSON and
  *       assert every documented key is present with the
  *       expected type.
- *   S2 — reconnects == 0 in FW-13. The fw-13 charter L1201
- *       reserves the producer for FW-14; the stub returns 0.
- *   S3 — Counters monotonic-or-stable. Prime fb_drops=N;
- *       assert status frame fb_drops >= N. Reconnect also
- *       non-negative.
+ *   S2 — reconnects == 0. The fw-13 charter L1201 reserves the
+ *       producer for FW-14; the stub returns 0.
+ *   S3 — rssi_dbm reflects the mock. Prime
+ *       mock_esp_wifi_set_rssi_dbm(-47); assert the status field
+ *       equals -47.
  *
- * S4 (rssi reflects mock) — bonus. Prime mock_esp_wifi_rssi
- * _set_test_value(-47); assert the status rssi_dbm field
- * equals -47.
+ * Driver (server mode): ws_init arms module state + creates the
+ * periodic handle; the recorder sink stands in for the connected
+ * viewer; arming the timer directly mirrors viewer-accept and
+ * one 30 s advance drives exactly one status emission.
  */
 #include "unity.h"
 
@@ -32,14 +34,12 @@
 #include "esp_err.h"
 
 #ifdef UNITY_HOST_BUILD
-#include "mock_esp_websocket_client.h"
 #include "mock_esp_timer.h"
 #include "mock_esp_wifi.h"
 #include "mock_esp_system.h"
-#include "mock_esp_event.h"
 #include "mock_nvs_flash_link.h"
-#include "mock_esp_system_link.h"
 #include "mock_init_returns.h"
+#include "ws_sink_recorder.h"
 #endif
 
 static config_t s_test_cfg;
@@ -52,12 +52,10 @@ static void reset_state(void)
     s_test_cfg.wifi.ssid[sizeof(s_test_cfg.wifi.ssid) - 1] = '\0';
 #ifdef UNITY_HOST_BUILD
     mock_init_returns_reset();
-    mock_esp_websocket_client_reset_for_test();
     mock_esp_timer_reset();
     ws_status_timer_reset_handle_for_test();
-    mock_esp_event_reset();
-    ws_event_handler_reset_for_test();
-    /* Prime eFuse MAC for the hello emit. */
+    ws_sink_recorder_reset();
+    /* Prime eFuse MAC for the identity fields. */
     uint8_t mac[6] = {0xc8, 0xf0, 0x9e, 0x9d, 0x50, 0x08};
     mock_esp_read_mac_set_bytes(mac);
 #endif
@@ -106,18 +104,24 @@ static bool json_get_number(const char *json, const char *key,
     return true;
 }
 
-/* Helper — fire CONNECTED + advance timer N times to drive
- * the periodic status callback. Returns the captured frame. */
+/* Helper — arm the timer (viewer-accept equivalent) + advance one
+ * 30 s period to drive exactly one status emission. The recorder
+ * sink receives the frame at index 0 (oldest-first ring, no hello
+ * in this fixture). */
 static void drive_status_cycle(void)
 {
-    esp_websocket_client_handle_t h = ws_handle_get();
-    esp_websocket_client_start(h);
+    TEST_ASSERT_EQUAL(ESP_OK, ws_status_timer_start());
 #ifdef UNITY_HOST_BUILD
     void *timer_handle = ws_status_timer_handle_get();
     if (timer_handle) {
         mock_esp_timer_advance_periodic(timer_handle, 30000);
     }
 #endif
+}
+
+static esp_err_t read_status_frame(char *frame, size_t cap)
+{
+    return ws_sink_recorder_get_text_at(0, frame, cap);
 }
 
 /* ---------- REQ-WS-006 S1: full payload ---------- */
@@ -129,15 +133,12 @@ TEST_CASE(
 
     esp_err_t r = ws_init(&s_test_cfg);
     TEST_ASSERT_EQUAL(ESP_OK, r);
+    TEST_ASSERT_EQUAL(ESP_OK, ws_sink_recorder_install());
 
     drive_status_cycle();
 
-    /* get_text_frame_at(0) returns the newest (status frame);
-     * get_text_frame_at(1) returns the second-newest (hello).
-     * Ring buffer indexing: newest at idx=0. */
-    char frame[MOCK_WS_TEXT_FRAME_CAP] = {0};
-    r = mock_esp_websocket_client_get_text_frame_at(0, frame,
-                                                     sizeof(frame));
+    char frame[256] = {0};
+    r = read_status_frame(frame, sizeof(frame));
     TEST_ASSERT_EQUAL(ESP_OK, r);
 
     /* type field must be "status" exactly. */
@@ -180,12 +181,12 @@ TEST_CASE(
 
     esp_err_t r = ws_init(&s_test_cfg);
     TEST_ASSERT_EQUAL(ESP_OK, r);
+    TEST_ASSERT_EQUAL(ESP_OK, ws_sink_recorder_install());
 
     drive_status_cycle();
 
-    char frame[MOCK_WS_TEXT_FRAME_CAP] = {0};
-    r = mock_esp_websocket_client_get_text_frame_at(0, frame,
-                                                     sizeof(frame));
+    char frame[256] = {0};
+    r = read_status_frame(frame, sizeof(frame));
     TEST_ASSERT_EQUAL(ESP_OK, r);
 
     char num_buf[32] = {0};
@@ -210,12 +211,12 @@ TEST_CASE(
 
     esp_err_t r = ws_init(&s_test_cfg);
     TEST_ASSERT_EQUAL(ESP_OK, r);
+    TEST_ASSERT_EQUAL(ESP_OK, ws_sink_recorder_install());
 
     drive_status_cycle();
 
-    char frame[MOCK_WS_TEXT_FRAME_CAP] = {0};
-    r = mock_esp_websocket_client_get_text_frame_at(0, frame,
-                                                     sizeof(frame));
+    char frame[256] = {0};
+    r = read_status_frame(frame, sizeof(frame));
     TEST_ASSERT_EQUAL(ESP_OK, r);
 
     char num_buf[32] = {0};

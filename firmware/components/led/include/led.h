@@ -14,7 +14,10 @@
  *   BOOTING           → solid ON  (timer stopped, level held)
  *   WIFI_CONNECTING   → 200 ms blink (timer period 100_000 us)
  *   WS_CONNECTING     → 100 ms blink (timer period  50_000 us)
- *   CONNECTED_IDLE    → 1 s heartbeat (timer period 500_000 us)
+ *   CONNECTED_IDLE    → LED OFF (steady state; GPIO 4 is the
+ *                        AI-Thinker flash LED, so a heartbeat here
+ *                        wastes significant power — fault blinks in
+ *                        the other states remain the diagnostic)
  *   STREAMING         → solid ON  (timer stopped, level held)
  *   RECONNECT_BACKOFF → 2 s blink (timer period 1_000_000 us)
  *   SOFT_RECOVERY     → 5 Hz rapid (timer period 50_000 us)
@@ -54,7 +57,7 @@ extern "C" {
 #endif
 
 #ifndef CONFIG_FIRMWARE_LED_ACTIVE_LOW
-#define CONFIG_FIRMWARE_LED_ACTIVE_LOW 1
+#define CONFIG_FIRMWARE_LED_ACTIVE_LOW 0
 #endif
 
 #ifndef CONFIG_FIRMWARE_LED_PERIOD_WIFI_CONNECTING_MS

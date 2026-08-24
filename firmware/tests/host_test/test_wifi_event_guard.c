@@ -1,7 +1,7 @@
 /* test_wifi_event_guard.c — FW-08.6 no-AP-after-tear-down guard.
  *
- * The IP-up handler MUST be wired to softap_stop() +
- * esp_wifi_set_mode(WIFI_MODE_STA) under
+ * The IP-up handler MUST be wired to softap_stop(), which owns
+ * the esp_wifi_set_mode(WIFI_MODE_STA) transition under
  * CONFIG_FIRMWARE_PROVISIONING_AP_STOP_ON_CONNECT=y. Removing
  * either wire is a scratch violation. Under the stub build
  * (WIFI_TEST_STUB_SKIP_IP_UP_HANDLER=1), the IP-up handler is
@@ -16,7 +16,9 @@
  *     IP_EVENT_STA_GOT_IP. Asserts:
  *       - mock_esp_wifi_set_mode_arg_at(0) == WIFI_MODE_STA
  *         (the LAST set_mode call after IP-up is STA, not
- *         APSTA — proves the post-teardown mode transition)
+ *         APSTA — softap_stop() ends in STA-only mode WITHOUT
+ *         stopping the radio, so the fresh STA association
+ *         survives)
  *       - mock_softap_stop_call_count() == 1 (teardown fired)
  *
  *   S2 — missing teardown is rejected (bite-proof, Pass 8).
@@ -94,8 +96,9 @@ TEST_CASE(
     TEST_ASSERT_EQUAL_INT(ESP_OK, rc);
 
     /* At init the LAST set_mode was APSTA (FW-08.5). After IP-up
-     * the LAST set_mode MUST be STA (the wifi_stop() body
-     * transitions to STA — see T-08-E). */
+     * the LAST set_mode MUST be STA (softap_stop() owns the
+     * APSTA -> STA transition — see the 2026-08-24 GOT_IP
+     * teardown fix). */
     int mode_count_before = mock_esp_wifi_set_mode_call_count();
 
     /* Fire IP_EVENT_STA_GOT_IP. */
@@ -107,9 +110,9 @@ TEST_CASE(
     TEST_ASSERT_EQUAL_INT(1, mock_softap_stop_call_count());
 
     /* The LAST set_mode call (most recent) is WIFI_MODE_STA —
-     * proves the post-teardown mode transition. The wifi_stop()
-     * body issues esp_wifi_set_mode(WIFI_MODE_STA) after
-     * softap_stop returns. */
+     * proves the teardown ended in STA-only mode. softap_stop()
+     * issues esp_wifi_set_mode(WIFI_MODE_STA) INSTEAD OF
+     * esp_wifi_stop(), so the radio stays up for the STA. */
     int mode_count_after = mock_esp_wifi_set_mode_call_count();
     TEST_ASSERT_GREATER_THAN_INT(mode_count_before, mode_count_after);
     wifi_mode_t last_mode = mock_esp_wifi_set_mode_arg_at(0);

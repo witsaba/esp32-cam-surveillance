@@ -62,12 +62,13 @@ menu "ESP32-CAM Surveillance Firmware"
         bool "Power down the softAP once station mode joins a network"
         default y
 
-    # FW-06 status LED (R-23). GPIO + active-LOW polarity per PRD §
-    # FR-7 L222-232: AI-THINKER ESP32-CAM onboard LED is wired from
-    # VCC → resistor → GPIO 4 → LED → GND, so driving the GPIO LOW
-    # turns the LED ON (active-LOW). The 5 period constants encode
-    # the half-period (in ms) the esp_timer toggles the level for
-    # each state; full blink period = 2 × half-period.
+    # FW-06 status LED (R-23). GPIO per PRD § FR-7 L222-232.
+    # POLARITY CORRECTION (device-observed): the AI-THINKER flash LED
+    # on GPIO 4 is driven through an NPN transistor — GPIO HIGH =
+    # LED ON (active-HIGH). The earlier active-LOW assumption made
+    # every LED state physically inverted on this board (steady-state
+    # "off" held the flash LED lit); blinking masked it because a
+    # toggle looks the same either way.
     config FIRMWARE_LED_GPIO
         int "Status LED GPIO number (AI-THINKER onboard LED = GPIO 4)"
         range 0 39
@@ -77,12 +78,13 @@ menu "ESP32-CAM Surveillance Firmware"
             L222. Override this only for non-AI-THINKER boards.
 
     config FIRMWARE_LED_ACTIVE_LOW
-        bool "Status LED is active-LOW (default for AI-THINKER onboard LED)"
-        default y
+        bool "Status LED is active-LOW"
+        default n
         help
-            AI-THINKER hardware: VCC → resistor → GPIO 4 → LED → GND.
-            Driving the GPIO LOW sinks current and turns the LED ON.
-            Disable for boards where LED is wired VCC-side to GPIO.
+            AI-THINKER flash LED: GPIO 4 sinks the base of an NPN
+            transistor, so driving the GPIO HIGH turns the LED ON
+            (active-HIGH — leave this disabled). Enable only for
+            boards where the LED is wired VCC-side to the GPIO.
 
     config FIRMWARE_LED_PERIOD_WIFI_CONNECTING_MS
         int "WiFi-connecting blink period (ms; esp_timer period = half)"
