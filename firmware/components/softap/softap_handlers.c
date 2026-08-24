@@ -117,13 +117,33 @@ esp_err_t whoami_get_handler_impl(httpd_req_t *req)
 {
     if (!req) return ESP_FAIL;
 
+    /* Identity source: provisioning-time registrations pass a live
+     * cfg pointer via user_ctx; the STA-interface listener (FW-05.5)
+     * registers with user_ctx=NULL BY DESIGN so this handler falls
+     * back to reading NVS on every request (re-provisioning visible
+     * without a restart). Returning bare ESP_FAIL on NULL closed the
+     * connection with zero bytes — every LAN caller saw an empty
+     * reply (device-verified 2026-08-24). */
+    config_t live_cfg;
     const config_t *cfg = (const config_t *)req->user_ctx;
-    if (!cfg) return ESP_FAIL;
+    if (!cfg) {
+        bool live_dirty = false;
+        config_status_t st = config_load(&live_cfg, &live_dirty);
+        if (st != CONFIG_OK) {
+            ESP_LOGE(TAG, "whoami: config_load failed: %d", (int)st);
+            httpd_resp_set_status(req, "500 Internal Server Error");
+            httpd_resp_sendstr(req, "{\"error\":\"config_unavailable\"}");
+            return ESP_FAIL;
+        }
+        cfg = &live_cfg;
+    }
 
     uint8_t mac[6] = {0};
     esp_err_t r = esp_read_mac(mac, ESP_MAC_WIFI_STA);
     if (r != ESP_OK) {
         ESP_LOGE(TAG, "whoami: esp_read_mac failed: %s", esp_err_to_name(r));
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_sendstr(req, "{\"error\":\"mac_unavailable\"}");
         return ESP_FAIL;
     }
     char mac_str[13];

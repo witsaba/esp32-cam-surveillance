@@ -356,6 +356,7 @@ ALL_TESTS = [
     "provision_rejects_description_over_128_chars [fw-05.2][length-cap]",
     # FW-05.3 round-trip + partial update
     "whoami_round_trips_existing_name_and_description [fw-05.3]",
+    "whoami_serves_identity_with_null_user_ctx [fw-05][regression]",
     "provision_partial_update_preserves_name_and_description [fw-05.3]",
     # FW-05.4 strict validation guard (wifi_ssid + wifi_password are
     # REQUIRED; name + description are OPTIONAL per PRD § FR-1a +
