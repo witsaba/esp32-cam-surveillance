@@ -597,6 +597,10 @@ ALL_TESTS = [
     "test_fw15_failed_send_returns_fb_exactly_once [fw-15.3][req-st-005][scenario-S1]",
     "test_fw15_dead_socket_drains_all_frames [fw-15.3][req-st-007][scenario-S2]",
     "test_fw15_healthy_socket_loop_sends_and_counts [fw-15.3][req-st-002][scenario-S3]",
+    # Diagnostic GET /snapshot endpoint (queued-frame bisect tool).
+    "test_snapshot_queued_frame_served_as_jpeg [snapshot][scenario-S1]",
+    "test_snapshot_empty_queue_returns_503 [snapshot][scenario-S2]",
+    "test_snapshot_listener_registers_both_uris [snapshot][scenario-S3]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -786,6 +790,10 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # (REQ-ST-005/007). 3 scenarios: failed-send fb return, dead-
     # socket drain, healthy-socket send+count through the loop.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_stream_disconnect.c'),
+    # Diagnostic GET /snapshot: queued frame served as image/jpeg
+    # via the capture queue (single-caller invariant intact), 503
+    # on empty queue, dual URI registration with /whoami.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_snapshot_endpoint.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard

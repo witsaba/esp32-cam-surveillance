@@ -12,5 +12,5 @@ idf_component_register(
          "softap_home.c"
          "softap_sta_listener.c"
     INCLUDE_DIRS "include"
-    REQUIRES boot config identity esp_wifi esp_netif esp_http_server esp_event wifi
+    REQUIRES boot config identity esp_wifi esp_netif esp_http_server esp_event wifi capture
 )
