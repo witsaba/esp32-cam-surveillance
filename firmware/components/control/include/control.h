@@ -133,6 +133,17 @@ control_queue_t *control_queue_for_test(void);
  * the status-frame schema stays frozen (FW-13.6 untouched). */
 uint32_t control_frames_dropped_get(void);
 
+/* Production producer seam (RX hook in ws_server.c): submit an
+ * owned heap frame copy to the module-static ring. Takes ownership:
+ * true → queued FIFO (the consumer frees exactly once); false →
+ * ring FULL — the NEWEST frame is dropped (counter already bumped)
+ * and the CALLER frees immediately. Never blocks the producer. */
+bool control_frame_submit(void *frame_copy);
+
+/* Record an oversize-ingest drop on the SAME counter as queue-full
+ * drops (D3); the caller owns the distinct log line. */
+void control_dropped_frame_record(void);
+
 /* One consumer iteration: bounded pop → process → emit the reply
  * envelope via ws_sink_send_text (0-sentinel skips the send) →
  * free the frame copy (single owner, free-once). Device task body

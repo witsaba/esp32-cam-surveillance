@@ -667,6 +667,11 @@ ALL_TESTS = [
     "test_task_receive_timeout_is_bounded_tick [fw-18.2]",
     # FW-18 U3 — RX seam (mock recv + ws_server ingest hook).
     "test_ingest_mock_primed_frame_drains_type_and_payload [fw-18][mock-self]",
+    "test_ingest_text_command_enqueued_not_processed_inline [fw-18.2]",
+    "test_ingest_text_consumed_handler_ok [fw-18.2][seam]",
+    "test_ingest_non_text_silent_ignore [fw-18.2][ruling-3]",
+    "test_ingest_ten_primed_eight_enqueued_two_dropped [fw-18.2][ruling-2]",
+    "test_ingest_oversize_dropped_same_counter_stream_synced [fw-18.3][d5]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3

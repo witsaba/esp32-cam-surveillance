@@ -29,16 +29,21 @@
  * framing limit; no fragmentation layer exists in server mode
  * (stream_fragment.c stays as a pure diagnostic planner).
  *
- * Inbound data frames from the viewer are ignored: the handler
- * returns ESP_OK without consuming them (receive-only viewer).
+ * Inbound TEXT frames carry camera commands (FW-18): the RX seam
+ * copies each frame onto the bounded control ring for the
+ * dispatcher task; non-TEXT frames are silently ignored. Every
+ * error post-handshake is swallowed — the handler NEVER fails an
+ * upgraded session (viewer state untouched).
  */
 #include "ws_server.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_log.h"
 
 #include "ws.h"
+#include "control.h" /* control_frame_submit / drop record (RX seam) */
 #include "identity.h"
 #include "softap.h"
 #include "wifi.h"       /* wifi_event_subscribe (GOT_IP attach hook) */
@@ -212,6 +217,84 @@ static esp_err_t viewer_reject(int fd)
     return ESP_FAIL;
 }
 
+/* ---------- FW-18 command ingest (RX seam) ---------- */
+
+/* Drain-discard `total` payload bytes off the socket in bounded
+ * stack chunks so the WS stream stays frame-aligned. Used for
+ * every frame the dispatcher does NOT keep (non-TEXT traffic,
+ * oversize commands). */
+static void ingest_drain_discard(httpd_req_t *req, size_t total)
+{
+    uint8_t scratch[64];
+    httpd_ws_frame_t pkt = {0};
+    pkt.type             = HTTPD_WS_TYPE_TEXT;
+    size_t remaining     = total;
+    while (remaining > 0) {
+        pkt.payload = scratch;
+        pkt.len     = (remaining < sizeof(scratch))
+                          ? remaining : sizeof(scratch);
+        if (httpd_ws_recv_frame(req, &pkt, pkt.len) != ESP_OK) {
+            break;
+        }
+        remaining -= pkt.len;
+    }
+}
+
+/* Post-handshake TEXT frame → heap copy → control ring. IDF
+ * invokes the URI handler once per received WS frame; the recv
+ * runs in two calls (size probe len=0, then fill). Frames the
+ * dispatcher does not keep are chunk-drained and discarded so the
+ * socket stream stays synced. ANY failure path logs and returns
+ * ESP_OK — the request NEVER fails post-handshake. */
+static esp_err_t ws_server_ingest_frame(httpd_req_t *req)
+{
+    httpd_ws_frame_t pkt = {0};
+    pkt.type = HTTPD_WS_TYPE_TEXT;
+    if (httpd_ws_recv_frame(req, &pkt, 0) != ESP_OK) {
+        ESP_LOGW(TAG, "cmd ingest: frame probe failed");
+        return ESP_OK;
+    }
+    if (pkt.type != HTTPD_WS_TYPE_TEXT || pkt.len == 0) {
+        /* PING/PONG/CLOSE/BINARY/empty: silent ignore (ruling
+         * #3966.3) — no control-module state change; the payload
+         * is drained so the stream keeps working. */
+        ingest_drain_discard(req, pkt.len);
+        return ESP_OK;
+    }
+    if (pkt.len > CONTROL_FRAME_MAX) {
+        /* Oversize command: same drop counter as queue-full
+         * (D3), DISTINCT log text, stream kept synced. */
+        ingest_drain_discard(req, pkt.len);
+        control_dropped_frame_record();
+        ESP_LOGW(TAG, "cmd ingest: oversize %u B frame dropped "
+                      "(max %u)", (unsigned)pkt.len,
+                 (unsigned)CONTROL_FRAME_MAX);
+        return ESP_OK;
+    }
+
+    char *copy = (char *)malloc((size_t)pkt.len + 1); /* +1 NUL */
+    if (!copy) {
+        ESP_LOGE(TAG, "cmd ingest: OOM — %u B frame dropped",
+                 (unsigned)pkt.len);
+        return ESP_OK;
+    }
+    pkt.payload = (uint8_t *)copy;
+    if (httpd_ws_recv_frame(req, &pkt, pkt.len) != ESP_OK) {
+        free(copy);
+        ESP_LOGW(TAG, "cmd ingest: fill failed — frame dropped");
+        return ESP_OK;
+    }
+    copy[pkt.len] = '\0';
+    if (!control_frame_submit(copy)) {
+        /* Ring full → drop NEWEST (ruling #3966.2): counter was
+         * bumped inside the ring op, free NOW, nothing on wire. */
+        free(copy);
+        ESP_LOGW(TAG, "cmd ingest: control ring full — newest "
+                      "command dropped");
+    }
+    return ESP_OK;
+}
+
 static esp_err_t ws_server_handler(httpd_req_t *req)
 {
     if ((int)req->method == (int)HTTP_GET) {
@@ -223,9 +306,11 @@ static esp_err_t ws_server_handler(httpd_req_t *req)
         }
         return viewer_accept(req);
     }
-    /* Post-handshake inbound data frames from the viewer — the
-     * device is receive-only from its side; nothing to consume. */
-    return ESP_OK;
+    /* Post-handshake inbound frames: TEXT commands are copied onto
+     * the bounded control ring for the dispatcher task (FW-18 RX
+     * seam); non-TEXT frames are silently ignored. Never fails
+     * post-handshake. */
+    return ws_server_ingest_frame(req);
 }
 
 /* ---------- registration ---------- */

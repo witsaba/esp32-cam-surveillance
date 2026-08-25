@@ -438,8 +438,10 @@ esp_err_t mock_httpd_ws_recv_frame(mock_httpd_req_t *req,
     pkt->type = (httpd_ws_type_t)f->type;
     pkt->final = true;
     if (max_len == 0) {
-        /* Call 1 of the IDF pair: size/type probe. */
+        /* Call 1 of the IDF pair: size/type probe. A zero-length
+         * frame completes on the probe (no payload phase). */
         pkt->len = f->len - f->cursor;
+        if (pkt->len == 0) ws_frames_pop_front(req);
         return ESP_OK;
     }
 

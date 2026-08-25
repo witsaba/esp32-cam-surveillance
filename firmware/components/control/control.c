@@ -77,6 +77,22 @@ uint32_t control_frames_dropped_get(void)
     return s_frames_dropped;
 }
 
+bool control_frame_submit(void *frame_copy)
+{
+    /* Single production producer (httpd worker via the ws_server
+     * RX seam). Counter bumping lives inside the ring op's
+     * false-branch when q is the module-static instance. */
+    return control_queue_send_drop_on_full(&g_control_queue,
+                                           frame_copy);
+}
+
+void control_dropped_frame_record(void)
+{
+    /* Oversize ingests share the queue-full drop counter (D3);
+     * the ws layer emits the distinct LOGW text. */
+    s_frames_dropped++;
+}
+
 control_queue_t *control_queue_for_test(void)
 {
     return &g_control_queue;
