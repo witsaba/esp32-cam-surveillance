@@ -200,10 +200,15 @@ void capture_loop_iteration(capture_queue_t *q, capture_counters_t *c);
  *       running=false. Idempotent; safe viewerless.
  *   capture_running_get()
  *       Lock-free gate read (status surfaces, handlers).
+ *
+ *   capture_fps_get()
+ *       Lock-free read of the APPLIED fps (FW-19 U2: the STOP
+ *       ack echoes the gate's current value — ruling 1).
  */
 void    capture_run_start(uint32_t fps_unclamped);
 void    capture_run_stop(void);
 bool    capture_running_get(void);
+uint32_t capture_fps_get(void);
 uint32_t capture_fps_clamp(long long requested);
 
 /* Time-control seam (design D2) — ONE gated loop step as a

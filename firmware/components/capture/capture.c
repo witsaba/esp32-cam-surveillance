@@ -165,6 +165,14 @@ bool capture_running_get(void)
     return atomic_load(&s_running);
 }
 
+/* FW-19 U2: the stream STOP ack echoes the gate's CURRENT applied
+ * fps (design D3 / ruling 1) — the observable read side of the
+ * store capture_run_start performed. */
+uint32_t capture_fps_get(void)
+{
+    return atomic_load(&s_fps);
+}
+
 /* capture_gated_iteration — PURE time-control seam (design
  * D2). Consumes the stop-request decision, runs at most ONE
  * capture_loop_iteration iff the gate is open and no stop word

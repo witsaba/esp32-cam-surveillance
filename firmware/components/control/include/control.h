@@ -10,7 +10,10 @@
  * answers {"type":"error","reason":"<token>","id":<orig>} where the id
  * echoes the original value AND type losslessly (#3966.4) and is
  * omitted entirely when the body carries no usable scalar id (D9).
- * Tokens: bad_json | unknown | not_implemented (retires at FW-21).
+ * Tokens: bad_json | unknown | not_implemented (retires at FW-21) |
+ * bad_field (FW-19 wrong-typed command fields, ruling 6) | no_viewer
+ * (FW-19 stream.on pre-start state guard, ruling 7 — STOP stays
+ * allowed viewerless).
  */
 #pragma once
 

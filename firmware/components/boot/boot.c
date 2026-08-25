@@ -35,6 +35,7 @@
 #include "config.h"
 #include "health.h"
 #include "softap.h"
+#include "stream_cmd.h"
 
 #include "esp_log.h"
 
@@ -209,6 +210,12 @@ boot_status_t boot_run_normal(const config_t *cfg)
     BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_CAPTURE,  capture_task_start());
     BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_STREAM,   stream_task_start());
     BOOT_CHECK_STEP(BOOT_STEP_SUPERVISION_CONTROL,  control_task_start());
+
+    /* FW-19 — stream command handler registration. Plain call
+     * AFTER the CONTROL step: registration is an infallible array
+     * store, so it adds NO boot step (boot-order assert stays
+     * untouched) and cannot fail the boot sequence. */
+    stream_cmd_register();
 
 #undef BOOT_CHECK_STEP
 

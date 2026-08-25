@@ -270,6 +270,9 @@ def _build(basename, extra_defines, test_files, workdir):
         # task shell join in U2 as they land).
         os.path.join(PROJECT_DIR, 'components', 'control', 'control_route.c'),
         os.path.join(PROJECT_DIR, 'components', 'control', 'control.c'),
+        # FW-19 — stream command handler TU (dispatch + acks +
+        # capture-gate wiring; registers CONTROL_CMD_STREAM).
+        os.path.join(PROJECT_DIR, 'components', 'control', 'stream_cmd.c'),
         # FW-13 — identity component (shared MAC + NVS identity).
         os.path.join(PROJECT_DIR, 'components', 'identity', 'identity.c'),
         # FW-13 — ws component. FW-16 server mode: ws_server.c
@@ -529,6 +532,19 @@ ALL_TESTS = [
     "test_fw19_2_stop_word_latches_once_then_stays_quiet [fw-19.2][scenario-S9]",
     "test_fw19_3_fps_clamp_bounds_matrix [fw-19.3][scenario-S10][matrix]",
     "test_fw19_5_gate_lifecycle_start_stop_idempotent [fw-19.5][scenario-S11]",
+    # FW-19 U2 — stream command handler: registration retires
+    # not_implemented for `stream`, ack shapes (default/explicit/
+    # clamp fps echo), bad_field taxonomy with lossless id,
+    # no_viewer pre-start guard, D3 ack-before-frame ordering pin,
+    # stop halt within one simulated second.
+    "test_stream_registered_dispatches_stop_ack_no_not_implemented [fw-19][scenario-Registered]",
+    "test_stream_start_absent_fps_echoes_config_default [fw-19.1]",
+    "test_stream_start_explicit_fps_echoed_as_applied [fw-19.1]",
+    "test_stream_fps_range_clamps_silently_99_to_15_and_0_to_1 [fw-19.3][ruling-6]",
+    "test_stream_bad_field_wrong_typed_on_or_fps_id_lossless [fw-19.4][ruling-6]",
+    "test_stream_start_without_viewer_refused_gate_stays_stopped [fw-19.5][ruling-7]",
+    "test_stream_ack_precedes_frame_data_ring_order [fw-19.2][design-d3][ordering]",
+    "test_stream_stop_halts_within_one_simulated_second [fw-19.2][ruling-1][ruling-4]",
     # FW-11.3 — single-owner guard. Green path on production
     # build; bite-proof runs under Pass 10 stub.
     "test_fw11_3_capture_task_start_records_supervision [fw-11.3][scenario-S1][green]",
@@ -655,7 +671,7 @@ ALL_TESTS = [
     # allow-list → not_implemented, unknown + lossless id echo
     # (string/numeric), bad_json taxonomy ± salvage both branches,
     # D9 id omission, validate-before-setter prod pin, registry seam.
-    "test_route_six_commands_all_not_implemented [fw-18.1][scenario-outline]",
+    "test_route_allow_list_minus_stream_all_not_implemented [fw-18.1][scenario-outline][fw-19-flip]",
     "test_route_unknown_command_rejected_with_string_echo [fw-18.3]",
     "test_route_numeric_id_preserved_unquoted [fw-18.3][ruling-4]",
     "test_route_garbage_bad_json_without_id [fw-18.4]",
@@ -893,6 +909,12 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # taxonomy ± salvage scanner both branches, D9 id omission,
     # validate-before-setter prod pin, registry dispatch seam.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_control_route.c'),
+    # FW-19 — stream command handler: registration retires
+    # not_implemented for `stream`, ruling-1 ack shapes (default/
+    # explicit/clamp fps echo), bad_field taxonomy + lossless id,
+    # no_viewer pre-start guard (ruling 7), D3 ack-before-frame
+    # ordering pin, stop halt within one simulated second.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_stream_cmd.c'),
     # FW-18 — bounded ring + task shell: busy-consumer non-stall,
     # drop-newest + counter + FIFO + no-wire-token (ruling #3966.2),
     # bounded receive tick.
