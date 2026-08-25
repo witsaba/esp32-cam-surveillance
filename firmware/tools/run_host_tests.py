@@ -665,6 +665,8 @@ ALL_TESTS = [
     "test_task_busy_command_does_not_stall_inbound [fw-18.2]",
     "test_task_queue_full_drops_newest_no_wire_token [fw-18.2][ruling-2]",
     "test_task_receive_timeout_is_bounded_tick [fw-18.2]",
+    # FW-18 U3 — RX seam (mock recv + ws_server ingest hook).
+    "test_ingest_mock_primed_frame_drains_type_and_payload [fw-18][mock-self]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -879,6 +881,10 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # drop-newest + counter + FIFO + no-wire-token (ruling #3966.2),
     # bounded receive tick.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_control_task.c'),
+    # FW-18 — RX seam: WS frame recv mock self-test, enqueue-not-
+    # inline, TEXT-only gate, overflow drop accounting, oversize
+    # drain keeps the stream synced.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_control_ingest.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard

@@ -146,6 +146,15 @@ typedef struct mock_httpd_req {
     int    method;   /* HTTP_GET / HTTP_POST — primed by WS tests */
     int    sockfd;   /* primed by WS tests; returned by
                        mock_httpd_req_to_sockfd() */
+    /* FW-18 — per-request FIFO of primed inbound WS frames
+     * (oldest first; malloc'd payloads, cap 16). Drained through
+     * mock_httpd_ws_recv_frame() with the IDF two-call semantics. */
+    struct mock_ws_primed_frame *ws_head;
+    struct mock_ws_primed_frame *ws_tail;
+    int                          ws_count;
+    /* Intrusive list of live requests so mock_httpd_reset() can
+     * free the primed WS frames of requests a test left open. */
+    struct mock_httpd_req       *ws_next_live;
 } mock_httpd_req_t;
 
 /* ---------- handler dispatch registry ---------- */
@@ -202,3 +211,18 @@ void     mock_httpd_last_registered_is_websocket(bool *flag);
  * INVALID for it. */
 httpd_ws_client_info_t mock_httpd_ws_session_alive(int fd);
 void                   mock_httpd_ws_kill_session(int fd);
+
+/* ---------- FW-18 WebSocket frame recv surface ---------- */
+/* Prime one inbound WS frame onto the request's FIFO (payload is
+ * copied; cap 16 frames). Frames drain oldest-first through
+ * mock_httpd_ws_recv_frame(). Returns ESP_ERR_NO_MEM when full. */
+esp_err_t mock_httpd_req_prime_ws_frame(mock_httpd_req_t *req, int type,
+                                        const char *payload, size_t len);
+/* Mirrors the IDF v5.x two-call recv contract: max_len == 0 is the
+ * size/type probe (pkt->len = remaining bytes, pkt->type = actual
+ * type); otherwise pkt->payload is filled up to max_len and the
+ * front frame is popped once fully consumed. */
+esp_err_t mock_httpd_ws_recv_frame(mock_httpd_req_t *req,
+                                   httpd_ws_frame_t *pkt, size_t max_len);
+/* Number of primed-but-unconsumed frames on the request. */
+size_t mock_httpd_req_ws_frames_pending(const mock_httpd_req_t *req);
