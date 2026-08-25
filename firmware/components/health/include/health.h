@@ -30,6 +30,24 @@ extern "C" {
  * fails on device; a forced mock error on host. */
 esp_err_t health_task_start(void);
 
+/* Persist the forensic recovery reason (R-FW16-1.2, AD4). Writes
+ * HEALTH_RECOVERY_REASON_STR ("soft_recovery_threshold") to NVS
+ * key "last_recovery_reason" in the DEDICATED namespace "recovery"
+ * (survives config_factory_reset, which erases only ns "config").
+ * Single attempt in config.c style (open READWRITE → set_str →
+ * commit → close); a failure logs ESP_LOGE but is NON-FATAL — the
+ * recovery sequence must never wedge the device. Called strictly
+ * BEFORE esp_restart() on the trigger path. */
+void health_persist_last_recovery_reason(void);
+
+/* Next-boot surfacing (R-FW16-1.2, AD5). Best-effort READONLY read
+ * of the stored reason; on a hit logs
+ *   `fw: last_recovery_reason: <reason>`
+ * at INFO under TAG `health`. NOT_FOUND → silent; any other error →
+ * warn. NEVER alters boot flow or boot_status — safe to call right
+ * after config_load succeeds. */
+void health_log_last_recovery_reason(void);
+
 #ifdef __cplusplus
 }
 #endif

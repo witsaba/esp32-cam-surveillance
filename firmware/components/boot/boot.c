@@ -33,6 +33,7 @@
 #include "boot_status.h"
 #include "button.h"
 #include "config.h"
+#include "health.h"
 #include "softap.h"
 
 #include "esp_log.h"
@@ -230,6 +231,12 @@ boot_status_t boot_run(void)
         boot_status_t s = { .ret = (esp_err_t)cfg_r, .step = BOOT_STEP_CONFIG_LOAD };
         return s;
     }
+
+    /* FW-16.2 — surface the persisted soft-recovery reason (if any)
+     * IMMEDIATELY after config_load succeeds, BEFORE the
+     * provisioning decision, so the log line surfaces in BOTH
+     * branches. Best-effort: never alters boot flow. */
+    health_log_last_recovery_reason();
 
     /* FR-1 step 2: provisioning decision. */
     bool button_pressed = boot_button_pressed_at_boot();

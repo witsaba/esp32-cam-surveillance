@@ -619,6 +619,12 @@ ALL_TESTS = [
     "test_soft_recovery_got_ip_closes_episode_next_drop_counts [fw-16.1][coalesce][scenario-C2]",
     "test_soft_recovery_initial_latch_closed_first_drop_ever_counts [fw-16.1][coalesce][scenario-C3]",
     "test_soft_recovery_distinct_episodes_accumulate_to_threshold [fw-16.1][coalesce][scenario-C4]",
+    # FW-16.2 — forensic reason persistence + boot surfacing
+    # (R-FW16-1.2). Brings Pass 1 to 166 (was 162).
+    "test_soft_recovery_persist_reason_readable_before_any_restart [fw-16.2][persist][scenario-P1]",
+    "test_soft_recovery_persist_survives_config_namespace_erase [fw-16.2][persist][scenario-P2]",
+    "test_soft_recovery_next_boot_logs_stored_reason_verbatim [fw-16.2][surface][scenario-P3]",
+    "test_soft_recovery_surface_silent_when_no_reason_stored [fw-16.2][surface][scenario-P4]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -809,6 +815,11 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # = exactly one increment; GOT_IP re-arms the next fault;
     # initial latch closed.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_soft_recovery_coalesce.c'),
+    # FW-16.2 — forensic reason persistence + boot surfacing
+    # (R-FW16-1.2, AD4/AD5): write-before-restart ordering,
+    # factory-reset survival (ns "recovery" vs ns "config"),
+    # next-boot verbatim surfacing, silent NOT_FOUND miss.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_soft_recovery_persist.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard

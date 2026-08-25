@@ -34,16 +34,85 @@
 #ifdef UNITY_HOST_BUILD
 #include "mock_init_returns.h"
 #include "mock_supervision_record.h"
+#include "mock_nvs_flash_link.h"
 #else
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #endif
 
+#include <nvs.h>
+
 #define TAG "health"
+
+/* Forensic reason persistence (R-FW16-1.2, AD4). The DEDICATED
+ * namespace survives factory reset BY CONSTRUCTION:
+ * config_factory_reset() erases only ns "config" (config.c:191),
+ * and the forensic reason is most valuable right after a reset.
+ * The dedicated namespace also sidesteps the config schema-version
+ * guard entirely. */
+#define HEALTH_RECOVERY_NS         "recovery"
+#define HEALTH_RECOVERY_KEY        "last_recovery_reason"
+#define HEALTH_RECOVERY_REASON_STR "soft_recovery_threshold"
 
 #ifndef UNITY_HOST_BUILD
 static void health_task_entry(void *arg);
 #endif
+
+/* Persist the recovery reason (AD4): config.c write style, single
+ * attempt, ESP_LOGE on failure but recovery proceeds — the trigger
+ * must never wedge the device. */
+void health_persist_last_recovery_reason(void)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(HEALTH_RECOVERY_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "persist: nvs_open(\"%s\") failed: %d",
+                 HEALTH_RECOVERY_NS, (int)err);
+        return;
+    }
+    err = nvs_set_str(h, HEALTH_RECOVERY_KEY, HEALTH_RECOVERY_REASON_STR);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "persist: nvs_set_str failed: %d", (int)err);
+        nvs_close(h);
+        return;
+    }
+    err = nvs_commit(h);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "persist: nvs_commit failed: %d", (int)err);
+    }
+    nvs_close(h);
+}
+
+/* Next-boot surfacing (AD5): READONLY read of 64-byte buf; hit →
+ * INFO line; NOT_FOUND → silent; other error → warn. Best-effort:
+ * never alters boot flow. */
+void health_log_last_recovery_reason(void)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(HEALTH_RECOVERY_NS, NVS_READONLY, &h);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return; /* fresh partition — nothing to surface */
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "surface: nvs_open(\"%s\") failed: %d",
+                 HEALTH_RECOVERY_NS, (int)err);
+        return;
+    }
+
+    char buf[64];
+    size_t len = sizeof(buf);
+    err = nvs_get_str(h, HEALTH_RECOVERY_KEY, buf, &len);
+    nvs_close(h);
+
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return; /* silent per AD4 */
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "surface: nvs_get_str failed: %d", (int)err);
+        return;
+    }
+    ESP_LOGI(TAG, "fw: last_recovery_reason: %s", buf);
+}
 
 esp_err_t health_task_start(void)
 {
