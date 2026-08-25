@@ -12,7 +12,11 @@
  *
  * The loop body is a PURE function `capture_loop_iteration()`
  * that the FreeRTOS wrapper (capture_task_entry, internal) calls
- * inside an infinite for-loop with vTaskDelay between iterations.
+ * inside an infinite for-loop. FW-19 wraps it in the pure
+ * time-control seam `capture_gated_iteration()` — the gate is
+ * default-STOPPED and only runs while a viewer has issued
+ * stream.on; the wrapper paces iterations with vTaskDelayUntil
+ * at the period the seam reports.
  *
  * Public surface:
  *
@@ -152,6 +156,98 @@ capture_queue_t *capture_queue_for_test(void);
  * directly. PURE (no FreeRTOS); operates on the queue +
  * counters passed in. */
 void capture_loop_iteration(capture_queue_t *q, capture_counters_t *c);
+
+/* ---------- FW-19 stream-command gate ----------
+ *
+ * C11 atomic {running,fps} gate (design D1): capture defaults
+ * STOPPED at boot and only runs while a WS viewer has issued
+ * stream.on (FW-19 closes R-25 "capture never runs without a
+ * viewer"). Single-writer control ctx → single-reader capture
+ * ctx; relaxed C11 atomics suffice.
+ *
+ * Host-build Kconfig fallbacks: the production host runner
+ * carries explicit -D mirrors for every CONFIG_* symbol a
+ * compiled TU references; these #ifndef guards mirror
+ * sdkconfig.defaults:34-35 + main/Kconfig.projbuild:31-39
+ * (and the ratified FPS_MAX=15 ceiling, ruling 2) so the
+ * gated TU compiles standalone. Values are identical to the
+ * runner mirrors — no redefinition conflicts.
+ */
+#ifndef CONFIG_FIRMWARE_STREAM_FPS
+#define CONFIG_FIRMWARE_STREAM_FPS 5
+#endif
+#ifndef CONFIG_FIRMWARE_STREAM_FPS_MIN
+#define CONFIG_FIRMWARE_STREAM_FPS_MIN 1
+#endif
+#ifndef CONFIG_FIRMWARE_STREAM_FPS_MAX
+#define CONFIG_FIRMWARE_STREAM_FPS_MAX 15
+#endif
+
+/* Idle poll period while the gate is closed (design D1):
+ * bounds start/stop latency without burning CPU. Also the
+ * out->period_ms the pure gate reports while closed, so host
+ * harnesses step the exact same cadence the device wrapper
+ * sleeps. */
+#define CAPTURE_IDLE_PERIOD_MS 100u
+
+/* FW-19 gate lifecycle (control-task context calls these):
+ *
+ *   capture_run_start(fps_unclamped)
+ *       Clamp via capture_fps_clamp → store applied fps →
+ *       running=true (in that order so a reader never sees
+ *       running=true with a stale fps).
+ *   capture_run_stop()
+ *       running=false. Idempotent; safe viewerless.
+ *   capture_running_get()
+ *       Lock-free gate read (status surfaces, handlers).
+ */
+void    capture_run_start(uint32_t fps_unclamped);
+void    capture_run_stop(void);
+bool    capture_running_get(void);
+uint32_t capture_fps_clamp(long long requested);
+
+/* Time-control seam (design D2) — ONE gated loop step as a
+ * PURE function so every "≤1 simulated second" claim is
+ * tick-deterministic on host:
+ *
+ *   in.gate_open       snapshot of s_running
+ *   in.fps_applied     snapshot of s_fps (≥1 post-clamp)
+ *   in.stop_requested  consumed stop word (U3 wires source)
+ *
+ *   out.ran            true iff capture_loop_iteration ran
+ *   out.stop_latched   true iff the stop word was consumed
+ *                      THIS call (caller clears the gate);
+ *                      reported exactly once per stop word
+ *   out.period_ms      pacing for the caller's delay:
+ *                      floor(1000 / fps_applied) while open,
+ *                      CAPTURE_IDLE_PERIOD_MS while closed
+ *
+ * Runs capture_loop_iteration iff gate_open && !stop_requested.
+ * The device wrapper applies out.period_ms via vTaskDelayUntil;
+ * host harnesses step discrete ticks with zero sleeps.
+ */
+typedef struct {
+    bool     gate_open;
+    uint32_t fps_applied;
+    bool     stop_requested;
+} capture_gate_in_t;
+
+typedef struct {
+    bool     ran;
+    bool     stop_latched;
+    uint32_t period_ms;
+} capture_gate_out_t;
+
+void capture_gated_iteration(capture_queue_t *q,
+                             capture_counters_t *c,
+                             const capture_gate_in_t *in,
+                             capture_gate_out_t *out);
+
+/* Host-only test seam: restore the module-static gate
+ * (running=false, fps=CONFIG default) to fresh-boot state so
+ * gate tests are order-independent (mirrors
+ * capture_counters_reset_for_test). No-op on device. */
+void capture_gate_reset_for_test(void);
 
 #ifdef __cplusplus
 }

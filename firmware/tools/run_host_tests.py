@@ -520,6 +520,15 @@ ALL_TESTS = [
     "test_fw11_2_full_queue_drops_frame_and_returns_buffer [fw-11.2][scenario-S3]",
     "test_fw11_2_one_hundred_frames_no_stall [fw-11.2][scenario-S4]",
     "test_fw11_2_getters_return_counter_values [fw-11.2][getters]",
+    # FW-19 U1 — default-stopped stream gate (Boot-no-frames).
+    "test_fw19_5_fresh_boot_gate_stopped_zero_acquisitions [fw-19.5][scenario-S6]",
+    # FW-19 U1 — gated iteration: run+pace, period matrix,
+    # stop-latch-once, clamp matrix, lifecycle.
+    "test_fw19_1_gate_open_runs_frame_and_paces_period [fw-19.1][scenario-S7]",
+    "test_fw19_1_period_matrix_exact_ticks [fw-19.1][scenario-S8][matrix]",
+    "test_fw19_2_stop_word_latches_once_then_stays_quiet [fw-19.2][scenario-S9]",
+    "test_fw19_3_fps_clamp_bounds_matrix [fw-19.3][scenario-S10][matrix]",
+    "test_fw19_5_gate_lifecycle_start_stop_idempotent [fw-19.5][scenario-S11]",
     # FW-11.3 — single-owner guard. Green path on production
     # build; bite-proof runs under Pass 10 stub.
     "test_fw11_3_capture_task_start_records_supervision [fw-11.3][scenario-S1][green]",

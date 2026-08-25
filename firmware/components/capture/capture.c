@@ -6,16 +6,20 @@
  * directly; device builds spawn a FreeRTOS task that
  * invokes the wrapper inside an infinite for-loop.
  *
- * Production data flow (per design #3734 AD-2):
+ * Production data flow (FW-19 gated loop, design #4018 D1/D2;
+ * pre-FW-19 the loop ran unconditionally every 200 ms):
  *
- *   vTaskDelay(pdMS_TO_TICKS(period))
- *      └─► capture_loop_iteration(q, c)
- *            ├─► camera_fb_t *fb = esp_camera_fb_get()
- *            ├─► if (!fb) return                  // driver not ready
- *            ├─► if (!capture_queue_send_drop_on_full(q, fb))
- *            │     ├─► esp_camera_fb_return(fb)
- *            │     └─► c->fb_drops++
- *            └─► c->frames_captured++
+ *   vTaskDelayUntil(period from capture_gated_iteration)
+ *      └─► capture_gated_iteration(q, c, in{running,fps}, out)
+ *            ├─► gate closed ⇒ no-op (idle poll pacing)
+ *            ├─► stop word    ⇒ latch once, caller closes gate
+ *            └─► gate open    ─► capture_loop_iteration(q, c)
+ *                  ├─► camera_fb_t *fb = esp_camera_fb_get()
+ *                  ├─► if (!fb) return              // driver not ready
+ *                  ├─► if (!capture_queue_send_drop_on_full(q, fb))
+ *                  │     ├─► esp_camera_fb_return(fb)
+ *                  │     └─► c->fb_drops++
+ *                  └─► c->frames_captured++
  *
  * The single-owner invariant (PRD § FR-2b) holds by
  * architecture: this file is the ONLY producer TU that calls
@@ -30,6 +34,7 @@
  */
 #include "capture.h"
 
+#include <stdatomic.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -110,6 +115,98 @@ void capture_counters_reset_for_test(void)
 capture_queue_t *capture_queue_for_test(void)
 {
     return &g_capture_queue;
+}
+
+/* ---------- FW-19 stream-command gate (design D1/D2) ----------
+ *
+ * C11 atomics — first in the codebase. Single-writer (control
+ * task ctx: run_start/run_stop) → single-reader (capture task
+ * wrapper snapshots both each iteration). BSS-zeroed s_running
+ * gives the default-STOPPED boot invariant for free; s_fps
+ * starts at the Kconfig default so a start command with no fps
+ * field can fall back to it.
+ */
+static atomic_bool s_running; /* BSS ⇒ false = default-stopped */
+static atomic_uint s_fps = CONFIG_FIRMWARE_STREAM_FPS;
+
+/* capture_fps_clamp — PURE. Silent range clamp to
+ * [FIRMWARE_STREAM_FPS_MIN .. FIRMWARE_STREAM_FPS_MAX]
+ * (FW-19.3 + ruling 6: out-of-RANGE integers never error).
+ * MIN/MAX come from the mirrored Kconfig symbols; MAX=15 is
+ * the ratified ceiling (ruling 2). */
+uint32_t capture_fps_clamp(long long requested)
+{
+    if (requested < (long long)CONFIG_FIRMWARE_STREAM_FPS_MIN)
+        return CONFIG_FIRMWARE_STREAM_FPS_MIN;
+    if (requested > (long long)CONFIG_FIRMWARE_STREAM_FPS_MAX)
+        return CONFIG_FIRMWARE_STREAM_FPS_MAX;
+    return (uint32_t)requested;
+}
+
+void capture_run_start(uint32_t fps_unclamped)
+{
+    /* Clamp → store fps → open the gate, in that order, so a
+     * concurrent snapshot never observes running=true paired
+     * with the previous session's fps. Relaxed stores suffice:
+     * the reader re-snapshots every tick and pacing jitter of
+     * one tick is within contract. */
+    uint32_t applied = capture_fps_clamp((long long)fps_unclamped);
+    atomic_store(&s_fps, applied);
+    atomic_store(&s_running, true);
+}
+
+void capture_run_stop(void)
+{
+    atomic_store(&s_running, false);
+}
+
+bool capture_running_get(void)
+{
+    return atomic_load(&s_running);
+}
+
+/* capture_gated_iteration — PURE time-control seam (design
+ * D2). Consumes the stop-request decision, runs at most ONE
+ * capture_loop_iteration iff the gate is open and no stop word
+ * arrived, and reports the caller's pacing period:
+ * floor(1000 / fps_applied) while open (fps≥1 ⇒ period ≤1000),
+ * CAPTURE_IDLE_PERIOD_MS while closed. The device wrapper
+ * applies the period via vTaskDelayUntil; host harnesses step
+ * discrete ticks with zero sleeps. */
+void capture_gated_iteration(capture_queue_t *q,
+                             capture_counters_t *c,
+                             const capture_gate_in_t *in,
+                             capture_gate_out_t *out)
+{
+    if (out) {
+        out->ran          = false;
+        out->stop_latched = false;
+        out->period_ms    = CAPTURE_IDLE_PERIOD_MS;
+    }
+    if (!q || !c || !in || !out) return;
+
+    if (!in->gate_open) return; /* closed ⇒ idle-poll pacing */
+
+    if (in->fps_applied >= 1u) {
+        out->period_ms = 1000u / in->fps_applied;
+    }
+    if (in->stop_requested) {
+        /* Stop word consumed THIS call — report exactly once;
+         * the caller clears the gate so subsequent ticks see
+         * gate_open=false. */
+        out->stop_latched = true;
+        return;
+    }
+    capture_loop_iteration(q, c);
+    out->ran = true;
+}
+
+void capture_gate_reset_for_test(void)
+{
+#ifdef UNITY_HOST_BUILD
+    atomic_init(&s_running, false);
+    atomic_init(&s_fps, CONFIG_FIRMWARE_STREAM_FPS);
+#endif
 }
 
 /* ---------- host queue backend (depth-2 ring buffer) ----------
@@ -368,32 +465,74 @@ void capture_loop_iteration(capture_queue_t *q, capture_counters_t *c)
 #ifndef UNITY_HOST_BUILD
 /* ---------- FreeRTOS wrapper (device-only) ---------- */
 
-/* Loop period in ms — 200 ms = 5 fps per PRD § FR-3 (FW-11
- * hardcodes 5 fps; FW-19 owns runtime config-driven fps). */
-#define CAPTURE_PERIOD_MS 200
+/* FW-19 (design D1): pacing moved INTO the gate seam. The
+ * wrapper applies whatever period the pure
+ * capture_gated_iteration reports — floor(1000/applied-fps)
+ * while streaming, CAPTURE_IDLE_PERIOD_MS (100 ms) while the
+ * gate is closed. Plain vTaskDelay is rejected: fb_get jitter
+ * accumulates and at fps=15 the real cadence would fall under
+ * the applied fps; vTaskDelayUntil paces against an absolute
+ * wake time instead.
+ *
+ * The old hardcoded CAPTURE_PERIOD_MS 200 is superseded by
+ * runtime config-driven fps (FW-19). */
 
-/* Periodic progress log — every N iterations (N=25 = 5s @ 5fps).
- * Gives the device-side smoke a visible heartbeat so the operator
- * can confirm the loop is alive without needing FW-13.6's status
- * frame. Removes itself as soon as FW-13.6 lands (which emits
- * structured `{"type":"status", ..., "fb_drops":N, ...}` every
- * 30s and is the canonical observer). Until then, this is the
- * only signal that capture is iterating at 5 Hz. */
+/* Periodic progress log — every N RUNS (N=25 ≈ 5s @ 5fps;
+ * @15fps ≈ 1.7s). Tied to out.ran so idle polling while the
+ * gate is closed stays silent — the heartbeat reports frames,
+ * not loop liveness. FW-13.6's structured status frame remains
+ * the canonical observer. */
 #define CAPTURE_PROGRESS_EVERY 25u
 
 static void capture_task_entry(void *arg)
 {
     (void)arg;
     uint32_t tick = 0;
+    TickType_t x_last_wake = xTaskGetTickCount();
+    bool was_running = false;
+
     for (;;) {
-        capture_loop_iteration(&g_capture_queue, &g_capture_counters);
-        if ((++tick % CAPTURE_PROGRESS_EVERY) == 0) {
+        /* Snapshot the gate atomics once per tick: single-writer
+         * control ctx → single-reader capture ctx, relaxed loads
+         * suffice (design D1). */
+        const bool      running = capture_running_get();
+        const uint32_t  fps     = atomic_load(&s_fps);
+
+        /* Stopped→running edge: resync the absolute wake time to
+         * NOW so a long-closed gate doesn't fire a catch-up burst
+         * of vTaskDelayUntil iterations the moment stream.on
+         * arrives (design D1 "wake resync"). */
+        if (running && !was_running) {
+            x_last_wake = xTaskGetTickCount();
+        }
+        was_running = running;
+
+        capture_gate_in_t in = {
+            .gate_open      = running,
+            .fps_applied    = fps,
+            /* FW-19 U3 owns the stop-request wire
+             * (atomic_exchange before each step). */
+            .stop_requested = false,
+        };
+        capture_gate_out_t out = {0};
+        capture_gated_iteration(&g_capture_queue, &g_capture_counters,
+                                &in, &out);
+
+        if (out.stop_latched) {
+            /* Stop word consumed — close the gate so every
+             * later tick sees gate_open=false. */
+            capture_run_stop();
+            was_running = false;
+        }
+
+        if (out.ran && (++tick % CAPTURE_PROGRESS_EVERY) == 0) {
             ESP_LOGI(TAG, "progress: frames_captured=%u fb_drops=%u tick=%u",
                      (unsigned)g_capture_counters.frames_captured,
                      (unsigned)g_capture_counters.fb_drops,
                      (unsigned)tick);
         }
-        vTaskDelay(pdMS_TO_TICKS(CAPTURE_PERIOD_MS));
+
+        vTaskDelayUntil(&x_last_wake, pdMS_TO_TICKS(out.period_ms));
     }
 }
 #endif
