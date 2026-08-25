@@ -149,6 +149,9 @@ def _common_cflags(extra_defines):
         f'-I{PROJECT_DIR}/components/ws/include',
         # FW-15 — stream component public headers.
         f'-I{PROJECT_DIR}/components/stream/include',
+        # FW-16 — health component public headers (window core +
+        # task surface).
+        f'-I{PROJECT_DIR}/components/health/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
         # FW-08 — Kconfig mirrors for the host build (the device
@@ -196,6 +199,10 @@ def _common_cflags(extra_defines):
         # host build has no sdkconfig.h so we mirror them via -D.
         '-DCONFIG_FIRMWARE_WS_RECONNECT_INITIAL_MS=2000',
         '-DCONFIG_FIRMWARE_WS_RECONNECT_CAP_MS=30000',
+        # FW-16 — soft-recovery Kconfig mirrors (main/Kconfig
+        # .projbuild:51-59; sdkconfig.defaults carries both).
+        '-DCONFIG_FIRMWARE_SOFT_RECOVERY_FAILS=30',
+        '-DCONFIG_FIRMWARE_SOFT_RECOVERY_WINDOW_MIN=10',
     ]
     flags.extend(extra_defines)
     return flags
@@ -253,6 +260,10 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'stream', 'stream_fragment.c'),
         os.path.join(PROJECT_DIR, 'components', 'stream', 'stream_sender.c'),
         os.path.join(PROJECT_DIR, 'components', 'stream', 'stream.c'),
+        # FW-16 — health component (pure window core + task glue;
+        # sources register as each lands).
+        os.path.join(PROJECT_DIR, 'components', 'health', 'health_window.c'),
+        os.path.join(PROJECT_DIR, 'components', 'health', 'health.c'),
         # FW-13 — identity component (shared MAC + NVS identity).
         os.path.join(PROJECT_DIR, 'components', 'identity', 'identity.c'),
         # FW-13 — ws component. FW-16 server mode: ws_server.c
@@ -595,6 +606,35 @@ ALL_TESTS = [
     "test_snapshot_queued_frame_served_as_jpeg [snapshot][scenario-S1]",
     "test_snapshot_empty_queue_returns_503 [snapshot][scenario-S2]",
     "test_snapshot_listener_registers_both_uris [snapshot][scenario-S3]",
+    # FW-16.1 — pure sliding-window threshold core (R-FW16-1.1).
+    # Brings Pass 1 to 158 (was 153).
+    "test_soft_recovery_29_in_window_failures_do_not_trigger [fw-16.1][window][scenario-S1]",
+    "test_soft_recovery_30th_in_window_failure_triggers [fw-16.1][window][scenario-S2]",
+    "test_soft_recovery_31_in_window_failures_hold_trigger [fw-16.1][window][scenario-S3]",
+    "test_soft_recovery_15_failures_over_20_minutes_pruned_no_trigger [fw-16.1][window][scenario-S4]",
+    "test_soft_recovery_window_boundary_entry_kept_then_expired [fw-16.1][window][boundary]",
+    # FW-16.1 — episode coalescing (R-FW16-1.1). Brings Pass 1 to
+    # 162 (was 158).
+    "test_soft_recovery_paired_burst_advances_counter_exactly_one [fw-16.1][coalesce][scenario-C1]",
+    "test_soft_recovery_got_ip_closes_episode_next_drop_counts [fw-16.1][coalesce][scenario-C2]",
+    "test_soft_recovery_initial_latch_closed_first_drop_ever_counts [fw-16.1][coalesce][scenario-C3]",
+    "test_soft_recovery_distinct_episodes_accumulate_to_threshold [fw-16.1][coalesce][scenario-C4]",
+    # FW-16.2 — forensic reason persistence + boot surfacing
+    # (R-FW16-1.2). Brings Pass 1 to 166 (was 162).
+    "test_soft_recovery_persist_reason_readable_before_any_restart [fw-16.2][persist][scenario-P1]",
+    "test_soft_recovery_persist_survives_config_namespace_erase [fw-16.2][persist][scenario-P2]",
+    "test_soft_recovery_next_boot_logs_stored_reason_verbatim [fw-16.2][surface][scenario-P3]",
+    "test_soft_recovery_surface_silent_when_no_reason_stored [fw-16.2][surface][scenario-P4]",
+    # FW-16.1/16.3 — trigger sequence + green path (R-FW16-1.1/1.3).
+    # Brings Pass 1 to 169 (was 166).
+    "test_soft_recovery_threshold_sequence_persist_before_restart [fw-16.1][trigger][scenario-S1]",
+    "test_soft_recovery_trigger_latched_idempotent_after_firing [fw-16.1][trigger][scenario-S2]",
+    "test_soft_recovery_healthy_stream_60s_never_triggers [fw-16.3][green-path][scenario-G1]",
+    # FW-16.3 — healthy-stream bite-proof guard (Pass 13). Green-path
+    # branch compiles into Pass 1 (brings it to 170); the bite-proof
+    # branch compiles ONLY under -DHEALTH_TEST_STUB_COUNT_WHILE_
+    # HEALTHY=1 in Pass 13.
+    "test_health_guard_60s_healthy_stream_must_not_count [fw-16.3][guard][bite-proof]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -777,6 +817,29 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # via the capture queue (single-caller invariant intact), 503
     # on empty queue, dual URI registration with /whoami.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_snapshot_endpoint.c'),
+    # FW-16.1 — pure sliding-window threshold core (R-FW16-1.1).
+    # 29→no-trigger, 30th in-window→trigger, 31→holds, 15-over-
+    # 20-min pruned false, lazy-prune boundary edge. Zero IDF deps.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_soft_recovery_window.c'),
+    # FW-16.1 — episode coalescing (R-FW16-1.1, AD2): paired burst
+    # = exactly one increment; GOT_IP re-arms the next fault;
+    # initial latch closed.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_soft_recovery_coalesce.c'),
+    # FW-16.2 — forensic reason persistence + boot surfacing
+    # (R-FW16-1.2, AD4/AD5): write-before-restart ordering,
+    # factory-reset survival (ns "recovery" vs ns "config"),
+    # next-boot verbatim surfacing, silent NOT_FOUND miss.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_soft_recovery_persist.c'),
+    # FW-16.1/16.3 — trigger-sequence ordering + healthy-stream green
+    # path (R-FW16-1.1 seq + R-FW16-1.3, AD5/AD6): persist → LED-arm
+    # observable before restart; one-shot-driven completion cb;
+    # latched idempotence; 60 s event-driven-only green path.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_soft_recovery_trigger.c'),
+    # FW-16.3 — healthy-stream bite-proof guard. Green-path branch
+    # runs in Pass 1 (event-driven-only invariant); the bite-proof
+    # branch compiles only under the Pass 13 stub flag (see
+    # FW16_GUARD_TEST_FILES below).
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_health_guard.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
@@ -875,6 +938,33 @@ FW14_GUARD_TEST_FILES = [
 # message so Pass 12 of run_host_tests.py can grep for it.
 WS_CLOSE_GUARD_BITE_PROOF_KEYWORD = "close_no_reconnect"
 
+# FW-16.3 — Pass 13 stub build includes ONLY the FW-16.3 health
+# guard file. The build defines
+# -DHEALTH_TEST_STUB_COUNT_WHILE_HEALTHY=1, which compiles the
+# guard-only tick health_green_path_tick_for_guard() INTO the
+# production health sources; each tick records ONE phantom failure
+# with no wifi event and no episode latch (a model of a future
+# always-sweeping miscounting implementation). 60 ticks at 1 Hz
+# exceed the default threshold of 30, so the guard test fails with
+# the literal "healthy-stream" in its message. Mirrors the Pass 9-12
+# pattern exactly: the same compile flag is applied to BOTH the
+# production sources AND the test file. The green-path assertions
+# in test_health_guard.c are selected by `#ifndef` so the prod build
+# never sees the tick calls.
+FW16_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_health_guard.c'),
+]
+
+# Pass-13 keyword + bite-proof test marker. The literal substring
+# "healthy-stream" must appear in the bite-proof's failure message
+# so Pass 13 of run_host_tests.py can grep for it.
+HEALTH_BITE_PROOF_KEYWORD = "healthy-stream"
+
+FW16_BITE_PROOF_TEST_NAME = (
+    "test_health_guard_60s_healthy_stream_must_not_count "
+    "[fw-16.3][guard][bite-proof]"
+)
+
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
 # green-path test in that file is guarded by `#ifndef
 # BOOT_TEST_STUB_FLIP_DECISION` so it auto-excludes itself; what
@@ -943,7 +1033,54 @@ FW07_4_GUARD_TEST_FILES = [
 ]
 
 
+def _pass16_bite_proof(workdir):
+    """Pass 13 — FW-16.3 healthy-stream bite-proof (shared by the
+    full run and --stub mode). Builds test_health_guard.c AND the
+    production sources with -DHEALTH_TEST_STUB_COUNT_WHILE_HEALTHY=1
+    and expects EXACTLY ONE failing test whose output names the
+    healthy-stream invariant."""
+    print()
+    print("=== Pass 13: FW-16.3 stub build (HEALTH_TEST_STUB_COUNT_WHILE_HEALTHY, guard file) ===")
+    fw16_bin = _build('fw16_tests_stub',
+                      ['-DHEALTH_TEST_STUB_COUNT_WHILE_HEALTHY=1'],
+                      FW16_GUARD_TEST_FILES, workdir)
+    fw16_rc, fw16_out = _run_binary(fw16_bin)
+    if fw16_rc == 0:
+        sys.exit(f"FAIL: FW-16.3 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The stub tick didn't "
+                 f"corrupt the healthy-stream invariant. "
+                 f"Output:\n{fw16_out}")
+    if HEALTH_BITE_PROOF_KEYWORD not in fw16_out:
+        sys.exit(f"FAIL: FW-16.3 stub build output does not "
+                 f"contain the literal '{HEALTH_BITE_PROOF_KEYWORD}':\n{fw16_out}")
+    if "test_health_guard_60s_healthy_stream_must_not_count" not in fw16_out:
+        sys.exit(f"FAIL: FW-16.3 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw16_out}")
+    # Exactly one failure (the bite-proof) — a second failing
+    # assertion would mean the stub corrupts MORE than the
+    # counting invariant.
+    fail_count = sum(1 for line in fw16_out.splitlines() if line.startswith("FAIL ["))
+    if fail_count != 1:
+        sys.exit(f"FAIL: FW-16.3 stub build should have exactly 1 failure "
+                 f"(healthy-stream bite-proof); got {fail_count}. "
+                 f"Output:\n{fw16_out}")
+    print(f"OK: FW-16.3 stub build → guard tripped on "
+          f"'{HEALTH_BITE_PROOF_KEYWORD}' invariant as expected "
+          f"(test failed with rc={fw16_rc}).")
+
+
 def main():
+    # --stub: run ONLY the FW-16.3 bite-proof pass (Pass 13). The
+    # production suite is untouched; exit code stays 0 when the
+    # single expected healthy-stream failure is observed.
+    if '--stub' in sys.argv[1:]:
+        workdir = tempfile.mkdtemp(prefix='fw02-host-tests-stub-')
+        print("FW-02 host test runner — STUB MODE (--stub): Pass 13 only")
+        _pass16_bite_proof(workdir)
+        print()
+        print("=== stub mode OK: single expected healthy-stream bite-proof failure observed ===")
+        return
+
     workdir = tempfile.mkdtemp(prefix='fw02-host-tests-')
     print(f"FW-02 host test runner")
     print(f"  project_dir: {PROJECT_DIR}")
@@ -1374,6 +1511,9 @@ def main():
     print(f"OK: FW-14 stub build → guard tripped on "
           f"'{WS_CLOSE_GUARD_BITE_PROOF_KEYWORD}' invariant as expected "
           f"(test failed with rc={fw14_rc}).")
+
+    # ----- Pass 13: FW-16.3 healthy-stream bite-proof stub build -----
+    _pass16_bite_proof(workdir)
 
     print()
     print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 + FW-10 + FW-11 + FW-13 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")

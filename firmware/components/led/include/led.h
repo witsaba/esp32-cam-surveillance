@@ -94,7 +94,8 @@ typedef enum {
 /* Recovery-complete callback signature. Registered via
  * led_on_recovery_complete(); fired by the 3-second one-shot
  * alarm when the LED is in LED_STATE_SOFT_RECOVERY. Owner:
- * FW-15 (typically calls esp_restart()). */
+ * FW-16 (health registers its completion cb, which calls
+ * esp_restart()). */
 typedef void (*led_recovery_cb_t)(void);
 
 /* Initialize the LED driver: configures the GPIO pin for output

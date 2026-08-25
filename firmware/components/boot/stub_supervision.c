@@ -1,7 +1,9 @@
 /* stub_supervision.c — stubs for the remaining supervision-task
  * interfaces FW-03 owns as call-sites only. (The stream stub was
  * DELETED in FW-15 — components/stream/stream.c provides the real
- * strong symbol; the capture stub was deleted in FW-11.)
+ * strong symbol; the capture stub was deleted in FW-11. The health
+ * stub was DELETED in FW-16 — components/health/health.c provides
+ * the real strong symbol.)
  *
  * Each stub returns ESP_OK on the green path; on the host build it
  * consults `mock_init_returns_get(step)` first AND records the
@@ -46,26 +48,14 @@ static void stub_task_body(void *arg) {
 }
 #endif
 
-esp_err_t health_task_start(void) {
-#ifdef UNITY_HOST_BUILD
-    esp_err_t forced = mock_init_returns_get(BOOT_STEP_SUPERVISION_HEALTH);
-    if (forced != ESP_OK) return forced;
-    mock_supervision_record("health");
-#endif
-    ESP_LOGI(TAG, "stub: health_task_start  // FW-16: real impl lands in supervision/health");
-#ifndef UNITY_HOST_BUILD
-    xTaskCreate(stub_task_body, "stub_health",
-                BOOT_TASK_STACK_SUPERVISION, NULL,
-                BOOT_TASK_PRIO_SUPERVISION, NULL);
-#endif
-    return ESP_OK;
-}
-
-/* stream_task_start — STUB DELETED in FW-15 (T-13-I pattern).
- * The real implementation lives in components/stream/stream.c and
- * provides the strong symbol; the linker resolves boot.c:173's
+/* health_task_start — STUB DELETED in FW-16 (T-13-I pattern).
+ * The real implementation lives in components/health/health.c and
+ * provides the strong symbol; the linker resolves boot.c:207's
  * call directly. `make test-stub` guards against any duplicate-
- * definition regression. */
+ * definition regression. The host contract (mock_init_returns
+ _get short-circuit + mock_supervision_record("health")) moved
+ * verbatim into health.c — test_boot_order.c:84-96 still asserts
+ * the [health, capture, stream, control] sequence. */
 
 esp_err_t control_task_start(void) {
 #ifdef UNITY_HOST_BUILD

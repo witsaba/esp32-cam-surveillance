@@ -49,7 +49,7 @@ menu "ESP32-CAM Surveillance Firmware"
         default 30000
 
     config FIRMWARE_SOFT_RECOVERY_FAILS
-        int "Consecutive reconnect failures before esp_restart()"
+        int "In-window Wi-Fi STA disconnect episodes before esp_restart()"
         range 5 200
         default 30
 
