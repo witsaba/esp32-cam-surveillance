@@ -625,6 +625,11 @@ ALL_TESTS = [
     "test_soft_recovery_persist_survives_config_namespace_erase [fw-16.2][persist][scenario-P2]",
     "test_soft_recovery_next_boot_logs_stored_reason_verbatim [fw-16.2][surface][scenario-P3]",
     "test_soft_recovery_surface_silent_when_no_reason_stored [fw-16.2][surface][scenario-P4]",
+    # FW-16.1/16.3 — trigger sequence + green path (R-FW16-1.1/1.3).
+    # Brings Pass 1 to 169 (was 166).
+    "test_soft_recovery_threshold_sequence_persist_before_restart [fw-16.1][trigger][scenario-S1]",
+    "test_soft_recovery_trigger_latched_idempotent_after_firing [fw-16.1][trigger][scenario-S2]",
+    "test_soft_recovery_healthy_stream_60s_never_triggers [fw-16.3][green-path][scenario-G1]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -820,6 +825,11 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # factory-reset survival (ns "recovery" vs ns "config"),
     # next-boot verbatim surfacing, silent NOT_FOUND miss.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_soft_recovery_persist.c'),
+    # FW-16.1/16.3 — trigger-sequence ordering + healthy-stream green
+    # path (R-FW16-1.1 seq + R-FW16-1.3, AD5/AD6): persist → LED-arm
+    # observable before restart; one-shot-driven completion cb;
+    # latched idempotence; 60 s event-driven-only green path.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_soft_recovery_trigger.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
