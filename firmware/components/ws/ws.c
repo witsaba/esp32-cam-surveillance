@@ -30,9 +30,14 @@
 #include "esp_log.h"
 
 #ifdef UNITY_HOST_BUILD
+#include <pthread.h>
+
 #include "mock_init_returns.h"
 #include "boot_status.h"
 #else
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include "esp_websocket_client.h"
 #endif
 
@@ -95,18 +100,46 @@ bool ws_sink_connected(void)
     return s_sink->is_connected();
 }
 
+/* ---------- viewer-sink TX serialization ----------
+ *
+ * Stream, control replies and the status timer all write the SAME
+ * viewer fd through the dispatch seam below (a direct socket write
+ * in server_sink_send_*), so unsynchronized dispatch interleaves
+ * wire frames. This file-static lock makes each send an atomic
+ * decision-and-send; no new public header surface. Dual backend
+ * per the capture_queue/control-ring precedent: host = statically
+ * initialized mutex (valid even without ws_init); device = created
+ * in ws_init() BEFORE any sink install, failing loud on error. */
+#ifdef UNITY_HOST_BUILD
+static pthread_mutex_t s_tx_mtx = PTHREAD_MUTEX_INITIALIZER;
+#define TX_LOCK_TAKE() pthread_mutex_lock(&s_tx_mtx)
+#define TX_LOCK_GIVE() pthread_mutex_unlock(&s_tx_mtx)
+#else
+static SemaphoreHandle_t s_tx_mtx;
+#define TX_LOCK_TAKE() xSemaphoreTake(s_tx_mtx, portMAX_DELAY)
+#define TX_LOCK_GIVE() xSemaphoreGive(s_tx_mtx)
+#endif
+
 esp_err_t ws_sink_send_bin(const uint8_t *buf, size_t len)
 {
     if (!buf || len == 0) return ESP_ERR_INVALID_ARG;
-    if (!s_sink->is_connected()) return ESP_ERR_INVALID_STATE;
-    return s_sink->send_bin(buf, len);
+    TX_LOCK_TAKE();
+    esp_err_t r = !s_sink->is_connected()
+                      ? ESP_ERR_INVALID_STATE
+                      : s_sink->send_bin(buf, len);
+    TX_LOCK_GIVE();
+    return r;
 }
 
 esp_err_t ws_sink_send_text(const char *buf, size_t len)
 {
     if (!buf || len == 0) return ESP_ERR_INVALID_ARG;
-    if (!s_sink->is_connected()) return ESP_ERR_INVALID_STATE;
-    return s_sink->send_text(buf, len);
+    TX_LOCK_TAKE();
+    esp_err_t r = !s_sink->is_connected()
+                      ? ESP_ERR_INVALID_STATE
+                      : s_sink->send_text(buf, len);
+    TX_LOCK_GIVE();
+    return r;
 }
 
 /* Honour the host-side forced-failure short-circuit so the
@@ -127,6 +160,16 @@ esp_err_t ws_init(const config_t *cfg)
 
     esp_err_t r = ws_init_short_circuit();
     if (r != ESP_OK) return r;
+
+    /* Viewer-sink TX lock FIRST — before any sink install, so no
+     * producer can dispatch through an un-serialized seam. */
+#ifndef UNITY_HOST_BUILD
+    if (!s_tx_mtx) s_tx_mtx = xSemaphoreCreateMutex();
+    if (!s_tx_mtx) {
+        ESP_LOGE(TAG, "ws_init: TX mutex creation failed");
+        return ESP_ERR_NO_MEM;
+    }
+#endif
 
     /* No viewer connected yet — install the disconnected stubs so
      * early frames from the stream task drop-count instead of

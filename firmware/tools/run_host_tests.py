@@ -672,6 +672,8 @@ ALL_TESTS = [
     "test_ingest_non_text_silent_ignore [fw-18.2][ruling-3]",
     "test_ingest_ten_primed_eight_enqueued_two_dropped [fw-18.2][ruling-2]",
     "test_ingest_oversize_dropped_same_counter_stream_synced [fw-18.3][d5]",
+    # Bugfix slice — viewer-sink TX serialization guard.
+    "test_ws_tx_lock_no_concurrent_sink_dispatch [fw-tx-lock]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -890,6 +892,9 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # inline, TEXT-only gate, overflow drop accounting, oversize
     # drain keeps the stream synced.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_control_ingest.c'),
+    # Bugfix slice — TX serialization guard: two rendezvous-released
+    # threads hammer the ws.c dispatch seam; overlap must be ZERO.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_tx_lock.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
