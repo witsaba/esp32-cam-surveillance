@@ -19,7 +19,10 @@
  * httpd_ws_get_fd_info() on every probe, and any failed async
  * send frees it immediately — at 5 fps a vanished viewer is
  * re-attachable within one frame period, without server-wide
- * close-callback wiring.
+ * close-callback wiring. FW-19: freeing the slot ALSO raises
+ * the capture auto-stop word (capture_auto_stop_request), so a
+ * mid-stream disconnect halts the gated capture loop within one
+ * loop period (design D5).
  *
  * Single-viewer policy: exactly ONE WS session fd is tracked in
  * module state. A second handshake is answered with a short text

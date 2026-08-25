@@ -545,6 +545,12 @@ ALL_TESTS = [
     "test_stream_start_without_viewer_refused_gate_stays_stopped [fw-19.5][ruling-7]",
     "test_stream_ack_precedes_frame_data_ring_order [fw-19.2][design-d3][ordering]",
     "test_stream_stop_halts_within_one_simulated_second [fw-19.2][ruling-1][ruling-4]",
+    # FW-19 U3 — mid-stream disconnect auto-stop (viewer_clear →
+    # capture_auto_stop_request; design D5, ruling 4).
+    "test_fw19_midstream_disconnect_auto_stops_capture [fw-19][server][scenario-S5]",
+    "test_fw19_disconnect_while_stopped_never_opens_gate [fw-19][server][scenario-S6]",
+    # FW-19 U3 — snapshot 503-while-stopped pin (ruling 5).
+    "test_fw19_snapshot_503_no_frame_while_gate_stopped [fw-19][snapshot][scenario-S4]",
     # FW-11.3 — single-owner guard. Green path on production
     # build; bite-proof runs under Pass 10 stub.
     "test_fw11_3_capture_task_start_records_supervision [fw-11.3][scenario-S1][green]",

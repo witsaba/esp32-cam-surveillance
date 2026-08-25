@@ -23,6 +23,13 @@
  *       the send path (device-log evidence seam, REQ-ST-008/009).
  *   S4 (FW-16) — NO viewer sink installed: every frame drops with
  *       the same D4 accounting (drop-count when no viewer).
+ *   S5 (FW-19, ruling 4) — mid-stream disconnect: kill_session +
+ *       failed send ⇒ viewer_clear raises the capture auto-stop
+ *       word; the gate halts within one loop tick and acquires
+ *       nothing afterwards.
+ *   S6 (FW-19 triangulation) — same disconnect trigger while the
+ *       gate is STOPPED (fresh boot): the word fires once but the
+ *       gate never opens — zero acquisitions either way.
  */
 #include <stdbool.h>
 #include <stdint.h>
@@ -32,12 +39,19 @@
 #include "stream.h"
 #include "stream_fragment.h"
 #include "ws.h"
+#include "ws_server.h"
 #include "config.h"
 #include "boot.h"
+#include "softap.h"
 #include "mock_esp_camera.h"
 #include "mock_esp_camera_link.h"
 #include "mock_supervision_record.h"
 #include "mock_init_returns.h"
+#include "mock_esp_event.h"
+#include "mock_esp_event_link.h"
+#include "mock_esp_system.h"
+#include "mock_http_server.h"
+#include "mock_softap.h"
 #include "ws_sink_recorder.h"
 #include "unity.h"
 
@@ -204,4 +218,193 @@ TEST_CASE(
     /* The queue drained — producer never wedges while idle. */
     void *out = NULL;
     TEST_ASSERT_FALSE(capture_queue_receive_timeout(&out, 20));
+}
+
+/* ---------- FW-19 server-mode fixture (S5/S6) ----------
+ *
+ * Brings the REAL /cams endpoint up through the IP-up path and
+ * completes one handshake so the httpd-backed SERVER sink is
+ * installed — exactly the production wiring a mid-stream
+ * disconnect travels (design D6: forced async-send failure while
+ * the fd probe stays alive). Mirrors test_ws_server.c's
+ * reset/server_up/handshake helpers.
+ */
+extern void softap_sta_listener_reset_for_test(void);
+extern void ws_status_timer_reset_handle_for_test(void);
+
+static void server_stream_fixture(void)
+{
+    mock_esp_camera_reset();
+    mock_supervision_reset();
+    mock_init_returns_reset();
+    mock_httpd_reset();
+    mock_esp_event_reset();
+    mock_softap_reset();
+    softap_sta_listener_reset_for_test();
+    ws_server_reset_for_test();
+    ws_status_timer_reset_handle_for_test();
+    capture_counters_reset_for_test();
+    stream_counters_reset_for_test();
+    capture_gate_reset_for_test();
+    ws_sink_recorder_reset();
+
+    uint8_t mac[6] = {0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f};
+    mock_esp_read_mac_set_bytes(mac);
+
+    TEST_ASSERT_EQUAL(ESP_OK, softap_sta_listener_install());
+    TEST_ASSERT_EQUAL(ESP_OK, ws_server_install());
+    TEST_ASSERT_EQUAL(ESP_OK,
+        mock_esp_event_fire_handler(IP_EVENT,
+                                    IP_EVENT_STA_GOT_IP,
+                                    NULL));
+    TEST_ASSERT_EQUAL(ESP_OK, capture_task_start());
+
+    /* Handshake on fd 7 → viewer_accept captures fd + installs
+     * the server sink (hello may or may not lead the ring; the
+     * disconnect scenarios below don't depend on it). */
+    mock_httpd_req_t *req = mock_httpd_req_new();
+    req->method = HTTP_GET;
+    req->sockfd = 7;
+    TEST_ASSERT_EQUAL(ESP_OK,
+        mock_httpd_invoke_registered_handler(
+            CONFIG_FIRMWARE_WS_PATH, HTTP_GET, req));
+    mock_httpd_req_free(req);
+}
+
+/* ---------- S5 — FW-19: mid-stream disconnect auto-stops ---------- */
+TEST_CASE(
+    "test_fw19_midstream_disconnect_auto_stops_capture [fw-19][server][scenario-S5]",
+    "[stream][fw-19][auto-stop]")
+{
+    server_stream_fixture();
+    TEST_ASSERT_TRUE(ws_server_viewer_active());
+
+    /* Viewer issued stream.on: gate open @10 fps. */
+    capture_run_start(10);
+
+    capture_counters_t counters = {0};
+    capture_queue_t *q = capture_queue_for_test();
+
+    /* Gate OPEN pre-disconnect: two paced steps acquire two frames. */
+    for (int i = 0; i < 2; i++) {
+        capture_gate_in_t in = {
+            .gate_open   = capture_running_get(),
+            .fps_applied = 10,
+        };
+        capture_gate_out_t out = {0};
+        capture_gated_iteration(q, &counters, &in, &out);
+        TEST_ASSERT_TRUE(out.ran);
+        TEST_ASSERT_FALSE(out.stop_latched);
+    }
+    int gets_streaming = mock_esp_camera_fb_get_call_count();
+    TEST_ASSERT_TRUE(gets_streaming >= 2);
+
+    /* Mid-stream disconnect: the socket dies MID-SEND. The forced
+     * send-failure injection (mock_httpd_ws_fail_sends_set,
+     * design D6) keeps the fd probe ALIVE while writes fail —
+     * exactly the device race — so this text emission (e.g. the
+     * 30 s status frame) runs server_sink_send_text ⇒ async send
+     * FAILS ⇒ viewer_clear ⇒ capture_auto_stop_request(). The
+     * path completes synchronously: the httpd-worker context is
+     * never blocked by the hook (one relaxed store). */
+    mock_httpd_ws_fail_sends_set(true);
+    const char status_ping[] = "{\"type\":\"status\"}";
+    TEST_ASSERT_EQUAL(ESP_FAIL,
+                      ws_sink_send_text(status_ping,
+                                        sizeof(status_ping) - 1));
+    /* viewer_clear also freed the slot + uninstalled the sink. */
+    TEST_ASSERT_FALSE(ws_server_viewer_active());
+
+    /* Stop word PENDING on the wire — the capture loop hasn't
+     * ticked since. The wrapper's exchange-before-step consumes
+     * it EXACTLY ONCE (no lost wakeup, design D5). */
+    TEST_ASSERT_TRUE(capture_running_get());
+    TEST_ASSERT_TRUE(capture_stop_request_take());
+    TEST_ASSERT_FALSE(capture_stop_request_take());
+
+    /* Next wrapper tick latches: gate closes with NO acquisition
+     * on the latching step (the wrapper then calls run_stop). */
+    capture_gate_in_t in = {
+        .gate_open      = true,
+        .fps_applied    = 10,
+        .stop_requested = true,
+    };
+    capture_gate_out_t out = {0};
+    capture_gated_iteration(q, &counters, &in, &out);
+    TEST_ASSERT_TRUE(out.stop_latched);
+    TEST_ASSERT_FALSE(out.ran);
+    capture_run_stop();
+
+    /* Halt ≤1 simulated second: ten idle ticks @100 ms — ZERO
+     * acquisitions after the disconnect. */
+    int gets_at_halt = mock_esp_camera_fb_get_call_count();
+    for (int i = 0; i < 10; i++) {
+        capture_gate_in_t idle = {
+            .gate_open = capture_running_get(),
+        };
+        capture_gate_out_t o = {0};
+        capture_gated_iteration(q, &counters, &idle, &o);
+        TEST_ASSERT_FALSE(o.ran);
+    }
+    TEST_ASSERT_EQUAL_INT(gets_at_halt,
+                          mock_esp_camera_fb_get_call_count());
+    TEST_ASSERT_FALSE(capture_running_get());
+
+    /* Fixture teardown: leave the shared single-binary world as
+     * later suites expect (the mock event-subscription table is
+     * finite; leftover /cams + listener subscriptions would
+     * starve their ws_init calls). */
+    mock_httpd_ws_fail_sends_set(false);
+    mock_httpd_reset();
+    mock_esp_event_reset();
+    softap_sta_listener_reset_for_test();
+    ws_server_reset_for_test();
+}
+
+/* ---------- S6 — FW-19 triangulation: stopped gate stays stopped ---------- */
+TEST_CASE(
+    "test_fw19_disconnect_while_stopped_never_opens_gate [fw-19][server][scenario-S6]",
+    "[stream][fw-19][auto-stop]")
+{
+    /* Fresh boot world: viewer handshakes but never issues
+     * stream.on — the gate is STOPPED (FW-19 default). */
+    server_stream_fixture();
+    TEST_ASSERT_TRUE(ws_server_viewer_active());
+    TEST_ASSERT_FALSE(capture_running_get());
+
+    /* Same trigger as S5: forced mid-send failure ⇒ viewer_clear
+     * ⇒ auto-stop word. Harmless while stopped. */
+    mock_httpd_ws_fail_sends_set(true);
+    const char status_ping[] = "{\"type\":\"status\"}";
+    TEST_ASSERT_EQUAL(ESP_FAIL,
+                      ws_sink_send_text(status_ping,
+                                        sizeof(status_ping) - 1));
+    TEST_ASSERT_FALSE(ws_server_viewer_active());
+
+    /* Word fired once… */
+    TEST_ASSERT_TRUE(capture_stop_request_take());
+    TEST_ASSERT_FALSE(capture_stop_request_take());
+
+    /* …but ten idle ticks later the gate NEVER opened and the
+     * driver was NEVER touched (R-25 invariant intact). */
+    capture_counters_t counters = {0};
+    for (int i = 0; i < 10; i++) {
+        capture_gate_in_t in = {
+            .gate_open = capture_running_get(),
+        };
+        capture_gate_out_t out = {0};
+        capture_gated_iteration(capture_queue_for_test(), &counters,
+                                &in, &out);
+        TEST_ASSERT_FALSE(out.ran);
+        TEST_ASSERT_FALSE(out.stop_latched);
+    }
+    TEST_ASSERT_EQUAL_INT(0, mock_esp_camera_fb_get_call_count());
+    TEST_ASSERT_FALSE(capture_running_get());
+
+    /* Fixture teardown — same rationale as S5. */
+    mock_httpd_ws_fail_sends_set(false);
+    mock_httpd_reset();
+    mock_esp_event_reset();
+    softap_sta_listener_reset_for_test();
+    ws_server_reset_for_test();
 }

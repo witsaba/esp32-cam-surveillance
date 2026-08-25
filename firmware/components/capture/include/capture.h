@@ -211,6 +211,24 @@ bool    capture_running_get(void);
 uint32_t capture_fps_get(void);
 uint32_t capture_fps_clamp(long long requested);
 
+/* FW-19 U3 auto-stop wire (design D5): ws_server's viewer_clear
+ * calls capture_auto_stop_request() when a mid-stream send fails
+ * — O(1), lock-free, no alloc/queue, so the httpd worker context
+ * NEVER blocks. The capture wrapper exchanges the word back to
+ * false BEFORE each gated step (exchange = no lost wakeup); a
+ * latched stop closes the gate that same tick.
+ *
+ *   capture_auto_stop_request()
+ *       One relaxed store. Idempotent; safe from any context,
+ *       harmless while the gate is stopped.
+ *   capture_stop_request_take()
+ *       The wrapper's per-tick consume step (atomic exchange to
+ *       false), exposed so host harnesses drive the IDENTICAL
+ *       consume semantics: true exactly once per request.
+ */
+void capture_auto_stop_request(void);
+bool capture_stop_request_take(void);
+
 /* Time-control seam (design D2) — ONE gated loop step as a
  * PURE function so every "≤1 simulated second" claim is
  * tick-deterministic on host:

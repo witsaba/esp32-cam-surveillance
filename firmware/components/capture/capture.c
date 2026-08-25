@@ -129,6 +129,12 @@ capture_queue_t *capture_queue_for_test(void)
 static atomic_bool s_running; /* BSS ⇒ false = default-stopped */
 static atomic_uint s_fps = CONFIG_FIRMWARE_STREAM_FPS;
 
+/* FW-19 U3 auto-stop word (design D5): set by ws_server's
+ * viewer_clear on a mid-stream send failure, consumed (and
+ * cleared) by the capture wrapper before every gated step.
+ * BSS ⇒ false: no stop pending at boot. */
+static atomic_bool s_stop_req;
+
 /* capture_fps_clamp — PURE. Silent range clamp to
  * [FIRMWARE_STREAM_FPS_MIN .. FIRMWARE_STREAM_FPS_MAX]
  * (FW-19.3 + ruling 6: out-of-RANGE integers never error).
@@ -173,6 +179,23 @@ uint32_t capture_fps_get(void)
     return atomic_load(&s_fps);
 }
 
+/* FW-19 U3 auto-stop wire (design D5). viewer_clear runs in the
+ * httpd worker context: the hook is ONE relaxed store — O(1),
+ * lock-free, never blocks. */
+void capture_auto_stop_request(void)
+{
+    atomic_store_explicit(&s_stop_req, true, memory_order_relaxed);
+}
+
+/* Consume step — the wrapper calls this before EVERY gated step;
+ * atomic exchange (not load) means a request is never lost to a
+ * concurrent tick. Exposed for host harnesses so tests drive the
+ * identical consume semantics. */
+bool capture_stop_request_take(void)
+{
+    return atomic_exchange(&s_stop_req, false);
+}
+
 /* capture_gated_iteration — PURE time-control seam (design
  * D2). Consumes the stop-request decision, runs at most ONE
  * capture_loop_iteration iff the gate is open and no stop word
@@ -214,6 +237,7 @@ void capture_gate_reset_for_test(void)
 #ifdef UNITY_HOST_BUILD
     atomic_init(&s_running, false);
     atomic_init(&s_fps, CONFIG_FIRMWARE_STREAM_FPS);
+    atomic_init(&s_stop_req, false);
 #endif
 }
 
@@ -516,11 +540,13 @@ static void capture_task_entry(void *arg)
         was_running = running;
 
         capture_gate_in_t in = {
-            .gate_open      = running,
-            .fps_applied    = fps,
-            /* FW-19 U3 owns the stop-request wire
-             * (atomic_exchange before each step). */
-            .stop_requested = false,
+            .gate_open   = running,
+            .fps_applied = fps,
+            /* FW-19 U3: consume the auto-stop word BEFORE the
+             * gated step — exchange clears it, so a mid-stream
+             * disconnect halts within one tick and can never be
+             * lost to a concurrent loop pass (design D5). */
+            .stop_requested = capture_stop_request_take(),
         };
         capture_gate_out_t out = {0};
         capture_gated_iteration(&g_capture_queue, &g_capture_counters,
