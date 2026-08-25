@@ -12,7 +12,10 @@
 #   - `fw: boot_run ret=ok step=return` — green path completion
 #   - `stub: wifi_init`                   — wifi init stub fired
 #   - `stub: camera_init`                 — camera init stub fired
-#   - `stub: health_task_start`           — supervision stub fired
+#   - `fw: health_task_start fails=<n> window_min=<n>`
+#                                         — real health task started
+#                                           (FW-16; strong symbol took
+#                                           over from the FW-15 stub)
 #
 # Usage:
 #   scripts/smoke.sh [PORT] [TIMEOUT_SECONDS] [LOG_FILE]
@@ -135,10 +138,10 @@ if ! grep -q 'stub: camera_init' "$LOG_FILE"; then
   exit 1
 fi
 
-if ! grep -q 'stub: health_task_start' "$LOG_FILE"; then
-  printf '[smoke] FAIL: health_task_start stub log line missing in %s\n' "$LOG_FILE" >&2
-  printf '[smoke] --- captured boot/stub lines ---\n' >&2
-  grep -E 'stub:' "$LOG_FILE" >&2 || true
+if ! grep -q 'fw: health_task_start fails=' "$LOG_FILE"; then
+  printf '[smoke] FAIL: fw: health_task_start log line missing in %s\n' "$LOG_FILE" >&2
+  printf '[smoke] --- captured health/boot lines ---\n' >&2
+  grep -E 'stub:|fw: health' "$LOG_FILE" >&2 || true
   exit 1
 fi
 
