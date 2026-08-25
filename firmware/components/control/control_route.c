@@ -50,7 +50,10 @@ control_handler_fn control_dispatch(const control_parsed_t *p)
     return s_handlers[p->cmd_id];
 }
 
-void control_reset_for_test(void)
+/* Host-only test seam — called by control_reset_for_test() in
+ * control.c (the single owner of the public reset symbol). Not part
+ * of the public header. */
+void control_registry_reset_for_test(void)
 {
 #ifdef UNITY_HOST_BUILD
     memset(s_handlers, 0, sizeof(s_handlers));

@@ -269,6 +269,7 @@ def _build(basename, extra_defines, test_files, workdir):
         # FW-18 — control component (PURE router core; the ring +
         # task shell join in U2 as they land).
         os.path.join(PROJECT_DIR, 'components', 'control', 'control_route.c'),
+        os.path.join(PROJECT_DIR, 'components', 'control', 'control.c'),
         # FW-13 — identity component (shared MAC + NVS identity).
         os.path.join(PROJECT_DIR, 'components', 'identity', 'identity.c'),
         # FW-13 — ws component. FW-16 server mode: ws_server.c
@@ -288,7 +289,8 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
-        os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_supervision.c'),
+        # FW-18 — stub_supervision.c DELETED: control.c provides the
+        # real strong symbol (host bookkeeping migrated verbatim).
         os.path.join(os.path.dirname(__file__), 'host_test_main.c'),
         os.path.join(os.path.dirname(__file__), 'host_idf_runner_shim.c'),
         os.path.join(PROJECT_DIR, 'tests', 'host_include', 'host_err_to_name.c'),
@@ -659,6 +661,10 @@ ALL_TESTS = [
     "test_route_string_id_escapes_quote_backslash_control [fw-18.3][d6]",
     "test_route_echo_cap_boundary_and_omission [fw-18.3][ruling-8]",
     "test_route_envelope_overflow_returns_zero_sentinel [fw-18.3][d6]",
+    # FW-18 U2 — ring + task shell.
+    "test_task_busy_command_does_not_stall_inbound [fw-18.2]",
+    "test_task_queue_full_drops_newest_no_wire_token [fw-18.2][ruling-2]",
+    "test_task_receive_timeout_is_bounded_tick [fw-18.2]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -869,6 +875,10 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # taxonomy ± salvage scanner both branches, D9 id omission,
     # validate-before-setter prod pin, registry dispatch seam.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_control_route.c'),
+    # FW-18 — bounded ring + task shell: busy-consumer non-stall,
+    # drop-newest + counter + FIFO + no-wire-token (ruling #3966.2),
+    # bounded receive tick.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_control_task.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard

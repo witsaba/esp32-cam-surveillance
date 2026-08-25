@@ -99,6 +99,52 @@ size_t control_error_build(const char *reason_token, const cJSON *id,
  * process lifetime (init-time only). */
 void control_handler_register(control_cmd_id_t id, control_handler_fn fn);
 
+/* ---------- bounded command ring (D3, capture_queue_t-shaped) ---- */
+
+/* Depth-8 SPSC ring. NULL sync_mtx/sync_cv (stack-instantiated host
+ * test queues) keep the ops lock-free and pure; the module-static
+ * instance gets pthread (host) / FreeRTOS (device) hooks armed by
+ * control_task_start BEFORE the task spawns. */
+typedef struct {
+    void *slots[CONTROL_QUEUE_DEPTH];
+    int   head;
+    int   tail;
+    int   count;
+    void *sync_mtx;
+    void *sync_cv;
+} control_queue_t;
+
+/* Push a heap-owned frame copy. Returns true when enqueued (FIFO),
+ * false when FULL — the NEWEST item is then dropped, the module
+ * drop counter increments, and NOTHING goes on the wire (ruling
+ * #3966.2). Never blocks the producer. */
+bool control_queue_send_drop_on_full(control_queue_t *q, void *item);
+
+/* Pop the module-static ring head, waiting at most timeout_ms
+ * (bounded — never forever; stream.c:79 precedent). True + *out on
+ * success; false on timeout. */
+bool control_queue_receive_timeout(void **out, uint32_t timeout_ms);
+
+/* Host-only test seam: the module-static ring (capture precedent).
+ * Device builds must not call this. */
+control_queue_t *control_queue_for_test(void);
+
+/* Drop counter (queue-full + oversize ingests). Logs + getter only —
+ * the status-frame schema stays frozen (FW-13.6 untouched). */
+uint32_t control_frames_dropped_get(void);
+
+/* One consumer iteration: bounded pop → process → emit the reply
+ * envelope via ws_sink_send_text (0-sentinel skips the send) →
+ * free the frame copy (single owner, free-once). Device task body
+ * loops this forever; host tests drive iterations manually. */
+bool control_loop_iteration(void);
+
+/* Strong symbol replacing the FW-03-era boot stub: host records the
+ * supervision bookkeeping verbatim; device spawns the "control"
+ * task (4096/PRIO 5, boot_priq.h). Arms the ring sync hooks BEFORE
+ * spawning (capture.c:246 precedent). */
+esp_err_t control_task_start(void);
+
 /* Host-only test seam: clears the registry + counters so suites stay
  * order-independent. No-op on device (BSS-zeroed at boot). */
 void control_reset_for_test(void);
