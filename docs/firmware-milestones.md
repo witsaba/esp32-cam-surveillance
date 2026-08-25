@@ -1,6 +1,6 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
-> **Status**: 12 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; FW-08 closed by PR #10, merge commit `9133aeb` — see amendment blockquote at the end of § FW-08; FW-10 closed by PR #11, merge commit `b05288d` — see amendment blockquote at the end of § FW-10; FW-11 closed by PR #12, merge commit `58f387e` — see amendment blockquote at the end of § FW-11; FW-13 closed by PR #13, merge commit `1d671c3` — see amendment blockquote at the end of § FW-13; **FW-05.5 closed (PR pending — worktree `feat/whoami-always-on`, 4 work-unit commits including mock fidelity fix, see amendment blockquote at the end of § FW-05.5; device-flash verify captured the `URI /whoami registered on STA interface` log line; HTTP round-trip from this Mac blocked by AP client isolation on `Liwaisi Wifi`)**; **FW-14 closed by PR #19, merge commit `224b51c`; FW-15 closed by PR #20, merge commit `e7c7603` — see amendment blockquote at the end of § FW-15 (host suite green incl. 12 FW-15 tests + 3 snapshot tests; device build green; frames verified flowing on silicon after the GPIO0/XCLK boot-order fix)**).
+> **Status**: 12 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; FW-08 closed by PR #10, merge commit `9133aeb` — see amendment blockquote at the end of § FW-08; FW-10 closed by PR #11, merge commit `b05288d` — see amendment blockquote at the end of § FW-10; FW-11 closed by PR #12, merge commit `58f387e` — see amendment blockquote at the end of § FW-11; FW-13 closed by PR #13, merge commit `1d671c3` — see amendment blockquote at the end of § FW-13; **FW-05.5 closed (PR pending — worktree `feat/whoami-always-on`, 4 work-unit commits including mock fidelity fix, see amendment blockquote at the end of § FW-05.5; device-flash verify captured the `URI /whoami registered on STA interface` log line; HTTP round-trip from this Mac blocked by AP client isolation on `Liwaisi Wifi`)**; **FW-14 closed by PR #19, merge commit `224b51c`; FW-15 closed by PR #20, merge commit `e7c7603` — see amendment blockquote at the end of § FW-15 (host suite green incl. 12 FW-15 tests + 3 snapshot tests; device build green; frames verified flowing on silicon after the GPIO0/XCLK boot-order fix)**; **FW-16 implemented (PR pending — worktree `feat/fw-16-soft-recovery`, 7 work-unit commits, host 170/170 + healthy-stream bite-proof green, device startup contract verified, see amendment blockquote at the end of § FW-16)**).
 > **Next SDD to start**: FW-16 (soft recovery) or FW-18 (control dispatcher) per dependency graph.
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
@@ -1567,6 +1567,23 @@ SDD change: `firmware-soft-recovery` · Closes: R-20.
   - **Scenario: counter advancing during a healthy stream is rejected.** Given the failure counter stubbed to advance during a healthy connected stream (scratch violation), When the health task's window check runs, Then the guard fails naming the healthy-stream invariant (the counter must advance only on real DISCONNECTED/ERROR events).
   - **Scenario: green path ignores healthy streams.** Given a healthy stream with the counter at 0, When 60 s elapses, Then the counter remains 0.
 - **Depends on:** FW-16.1.
+
+> **Amended 2026-08-24 (implemented — counted failures are Wi-Fi STA disconnect episodes).**
+> This section's charter predates PR #21 (device-as-server): the client-era
+> "consecutive failures … DISCONNECTED/ERROR" wording is superseded. As implemented,
+> the health task SUBSCRIBES to Wi-Fi STA events and counts disconnect EPISODES in the
+> sliding window: paired retry bursts inside one outage coalesce to exactly one increment,
+> and an IP-up event closes the episode so the next drop counts anew. Evaluation is strictly
+> event-driven — no periodic sweep exists. On threshold crossing the firmware persists the
+> reason (`soft_recovery_threshold`) into a DEDICATED NVS namespace that survives factory
+> reset, shows the 3 s SOFT_RECOVERY LED window, then restarts cleanly through the LED
+> driver's completion callback; the next boot logs `fw: last_recovery_reason:` right after
+> config load. Evidence: host Unity suite 170/170 production-green plus every stub bite-proof
+> expected-behaved, including the new healthy-stream guard pass (a stub advancing the counter
+> during healthy streaming produces exactly one failing test naming the invariant); device
+> flash verified the startup contract `fw: health_task_start fails=30 window_min=10` and the
+> silent clean-boot path (no stored reason → nothing logged). Worktree
+> `feat/fw-16-soft-recovery`, 7 work-unit commits — PR pending.
 
 ## Wave 5 — Control plane
 
