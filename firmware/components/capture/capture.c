@@ -79,6 +79,15 @@
 #include "boot_priq.h" /* BOOT_TASK_STACK_SUPERVISION + BOOT_TASK_PRIO_SUPERVISION */
 #include "boot.h"
 
+#if defined(UNITY_HOST_BUILD) && defined(CAPTURE_TEST_STUB_IGNORE_WS_STATE)
+/* Pass-15 bite-proof tripwire deps (FW-19.5, design D7/D8). Host
+ * stub build ONLY — the runner defines this macro in no other pass,
+ * and device builds never see UNITY_HOST_BUILD, so capture keeps
+ * ZERO ws linkage everywhere else. */
+#include "ws_server.h"
+#include "unity.h"
+#endif
+
 #define TAG "capture"
 
 /* ---------- module-static state (host + device) ---------- */
@@ -230,6 +239,18 @@ void capture_gated_iteration(capture_queue_t *q,
     }
     capture_loop_iteration(q, c);
     out->ran = true;
+
+#if defined(UNITY_HOST_BUILD) && defined(CAPTURE_TEST_STUB_IGNORE_WS_STATE)
+    /* Pass-15 deep-defense tripwire (FW-19.5): in a build where the
+     * WS-state dependency is ignored/stubbed away, an acquisition
+     * that runs while the REAL viewer state reads disconnected is a
+     * hard invariant violation. Fires iff ran && !viewer_active —
+     * the verbatim message is what Pass 15 greps for. */
+    if (out->ran && !ws_server_viewer_active()) {
+        TEST_FAIL_MESSAGE("capture MUST NOT run while the WS viewer "
+                          "is disconnected.");
+    }
+#endif
 }
 
 void capture_gate_reset_for_test(void)
