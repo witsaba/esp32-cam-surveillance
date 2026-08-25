@@ -152,6 +152,8 @@ def _common_cflags(extra_defines):
         # FW-16 — health component public headers (window core +
         # task surface).
         f'-I{PROJECT_DIR}/components/health/include',
+        # FW-18 — control component public headers (PURE router core).
+        f'-I{PROJECT_DIR}/components/control/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
         # FW-08 — Kconfig mirrors for the host build (the device
@@ -264,6 +266,9 @@ def _build(basename, extra_defines, test_files, workdir):
         # sources register as each lands).
         os.path.join(PROJECT_DIR, 'components', 'health', 'health_window.c'),
         os.path.join(PROJECT_DIR, 'components', 'health', 'health.c'),
+        # FW-18 — control component (PURE router core; the ring +
+        # task shell join in U2 as they land).
+        os.path.join(PROJECT_DIR, 'components', 'control', 'control_route.c'),
         # FW-13 — identity component (shared MAC + NVS identity).
         os.path.join(PROJECT_DIR, 'components', 'identity', 'identity.c'),
         # FW-13 — ws component. FW-16 server mode: ws_server.c
@@ -635,6 +640,25 @@ ALL_TESTS = [
     # branch compiles ONLY under -DHEALTH_TEST_STUB_COUNT_WHILE_
     # HEALTHY=1 in Pass 13.
     "test_health_guard_60s_healthy_stream_must_not_count [fw-16.3][guard][bite-proof]",
+    # FW-18 — pure router core (U1). 10 scenarios: six-command
+    # allow-list → not_implemented, unknown + lossless id echo
+    # (string/numeric), bad_json taxonomy ± salvage both branches,
+    # D9 id omission, validate-before-setter prod pin, registry seam.
+    "test_route_six_commands_all_not_implemented [fw-18.1][scenario-outline]",
+    "test_route_unknown_command_rejected_with_string_echo [fw-18.3]",
+    "test_route_numeric_id_preserved_unquoted [fw-18.3][ruling-4]",
+    "test_route_garbage_bad_json_without_id [fw-18.4]",
+    "test_route_garbage_salvages_string_id [fw-18.4][salvage]",
+    "test_route_garbage_salvages_numeric_id [fw-18.4][salvage]",
+    "test_route_valid_json_unusable_cmd_is_unknown [fw-18.4]",
+    "test_route_id_omitted_when_absent_object_or_null [fw-18.4][d9]",
+    "test_route_malformed_input_never_invokes_setter [fw-18.4][guard-prod]",
+    "test_route_registered_handler_dispatches_no_envelope [fw-18.1][seam]",
+    # T1.3 — envelope byte-discipline: bounded escaper (D6), echo cap
+    # boundary + omission (ruling #3966.8), overflow 0-sentinel.
+    "test_route_string_id_escapes_quote_backslash_control [fw-18.3][d6]",
+    "test_route_echo_cap_boundary_and_omission [fw-18.3][ruling-8]",
+    "test_route_envelope_overflow_returns_zero_sentinel [fw-18.3][d6]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -840,6 +864,11 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # branch compiles only under the Pass 13 stub flag (see
     # FW16_GUARD_TEST_FILES below).
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_health_guard.c'),
+    # FW-18 — pure router core: allow-list routing, unified error
+    # envelope with lossless id echo (string + numeric), bad_json
+    # taxonomy ± salvage scanner both branches, D9 id omission,
+    # validate-before-setter prod pin, registry dispatch seam.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_control_route.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
