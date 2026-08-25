@@ -36,4 +36,12 @@ esp_err_t ws_sink_recorder_get_text_at(size_t idx, char *out,
 
 /* Copy binary frame `idx` into `out`; actual length in *len. */
 esp_err_t ws_sink_recorder_get_bin_at(size_t idx, uint8_t *out,
-                                       size_t cap, size_t *len);
+                                        size_t cap, size_t *len);
+
+/* Lifetime accepted-send total (never decreases on ring eviction):
+ * proves NO send was lost once the bounded rings have rotated. */
+size_t ws_sink_recorder_frames_total(void);
+
+/* TX serialization invariant: times a send fn was ENTERED while
+ * another send was in flight. Zero is the contract (ws.c lock). */
+size_t ws_sink_recorder_overlap_violations(void);

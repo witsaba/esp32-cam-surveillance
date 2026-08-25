@@ -152,6 +152,8 @@ def _common_cflags(extra_defines):
         # FW-16 — health component public headers (window core +
         # task surface).
         f'-I{PROJECT_DIR}/components/health/include',
+        # FW-18 — control component public headers (PURE router core).
+        f'-I{PROJECT_DIR}/components/control/include',
         '-DUNITY_INCLUDE_CONFIG_H',
         '-DUNITY_HOST_BUILD',                     # select host test_runner shim
         # FW-08 — Kconfig mirrors for the host build (the device
@@ -264,6 +266,10 @@ def _build(basename, extra_defines, test_files, workdir):
         # sources register as each lands).
         os.path.join(PROJECT_DIR, 'components', 'health', 'health_window.c'),
         os.path.join(PROJECT_DIR, 'components', 'health', 'health.c'),
+        # FW-18 — control component (PURE router core; the ring +
+        # task shell join in U2 as they land).
+        os.path.join(PROJECT_DIR, 'components', 'control', 'control_route.c'),
+        os.path.join(PROJECT_DIR, 'components', 'control', 'control.c'),
         # FW-13 — identity component (shared MAC + NVS identity).
         os.path.join(PROJECT_DIR, 'components', 'identity', 'identity.c'),
         # FW-13 — ws component. FW-16 server mode: ws_server.c
@@ -283,7 +289,8 @@ def _build(basename, extra_defines, test_files, workdir):
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'boot_button_stub.c'),
         os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_inits.c'),
-        os.path.join(PROJECT_DIR, 'components', 'boot', 'stub_supervision.c'),
+        # FW-18 — stub_supervision.c DELETED: control.c provides the
+        # real strong symbol (host bookkeeping migrated verbatim).
         os.path.join(os.path.dirname(__file__), 'host_test_main.c'),
         os.path.join(os.path.dirname(__file__), 'host_idf_runner_shim.c'),
         os.path.join(PROJECT_DIR, 'tests', 'host_include', 'host_err_to_name.c'),
@@ -635,6 +642,38 @@ ALL_TESTS = [
     # branch compiles ONLY under -DHEALTH_TEST_STUB_COUNT_WHILE_
     # HEALTHY=1 in Pass 13.
     "test_health_guard_60s_healthy_stream_must_not_count [fw-16.3][guard][bite-proof]",
+    # FW-18 — pure router core (U1). 10 scenarios: six-command
+    # allow-list → not_implemented, unknown + lossless id echo
+    # (string/numeric), bad_json taxonomy ± salvage both branches,
+    # D9 id omission, validate-before-setter prod pin, registry seam.
+    "test_route_six_commands_all_not_implemented [fw-18.1][scenario-outline]",
+    "test_route_unknown_command_rejected_with_string_echo [fw-18.3]",
+    "test_route_numeric_id_preserved_unquoted [fw-18.3][ruling-4]",
+    "test_route_garbage_bad_json_without_id [fw-18.4]",
+    "test_route_garbage_salvages_string_id [fw-18.4][salvage]",
+    "test_route_garbage_salvages_numeric_id [fw-18.4][salvage]",
+    "test_route_valid_json_unusable_cmd_is_unknown [fw-18.4]",
+    "test_route_id_omitted_when_absent_object_or_null [fw-18.4][d9]",
+    "test_route_malformed_input_never_invokes_setter [fw-18.4][guard-prod]",
+    "test_route_registered_handler_dispatches_no_envelope [fw-18.1][seam]",
+    # T1.3 — envelope byte-discipline: bounded escaper (D6), echo cap
+    # boundary + omission (ruling #3966.8), overflow 0-sentinel.
+    "test_route_string_id_escapes_quote_backslash_control [fw-18.3][d6]",
+    "test_route_echo_cap_boundary_and_omission [fw-18.3][ruling-8]",
+    "test_route_envelope_overflow_returns_zero_sentinel [fw-18.3][d6]",
+    # FW-18 U2 — ring + task shell.
+    "test_task_busy_command_does_not_stall_inbound [fw-18.2]",
+    "test_task_queue_full_drops_newest_no_wire_token [fw-18.2][ruling-2]",
+    "test_task_receive_timeout_is_bounded_tick [fw-18.2]",
+    # FW-18 U3 — RX seam (mock recv + ws_server ingest hook).
+    "test_ingest_mock_primed_frame_drains_type_and_payload [fw-18][mock-self]",
+    "test_ingest_text_command_enqueued_not_processed_inline [fw-18.2]",
+    "test_ingest_text_consumed_handler_ok [fw-18.2][seam]",
+    "test_ingest_non_text_silent_ignore [fw-18.2][ruling-3]",
+    "test_ingest_ten_primed_eight_enqueued_two_dropped [fw-18.2][ruling-2]",
+    "test_ingest_oversize_dropped_same_counter_stream_synced [fw-18.3][d5]",
+    # Bugfix slice — viewer-sink TX serialization guard.
+    "test_ws_tx_lock_no_concurrent_sink_dispatch [fw-tx-lock]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -840,6 +879,22 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # branch compiles only under the Pass 13 stub flag (see
     # FW16_GUARD_TEST_FILES below).
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_health_guard.c'),
+    # FW-18 — pure router core: allow-list routing, unified error
+    # envelope with lossless id echo (string + numeric), bad_json
+    # taxonomy ± salvage scanner both branches, D9 id omission,
+    # validate-before-setter prod pin, registry dispatch seam.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_control_route.c'),
+    # FW-18 — bounded ring + task shell: busy-consumer non-stall,
+    # drop-newest + counter + FIFO + no-wire-token (ruling #3966.2),
+    # bounded receive tick.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_control_task.c'),
+    # FW-18 — RX seam: WS frame recv mock self-test, enqueue-not-
+    # inline, TEXT-only gate, overflow drop accounting, oversize
+    # drain keeps the stream synced.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_control_ingest.c'),
+    # Bugfix slice — TX serialization guard: two rendezvous-released
+    # threads hammer the ws.c dispatch seam; overlap must be ZERO.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_tx_lock.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard

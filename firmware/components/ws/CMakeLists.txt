@@ -14,7 +14,9 @@
 # endpoint registration in ws_server.c; softap — the STA httpd
 # handle accessor (one-directional edge: softap NEVER links ws,
 # otherwise softap→ws→wifi→softap closes and static-link order
-# breaks). The identity REQUIRES is for
+# breaks); control — the FW-18 command-ingest seam (ws_server.c
+# submits frame copies to the control ring; mutual PRIV edge with
+# control→ws for reply emission). The identity REQUIRES is for
 # device_identity_t in the JSON builders. The esp_websocket_client
 # managed component stays declared in idf_component.yml so the
 # retained (unwired) sources keep compiling.
@@ -29,5 +31,5 @@ idf_component_register(
          "ws_backoff.c"
     INCLUDE_DIRS "include"
     REQUIRES identity wifi capture esp_websocket_client
-    PRIV_REQUIRES esp_http_server softap
+    PRIV_REQUIRES esp_http_server softap control
 )

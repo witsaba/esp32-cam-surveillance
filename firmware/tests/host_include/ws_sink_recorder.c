@@ -27,6 +27,12 @@ static rec_bin_slot_t  s_bin[REC_BIN_SLOTS];
 static size_t          s_bin_count;
 static bool            s_fail_all;
 
+/* TX overlap detector: depth > 0 means a send is in flight. */
+static int    s_tx_depth;
+static size_t s_overlap_violations;
+/* Lifetime accepted-send total (survives ring eviction). */
+static size_t s_frames_total;
+
 void ws_sink_recorder_reset(void)
 {
     memset(s_text, 0, sizeof(s_text));
@@ -34,6 +40,9 @@ void ws_sink_recorder_reset(void)
     s_text_count = 0;
     s_bin_count  = 0;
     s_fail_all   = false;
+    s_tx_depth   = 0;
+    s_overlap_violations = 0;
+    s_frames_total = 0;
 }
 
 void ws_sink_recorder_fail_all_set(bool fail_all)
@@ -43,6 +52,12 @@ void ws_sink_recorder_fail_all_set(bool fail_all)
 
 size_t ws_sink_recorder_text_count(void) { return s_text_count; }
 size_t ws_sink_recorder_bin_count(void)  { return s_bin_count; }
+size_t ws_sink_recorder_frames_total(void) { return s_frames_total; }
+
+size_t ws_sink_recorder_overlap_violations(void)
+{
+    return s_overlap_violations;
+}
 
 esp_err_t ws_sink_recorder_get_text_at(size_t idx, char *out,
                                         size_t cap)
@@ -68,7 +83,8 @@ esp_err_t ws_sink_recorder_get_bin_at(size_t idx, uint8_t *out,
 
 /* ---------- sink vtable ---------- */
 
-static esp_err_t rec_send_bin(const uint8_t *buf, size_t len)
+/* Ring append only (no overlap accounting) — wrapped below. */
+static esp_err_t rec_bin_store(const uint8_t *buf, size_t len)
 {
     if (!buf || len == 0) return ESP_ERR_INVALID_ARG;
     if (s_fail_all) return ESP_FAIL;
@@ -87,7 +103,7 @@ static esp_err_t rec_send_bin(const uint8_t *buf, size_t len)
     return ESP_OK;
 }
 
-static esp_err_t rec_send_text(const char *buf, size_t len)
+static esp_err_t rec_text_store(const char *buf, size_t len)
 {
     if (!buf || len == 0) return ESP_ERR_INVALID_ARG;
     if (s_fail_all) return ESP_FAIL;
@@ -106,6 +122,27 @@ static esp_err_t rec_send_text(const char *buf, size_t len)
         slot->data[slot->len] = '\0';
     }
     return ESP_OK;
+}
+
+/* Overlap detector: recorder sends are instantaneous, so ANY
+ * reentry while depth > 0 means two tasks dispatched together —
+ * exactly what the ws.c TX lock must prevent. */
+static esp_err_t rec_send_bin(const uint8_t *buf, size_t len)
+{
+    if (s_tx_depth++ > 0) s_overlap_violations++;
+    esp_err_t r = rec_bin_store(buf, len);
+    if (r == ESP_OK) s_frames_total++;
+    s_tx_depth--;
+    return r;
+}
+
+static esp_err_t rec_send_text(const char *buf, size_t len)
+{
+    if (s_tx_depth++ > 0) s_overlap_violations++;
+    esp_err_t r = rec_text_store(buf, len);
+    if (r == ESP_OK) s_frames_total++;
+    s_tx_depth--;
+    return r;
 }
 
 static bool rec_is_connected(void)

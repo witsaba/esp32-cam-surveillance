@@ -67,6 +67,38 @@ static bool ws_fd_marked_dead(int fd)
 static char g_sentinel_handle;
 static httpd_handle_t g_current_server = &g_sentinel_handle;
 
+/* ---------- FW-18 WebSocket frame recv surface ---------- */
+
+/* Per-request FIFO of primed inbound WS frames (D7). Each frame is
+ * a malloc'd node so the FIFO can grow/shrink independently of the
+ * request lifetime; cap 16 covers the overflow/drain tests (prime
+ * 10 → assert 8 enqueued + 2 dropped) with headroom. */
+#define MOCK_HTTPD_WS_PRIME_CAP 16
+
+typedef struct mock_ws_primed_frame {
+    int                         type;
+    size_t                      len;
+    size_t                      cursor;   /* bytes already filled */
+    uint8_t                    *payload;
+    struct mock_ws_primed_frame *next;
+} mock_ws_primed_frame_t;
+
+static mock_httpd_req_t *g_live_reqs = NULL;
+
+static void ws_frames_free_all(mock_httpd_req_t *req)
+{
+    mock_ws_primed_frame_t *f = (mock_ws_primed_frame_t *)req->ws_head;
+    while (f) {
+        mock_ws_primed_frame_t *next = f->next;
+        free(f->payload);
+        free(f);
+        f = next;
+    }
+    req->ws_head  = NULL;
+    req->ws_tail  = NULL;
+    req->ws_count = 0;
+}
+
 void mock_httpd_reset(void)
 {
     memset(g_handlers, 0, sizeof(g_handlers));
@@ -77,6 +109,11 @@ void mock_httpd_reset(void)
     g_ws_ring_count  = 0;
     g_ws_dead_count  = 0;
     g_current_server = &g_sentinel_handle;
+    /* FW-18 — drop primed WS frames on requests a test left open
+     * (the requests themselves stay test-owned). */
+    for (mock_httpd_req_t *r = g_live_reqs; r; r = r->ws_next_live) {
+        ws_frames_free_all(r);
+    }
 }
 
 int  mock_httpd_register_uri_handler_call_count(void) { return g_register_count; }
@@ -141,12 +178,24 @@ void mock_httpd_req_set_user_ctx(mock_httpd_req_t *req, void *ctx)
 mock_httpd_req_t *mock_httpd_req_new(void)
 {
     mock_httpd_req_t *r = (mock_httpd_req_t *)calloc(1, sizeof(mock_httpd_req_t));
+    if (r) {
+        /* FW-18 — track live requests for mock_httpd_reset(). */
+        r->ws_next_live = g_live_reqs;
+        g_live_reqs     = r;
+    }
     return r;
 }
 
 void mock_httpd_req_free(mock_httpd_req_t *req)
 {
     if (!req) return;
+    /* Unlink from the live-request list before freeing. */
+    mock_httpd_req_t **pp = &g_live_reqs;
+    while (*pp && *pp != req) {
+        pp = &(*pp)->ws_next_live;
+    }
+    if (*pp) *pp = req->ws_next_live;
+    ws_frames_free_all(req);
     if (req->primed_recv_buffer)     free(req->primed_recv_buffer);
     if (req->captured_response_buffer) free(req->captured_response_buffer);
     if (req->captured_content_type)    free(req->captured_content_type);
@@ -333,4 +382,81 @@ void mock_httpd_last_registered_is_websocket(bool *flag)
         }
     }
     if (flag) *flag = false;
+}
+
+/* ---------- FW-18 WebSocket frame recv surface ---------- */
+
+esp_err_t mock_httpd_req_prime_ws_frame(mock_httpd_req_t *req, int type,
+                                        const char *payload, size_t len)
+{
+    if (!req) return ESP_ERR_INVALID_ARG;
+    if (req->ws_count >= MOCK_HTTPD_WS_PRIME_CAP) return ESP_ERR_NO_MEM;
+
+    mock_ws_primed_frame_t *f =
+        (mock_ws_primed_frame_t *)calloc(1, sizeof(*f));
+    if (!f) return ESP_ERR_NO_MEM;
+    if (payload && len > 0) {
+        f->payload = (uint8_t *)malloc(len);
+        if (!f->payload) {
+            free(f);
+            return ESP_ERR_NO_MEM;
+        }
+        memcpy(f->payload, payload, len);
+    }
+    f->type = type;
+    f->len  = len;
+
+    if (req->ws_tail) req->ws_tail->next = f;
+    else              req->ws_head       = f;
+    req->ws_tail = f;
+    req->ws_count++;
+    return ESP_OK;
+}
+
+static void ws_frames_pop_front(mock_httpd_req_t *req)
+{
+    mock_ws_primed_frame_t *f = (mock_ws_primed_frame_t *)req->ws_head;
+    if (!f) return;
+    req->ws_head = f->next;
+    if (!req->ws_head) req->ws_tail = NULL;
+    req->ws_count--;
+    free(f->payload);
+    free(f);
+}
+
+esp_err_t mock_httpd_ws_recv_frame(mock_httpd_req_t *req,
+                                   httpd_ws_frame_t *pkt, size_t max_len)
+{
+    if (!req || !pkt) return ESP_ERR_INVALID_ARG;
+
+    mock_ws_primed_frame_t *f = (mock_ws_primed_frame_t *)req->ws_head;
+    if (!f) {
+        pkt->len = 0;
+        return ESP_ERR_INVALID_STATE; /* nothing primed */
+    }
+
+    pkt->type = (httpd_ws_type_t)f->type;
+    pkt->final = true;
+    if (max_len == 0) {
+        /* Call 1 of the IDF pair: size/type probe. A zero-length
+         * frame completes on the probe (no payload phase). */
+        pkt->len = f->len - f->cursor;
+        if (pkt->len == 0) ws_frames_pop_front(req);
+        return ESP_OK;
+    }
+
+    /* Call 2: fill up to max_len from the front frame. */
+    if (!pkt->payload) return ESP_ERR_INVALID_ARG;
+    size_t want = f->len - f->cursor;
+    if (want > max_len) want = max_len;
+    memcpy(pkt->payload, f->payload + f->cursor, want);
+    f->cursor += want;
+    pkt->len   = want;
+    if (f->cursor >= f->len) ws_frames_pop_front(req);
+    return ESP_OK;
+}
+
+size_t mock_httpd_req_ws_frames_pending(const mock_httpd_req_t *req)
+{
+    return req ? (size_t)req->ws_count : 0;
 }

@@ -35,4 +35,8 @@
 #define httpd_ws_get_fd_info(hd, fd) \
     mock_httpd_ws_session_alive(fd)
 
+/* FW-18 — WebSocket frame receive (command-ingest RX seam). */
+#define httpd_ws_recv_frame(req, pkt, max_len) \
+    mock_httpd_ws_recv_frame(req, pkt, max_len)
+
 #endif  /* !MOCK_HTTP_USE_REAL */
