@@ -255,3 +255,27 @@ static void health_task_entry(void *arg)
     vTaskSuspend(NULL);
 }
 #endif
+
+/* ---- FW-16.3 bite-proof surface (Pass 13 builds ONLY; see
+ * health.h for the contract). Absent from production builds. ---- */
+#ifdef HEALTH_TEST_STUB_COUNT_WHILE_HEALTHY
+void health_green_path_tick_for_guard(void)
+{
+    /* One phantom failure per tick: bypass the episode latch by
+     * closing it first — a sweeping implementation would count
+     * every tick as a fresh failure (no wifi event involved). */
+    s_win.episode_open = false;
+    (void)health_window_record(&s_win, esp_timer_get_time(),
+                               s_window_us);
+}
+
+size_t health_guard_failure_count(void)
+{
+    return health_window_count(&s_win);
+}
+
+bool health_guard_should_recover(void)
+{
+    return health_window_should_recover(&s_win, s_threshold);
+}
+#endif

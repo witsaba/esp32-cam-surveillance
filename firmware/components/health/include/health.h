@@ -18,6 +18,9 @@
 
 #include "esp_err.h"
 
+#include <stdbool.h>
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -47,6 +50,22 @@ void health_persist_last_recovery_reason(void);
  * warn. NEVER alters boot flow or boot_status — safe to call right
  * after config_load succeeds. */
 void health_log_last_recovery_reason(void);
+
+/* ---- FW-16.3 bite-proof surface (Pass 13 builds ONLY) ----
+ * Compiled exclusively under -DHEALTH_TEST_STUB_COUNT_WHILE_HEALTHY=1
+ * (applied to BOTH this component's sources AND test_health_guard.c).
+ * The tick models a future always-sweeping miscounting
+ * implementation: each call records ONE phantom failure per tick —
+ * no wifi event, no episode latch. In a correct event-driven-only
+ * implementation nothing else advances the counter during healthy
+ * streaming, so the guard test's count==0 / !should_recover
+ * assertions fail with the literal "healthy-stream" — which is what
+ * runner Pass 13 greps for. Absent from production builds. */
+#ifdef HEALTH_TEST_STUB_COUNT_WHILE_HEALTHY
+void health_green_path_tick_for_guard(void);
+size_t health_guard_failure_count(void);
+bool health_guard_should_recover(void);
+#endif
 
 #ifdef __cplusplus
 }

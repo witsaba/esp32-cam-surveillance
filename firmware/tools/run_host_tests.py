@@ -630,6 +630,11 @@ ALL_TESTS = [
     "test_soft_recovery_threshold_sequence_persist_before_restart [fw-16.1][trigger][scenario-S1]",
     "test_soft_recovery_trigger_latched_idempotent_after_firing [fw-16.1][trigger][scenario-S2]",
     "test_soft_recovery_healthy_stream_60s_never_triggers [fw-16.3][green-path][scenario-G1]",
+    # FW-16.3 — healthy-stream bite-proof guard (Pass 13). Green-path
+    # branch compiles into Pass 1 (brings it to 170); the bite-proof
+    # branch compiles ONLY under -DHEALTH_TEST_STUB_COUNT_WHILE_
+    # HEALTHY=1 in Pass 13.
+    "test_health_guard_60s_healthy_stream_must_not_count [fw-16.3][guard][bite-proof]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -830,6 +835,11 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # observable before restart; one-shot-driven completion cb;
     # latched idempotence; 60 s event-driven-only green path.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_soft_recovery_trigger.c'),
+    # FW-16.3 — healthy-stream bite-proof guard. Green-path branch
+    # runs in Pass 1 (event-driven-only invariant); the bite-proof
+    # branch compiles only under the Pass 13 stub flag (see
+    # FW16_GUARD_TEST_FILES below).
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_health_guard.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
@@ -928,6 +938,33 @@ FW14_GUARD_TEST_FILES = [
 # message so Pass 12 of run_host_tests.py can grep for it.
 WS_CLOSE_GUARD_BITE_PROOF_KEYWORD = "close_no_reconnect"
 
+# FW-16.3 — Pass 13 stub build includes ONLY the FW-16.3 health
+# guard file. The build defines
+# -DHEALTH_TEST_STUB_COUNT_WHILE_HEALTHY=1, which compiles the
+# guard-only tick health_green_path_tick_for_guard() INTO the
+# production health sources; each tick records ONE phantom failure
+# with no wifi event and no episode latch (a model of a future
+# always-sweeping miscounting implementation). 60 ticks at 1 Hz
+# exceed the default threshold of 30, so the guard test fails with
+# the literal "healthy-stream" in its message. Mirrors the Pass 9-12
+# pattern exactly: the same compile flag is applied to BOTH the
+# production sources AND the test file. The green-path assertions
+# in test_health_guard.c are selected by `#ifndef` so the prod build
+# never sees the tick calls.
+FW16_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_health_guard.c'),
+]
+
+# Pass-13 keyword + bite-proof test marker. The literal substring
+# "healthy-stream" must appear in the bite-proof's failure message
+# so Pass 13 of run_host_tests.py can grep for it.
+HEALTH_BITE_PROOF_KEYWORD = "healthy-stream"
+
+FW16_BITE_PROOF_TEST_NAME = (
+    "test_health_guard_60s_healthy_stream_must_not_count "
+    "[fw-16.3][guard][bite-proof]"
+)
+
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
 # green-path test in that file is guarded by `#ifndef
 # BOOT_TEST_STUB_FLIP_DECISION` so it auto-excludes itself; what
@@ -996,7 +1033,54 @@ FW07_4_GUARD_TEST_FILES = [
 ]
 
 
+def _pass16_bite_proof(workdir):
+    """Pass 13 — FW-16.3 healthy-stream bite-proof (shared by the
+    full run and --stub mode). Builds test_health_guard.c AND the
+    production sources with -DHEALTH_TEST_STUB_COUNT_WHILE_HEALTHY=1
+    and expects EXACTLY ONE failing test whose output names the
+    healthy-stream invariant."""
+    print()
+    print("=== Pass 13: FW-16.3 stub build (HEALTH_TEST_STUB_COUNT_WHILE_HEALTHY, guard file) ===")
+    fw16_bin = _build('fw16_tests_stub',
+                      ['-DHEALTH_TEST_STUB_COUNT_WHILE_HEALTHY=1'],
+                      FW16_GUARD_TEST_FILES, workdir)
+    fw16_rc, fw16_out = _run_binary(fw16_bin)
+    if fw16_rc == 0:
+        sys.exit(f"FAIL: FW-16.3 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The stub tick didn't "
+                 f"corrupt the healthy-stream invariant. "
+                 f"Output:\n{fw16_out}")
+    if HEALTH_BITE_PROOF_KEYWORD not in fw16_out:
+        sys.exit(f"FAIL: FW-16.3 stub build output does not "
+                 f"contain the literal '{HEALTH_BITE_PROOF_KEYWORD}':\n{fw16_out}")
+    if "test_health_guard_60s_healthy_stream_must_not_count" not in fw16_out:
+        sys.exit(f"FAIL: FW-16.3 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw16_out}")
+    # Exactly one failure (the bite-proof) — a second failing
+    # assertion would mean the stub corrupts MORE than the
+    # counting invariant.
+    fail_count = sum(1 for line in fw16_out.splitlines() if line.startswith("FAIL ["))
+    if fail_count != 1:
+        sys.exit(f"FAIL: FW-16.3 stub build should have exactly 1 failure "
+                 f"(healthy-stream bite-proof); got {fail_count}. "
+                 f"Output:\n{fw16_out}")
+    print(f"OK: FW-16.3 stub build → guard tripped on "
+          f"'{HEALTH_BITE_PROOF_KEYWORD}' invariant as expected "
+          f"(test failed with rc={fw16_rc}).")
+
+
 def main():
+    # --stub: run ONLY the FW-16.3 bite-proof pass (Pass 13). The
+    # production suite is untouched; exit code stays 0 when the
+    # single expected healthy-stream failure is observed.
+    if '--stub' in sys.argv[1:]:
+        workdir = tempfile.mkdtemp(prefix='fw02-host-tests-stub-')
+        print("FW-02 host test runner — STUB MODE (--stub): Pass 13 only")
+        _pass16_bite_proof(workdir)
+        print()
+        print("=== stub mode OK: single expected healthy-stream bite-proof failure observed ===")
+        return
+
     workdir = tempfile.mkdtemp(prefix='fw02-host-tests-')
     print(f"FW-02 host test runner")
     print(f"  project_dir: {PROJECT_DIR}")
@@ -1427,6 +1511,9 @@ def main():
     print(f"OK: FW-14 stub build → guard tripped on "
           f"'{WS_CLOSE_GUARD_BITE_PROOF_KEYWORD}' invariant as expected "
           f"(test failed with rc={fw14_rc}).")
+
+    # ----- Pass 13: FW-16.3 healthy-stream bite-proof stub build -----
+    _pass16_bite_proof(workdir)
 
     print()
     print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 + FW-10 + FW-11 + FW-13 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")
