@@ -38,6 +38,11 @@ menu "ESP32-CAM Surveillance Firmware"
         range 1 10
         default 1
 
+    config FIRMWARE_STREAM_FPS_MAX
+        int "Hard ceiling on stream fps"
+        range 1 30
+        default 15
+
     config FIRMWARE_WS_RECONNECT_INITIAL_MS
         int "Reconnect delay after the first failure (ms)"
         range 500 30000

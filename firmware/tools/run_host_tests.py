@@ -216,6 +216,16 @@ def _common_cflags(extra_defines):
         # .projbuild:51-59; sdkconfig.defaults carries both).
         '-DCONFIG_FIRMWARE_SOFT_RECOVERY_FAILS=30',
         '-DCONFIG_FIRMWARE_SOFT_RECOVERY_WINDOW_MIN=10',
+        # FW-19 — capture gate Kconfig mirrors (design D8 triple
+        # mirror). The gated TU references CONFIG_FIRMWARE_STREAM_
+        # {FPS,FPS_MIN,FPS_MAX}; the host has no sdkconfig.h so the
+        # runner mirrors firmware/sdkconfig.defaults:34-36 +
+        # main/Kconfig.projbuild:31-40 (FPS_MAX=15 ratified ceiling,
+        # ruling 2). Values identical to capture.h's #ifndef
+        # fallbacks — no redefinition conflicts.
+        '-DCONFIG_FIRMWARE_STREAM_FPS=5',
+        '-DCONFIG_FIRMWARE_STREAM_FPS_MIN=1',
+        '-DCONFIG_FIRMWARE_STREAM_FPS_MAX=15',
     ]
     flags.extend(extra_defines)
     return flags
