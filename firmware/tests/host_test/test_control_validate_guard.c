@@ -1,22 +1,18 @@
 /* test_control_validate_guard.c — FW-18 U4 validate-before-setter
- * bite-proof guard (firmware-control-dispatcher design D8 #3972;
- * folded into FW-19 U4 / Pass 14, ruling R3).
+ * bite-proof guard (control-dispatcher design D8 #3972; folded into
+ * FW-19 U4 / Pass 14, ruling R3).
  *
- * This file compiles in TWO builds:
+ * TWO builds share this file (#ifdef selects the body):
  *
- *   - PRODUCTION (Pass 1, no flags): pins the validated pipeline —
- *     a garbage body classifies bad_json and NEVER reaches a
- *     registered handler slot.
+ *   - PRODUCTION (Pass 1): pins the validated pipeline — garbage
+ *     classifies bad_json and NEVER reaches a registered handler.
  *
- *   - STUB BUILD (Pass 14, -DCONTROL_TEST_STUB_SKIP_VALIDATION=1,
- *     applied to BOTH control_route.c AND this file): compiles the
- *     parse/classify validation gate OUT of control_frame_process,
- *     so the registered setter receives the RAW body regardless of
- *     validity — a model of the reference regression where malformed
- *     input flowed straight into setters. The probe then records the
- *     call and this test MUST FAIL with the literal "skip_validation"
- *     in the message. Pass 14 greps for exactly that single expected
- *     failure.
+ *   - STUB (Pass 14, -DCONTROL_TEST_STUB_SKIP_VALIDATION=1 on BOTH
+ *     control_route.c and this file): compiles the validation gate
+ *     OUT so the setter receives the RAW body — the reference
+ *     regression model. This test MUST then FAIL with the literal
+ *     "skip_validation" in the message; Pass 14 greps for exactly
+ *     that single expected failure.
  */
 
 #include <stddef.h>
@@ -66,9 +62,8 @@ TEST_CASE(
     (void)control_frame_process(k_garbage, sizeof(k_garbage) - 1,
                                 buf, sizeof(buf));
 
-    /* With the validation gate compiled out, the raw garbage body
-     * reaches the registered setter slot. The literal
-     * "skip_validation" is what Pass 14 greps for. */
+    /* Raw garbage reached the setter slot; the literal below is
+     * what Pass 14 greps for. */
     TEST_ASSERT_EQUAL_INT_MESSAGE(
         0, s_probe_calls,
         "skip_validation invariant violated: malformed body reached "

@@ -1103,43 +1103,36 @@ FW16_BITE_PROOF_TEST_NAME = (
 )
 
 # FW-18 U4 (folded into FW-19 U4) — Pass 14 stub build includes ONLY
-# the validate-before-setter guard file. The build defines
-# -DCONTROL_TEST_STUB_SKIP_VALIDATION=1, which compiles the parse +
-# classify validation gate OUT of control_route.c's
-# control_frame_process so the registered handler slot receives the
-# RAW body regardless of validity (a model of the reference sscanf
-# regression). The bite-proof test asserts the probe recorded ZERO
-# calls; under the stub it fails with the literal "skip_validation".
-# Mirrors Pass 13 exactly: the same compile flag is applied to BOTH
-# the production source (control_route.c) AND the test file.
+# the validate-before-setter guard file. -DCONTROL_TEST_STUB_SKIP_
+# VALIDATION=1 compiles the parse/classify gate OUT of
+# control_route.c's control_frame_process so the registered handler
+# slot receives the RAW body regardless of validity (the reference
+# sscanf regression); the bite-proof then fails with the literal
+# "skip_validation". Same flag goes to BOTH the production source
+# AND the test file, mirroring Pass 13 exactly.
 FW18_CONTROL_GUARD_TEST_FILES = [
     os.path.join(PROJECT_DIR, 'tests', 'host_test',
                  'test_control_validate_guard.c'),
 ]
 
-# Pass-14 keyword + bite-proof test marker. The literal substring
-# "skip_validation" must appear in the bite-proof's failure message
-# so Pass 14 of run_host_tests.py can grep for it.
+# Pass-14 keyword + bite-proof test marker: must appear in the
+# bite-proof's failure message so Pass 14 can grep for it.
 CONTROL_BITE_PROOF_KEYWORD = "skip_validation"
 
 # FW-19.5 — Pass 15 stub build includes ONLY the capture WS-state
-# guard file. The build defines -DCAPTURE_TEST_STUB_IGNORE_WS_STATE=1
-# (doc :1760 "stubbed to ignore the WS state"), which arms a host-only
-# tripwire INSIDE capture_gated_iteration: if an acquisition runs
-# while ws_server_viewer_active() reads false, TEST_FAIL_MESSAGE
-# fires with the verbatim invariant below. The guard test drives one
-# open-gate tick with the viewer DISCONNECTED — a model of a build
-# where the WS-state dependency was ignored. Mirrors Pass 14 exactly:
-# the same compile flag is applied to BOTH the production source
-# (capture.c) AND the test file.
+# guard file. -DCAPTURE_TEST_STUB_IGNORE_WS_STATE=1 (doc :1760
+# "stubbed to ignore the WS state") arms a tripwire INSIDE
+# capture_gated_iteration that fires iff an acquisition runs while
+# ws_server_viewer_active() reads false; the guard test drives one
+# open-gate tick with the viewer DISCONNECTED. Same flag goes to
+# BOTH the production source AND the test file, mirroring Pass 14.
 FW19_CAPTURE_WS_GUARD_TEST_FILES = [
     os.path.join(PROJECT_DIR, 'tests', 'host_test',
                  'test_capture_ws_guard.c'),
 ]
 
 # Pass-15 keyword + bite-proof test marker — the VERBATIM invariant
-# message that must appear in the tripwire's TEST_FAIL_MESSAGE so
-# Pass 15 of run_host_tests.py can grep for it.
+# message the tripwire's TEST_FAIL_MESSAGE must carry.
 CAPTURE_WS_BITE_PROOF_KEYWORD = (
     "capture MUST NOT run while the WS viewer is disconnected."
 )
@@ -1250,10 +1243,9 @@ def _pass16_bite_proof(workdir):
 
 def _pass14_bite_proof(workdir):
     """Pass 14 — FW-18 U4 validate-before-setter bite-proof (shared
-    by the full run and --stub mode). Builds test_control_validate_
-    guard.c AND control_route.c with -DCONTROL_TEST_STUB_SKIP_
-    VALIDATION=1 and expects EXACTLY ONE failing test whose output
-    names the skip-validation invariant."""
+    by the full run and --stub mode). Builds with -DCONTROL_TEST_
+    STUB_SKIP_VALIDATION=1; expects EXACTLY ONE failing test naming
+    the skip-validation invariant."""
     print()
     print("=== Pass 14: FW-18 U4 stub build "
           "(CONTROL_TEST_STUB_SKIP_VALIDATION, guard file) ===")
@@ -1288,10 +1280,10 @@ def _pass14_bite_proof(workdir):
 
 def _pass15_bite_proof(workdir):
     """Pass 15 — FW-19.5 capture WS-state deep-defense bite-proof
-    (shared by the full run and --stub mode). Builds test_capture_ws_
-    guard.c AND capture.c with -DCAPTURE_TEST_STUB_IGNORE_WS_STATE=1
-    and expects EXACTLY ONE failing test whose output carries the
-    verbatim disconnected-viewer invariant."""
+    (shared by the full run and --stub mode). Builds with
+    -DCAPTURE_TEST_STUB_IGNORE_WS_STATE=1; expects EXACTLY ONE
+    failing test carrying the verbatim disconnected-viewer
+    invariant."""
     print()
     print("=== Pass 15: FW-19.5 stub build "
           "(CAPTURE_TEST_STUB_IGNORE_WS_STATE, guard file) ===")

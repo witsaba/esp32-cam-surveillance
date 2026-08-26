@@ -1,20 +1,18 @@
 /* test_capture_ws_guard.c — FW-19.5 deep-defense bite-proof guard
  * (design D7/D8; folded into FW-19 U4 / Pass 15).
  *
- * This file compiles in TWO builds:
+ * TWO builds share this file (#ifdef selects the body):
  *
- *   - PRODUCTION (Pass 1, no flags): pins the viewer-state linkage —
- *     with NO active WS viewer and no stream.on ever issued, the
- *     gate stays STOPPED and gated ticks never run an acquisition.
+ *   - PRODUCTION (Pass 1): pins the viewer-state linkage — no WS
+ *     viewer and no stream.on ⇒ gate stays STOPPED, ticks never run.
  *
- *   - STUB BUILD (Pass 15, -DCAPTURE_TEST_STUB_IGNORE_WS_STATE=1,
- *     applied to BOTH capture.c AND this file): arms the host-only
- *     tripwire INSIDE capture_gated_iteration and drives one open-
- *     gate tick while the real viewer state reads DISCONNECTED — a
- *     model of a build where the WS-state dependency was ignored.
- *     The tripwire MUST fire with the verbatim message "capture
- *     MUST NOT run while the WS viewer is disconnected." Pass 15
- *     greps for exactly that single expected failure.
+ *   - STUB (Pass 15, -DCAPTURE_TEST_STUB_IGNORE_WS_STATE=1 on BOTH
+ *     capture.c and this file): arms the tripwire INSIDE
+ *     capture_gated_iteration and drives one open-gate tick while
+ *     the real viewer state reads DISCONNECTED — a build where the
+ *     WS-state dependency was ignored. The tripwire MUST fire with
+ *     the verbatim message "capture MUST NOT run while the WS viewer
+ *     is disconnected."; Pass 15 greps for that single failure.
  */
 
 #include <stdbool.h>
