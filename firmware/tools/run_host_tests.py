@@ -51,6 +51,17 @@ mock surface. Ten compile passes:
            MUST FAIL with 'close_no_reconnect' in the message.
            Wired in the FW-14 apply cycle.
 
+  Pass 14 — stub build (-DCONTROL_TEST_STUB_SKIP_VALIDATION): the
+           FW-18 U4 validate-before-setter guard's bite-proof
+           MUST FAIL with 'skip_validation' in the message.
+           Folded into the FW-19 U4 apply cycle (R3).
+
+  Pass 15 — stub build (-DCAPTURE_TEST_STUB_IGNORE_WS_STATE): the
+           FW-19.5 deep-defense guard's bite-proof MUST FAIL with
+           the verbatim 'capture MUST NOT run while the WS viewer
+           is disconnected.' message. Wired in the FW-19 U4
+           apply cycle.
+
 Exits 0 only when all passes satisfy their expected outcomes.
 Exits 1 on any unexpected pass/fail pattern (regression in either
 direction).
@@ -205,6 +216,16 @@ def _common_cflags(extra_defines):
         # .projbuild:51-59; sdkconfig.defaults carries both).
         '-DCONFIG_FIRMWARE_SOFT_RECOVERY_FAILS=30',
         '-DCONFIG_FIRMWARE_SOFT_RECOVERY_WINDOW_MIN=10',
+        # FW-19 — capture gate Kconfig mirrors (design D8 triple
+        # mirror). The gated TU references CONFIG_FIRMWARE_STREAM_
+        # {FPS,FPS_MIN,FPS_MAX}; the host has no sdkconfig.h so the
+        # runner mirrors firmware/sdkconfig.defaults:34-36 +
+        # main/Kconfig.projbuild:31-40 (FPS_MAX=15 ratified ceiling,
+        # ruling 2). Values identical to capture.h's #ifndef
+        # fallbacks — no redefinition conflicts.
+        '-DCONFIG_FIRMWARE_STREAM_FPS=5',
+        '-DCONFIG_FIRMWARE_STREAM_FPS_MIN=1',
+        '-DCONFIG_FIRMWARE_STREAM_FPS_MAX=15',
     ]
     flags.extend(extra_defines)
     return flags
@@ -270,6 +291,9 @@ def _build(basename, extra_defines, test_files, workdir):
         # task shell join in U2 as they land).
         os.path.join(PROJECT_DIR, 'components', 'control', 'control_route.c'),
         os.path.join(PROJECT_DIR, 'components', 'control', 'control.c'),
+        # FW-19 — stream command handler TU (dispatch + acks +
+        # capture-gate wiring; registers CONTROL_CMD_STREAM).
+        os.path.join(PROJECT_DIR, 'components', 'control', 'stream_cmd.c'),
         # FW-13 — identity component (shared MAC + NVS identity).
         os.path.join(PROJECT_DIR, 'components', 'identity', 'identity.c'),
         # FW-13 — ws component. FW-16 server mode: ws_server.c
@@ -520,6 +544,34 @@ ALL_TESTS = [
     "test_fw11_2_full_queue_drops_frame_and_returns_buffer [fw-11.2][scenario-S3]",
     "test_fw11_2_one_hundred_frames_no_stall [fw-11.2][scenario-S4]",
     "test_fw11_2_getters_return_counter_values [fw-11.2][getters]",
+    # FW-19 U1 — default-stopped stream gate (Boot-no-frames).
+    "test_fw19_5_fresh_boot_gate_stopped_zero_acquisitions [fw-19.5][scenario-S6]",
+    # FW-19 U1 — gated iteration: run+pace, period matrix,
+    # stop-latch-once, clamp matrix, lifecycle.
+    "test_fw19_1_gate_open_runs_frame_and_paces_period [fw-19.1][scenario-S7]",
+    "test_fw19_1_period_matrix_exact_ticks [fw-19.1][scenario-S8][matrix]",
+    "test_fw19_2_stop_word_latches_once_then_stays_quiet [fw-19.2][scenario-S9]",
+    "test_fw19_3_fps_clamp_bounds_matrix [fw-19.3][scenario-S10][matrix]",
+    "test_fw19_5_gate_lifecycle_start_stop_idempotent [fw-19.5][scenario-S11]",
+    # FW-19 U2 — stream command handler: registration retires
+    # not_implemented for `stream`, ack shapes (default/explicit/
+    # clamp fps echo), bad_field taxonomy with lossless id,
+    # no_viewer pre-start guard, D3 ack-before-frame ordering pin,
+    # stop halt within one simulated second.
+    "test_stream_registered_dispatches_stop_ack_no_not_implemented [fw-19][scenario-Registered]",
+    "test_stream_start_absent_fps_echoes_config_default [fw-19.1]",
+    "test_stream_start_explicit_fps_echoed_as_applied [fw-19.1]",
+    "test_stream_fps_range_clamps_silently_99_to_15_and_0_to_1 [fw-19.3][ruling-6]",
+    "test_stream_bad_field_wrong_typed_on_or_fps_id_lossless [fw-19.4][ruling-6]",
+    "test_stream_start_without_viewer_refused_gate_stays_stopped [fw-19.5][ruling-7]",
+    "test_stream_ack_precedes_frame_data_ring_order [fw-19.2][design-d3][ordering]",
+    "test_stream_stop_halts_within_one_simulated_second [fw-19.2][ruling-1][ruling-4]",
+    # FW-19 U3 — mid-stream disconnect auto-stop (viewer_clear →
+    # capture_auto_stop_request; design D5, ruling 4).
+    "test_fw19_midstream_disconnect_auto_stops_capture [fw-19][server][scenario-S5]",
+    "test_fw19_disconnect_while_stopped_never_opens_gate [fw-19][server][scenario-S6]",
+    # FW-19 U3 — snapshot 503-while-stopped pin (ruling 5).
+    "test_fw19_snapshot_503_no_frame_while_gate_stopped [fw-19][snapshot][scenario-S4]",
     # FW-11.3 — single-owner guard. Green path on production
     # build; bite-proof runs under Pass 10 stub.
     "test_fw11_3_capture_task_start_records_supervision [fw-11.3][scenario-S1][green]",
@@ -646,7 +698,7 @@ ALL_TESTS = [
     # allow-list → not_implemented, unknown + lossless id echo
     # (string/numeric), bad_json taxonomy ± salvage both branches,
     # D9 id omission, validate-before-setter prod pin, registry seam.
-    "test_route_six_commands_all_not_implemented [fw-18.1][scenario-outline]",
+    "test_route_allow_list_minus_stream_all_not_implemented [fw-18.1][scenario-outline][fw-19-flip]",
     "test_route_unknown_command_rejected_with_string_echo [fw-18.3]",
     "test_route_numeric_id_preserved_unquoted [fw-18.3][ruling-4]",
     "test_route_garbage_bad_json_without_id [fw-18.4]",
@@ -674,6 +726,18 @@ ALL_TESTS = [
     "test_ingest_oversize_dropped_same_counter_stream_synced [fw-18.3][d5]",
     # Bugfix slice — viewer-sink TX serialization guard.
     "test_ws_tx_lock_no_concurrent_sink_dispatch [fw-tx-lock]",
+    # FW-18 U4 (folded into FW-19 U4) — validate-before-setter
+    # bite-proof guard. Green branch runs in Pass 1 (pins the
+    # validated pipeline); the SAME test name compiles under the
+    # Pass 14 stub flag where it MUST FAIL (skip_validation).
+    "test_guard_skip_validation_malformed_body_must_not_reach_setter "
+    "[fw-18.4][guard][bite-proof]",
+    # FW-19.5 — deep-defense WS-state guard. Green branch runs in
+    # Pass 1 (viewer-state linkage pin); the SAME test name compiles
+    # under the Pass 15 stub flag where it MUST FAIL (verbatim
+    # disconnected-viewer message).
+    "test_guard_capture_never_runs_while_ws_viewer_disconnected "
+    "[fw-19.5][guard][bite-proof]",
 ]
 
 # The FW-03.4 bite-proof test name. The host runner's Pass 3
@@ -884,6 +948,12 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # taxonomy ± salvage scanner both branches, D9 id omission,
     # validate-before-setter prod pin, registry dispatch seam.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_control_route.c'),
+    # FW-19 — stream command handler: registration retires
+    # not_implemented for `stream`, ruling-1 ack shapes (default/
+    # explicit/clamp fps echo), bad_field taxonomy + lossless id,
+    # no_viewer pre-start guard (ruling 7), D3 ack-before-frame
+    # ordering pin, stop halt within one simulated second.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_stream_cmd.c'),
     # FW-18 — bounded ring + task shell: busy-consumer non-stall,
     # drop-newest + counter + FIFO + no-wire-token (ruling #3966.2),
     # bounded receive tick.
@@ -895,6 +965,18 @@ ALL_TEST_FILES = GUARD_TEST_FILES + [
     # Bugfix slice — TX serialization guard: two rendezvous-released
     # threads hammer the ws.c dispatch seam; overlap must be ZERO.
     os.path.join(PROJECT_DIR, 'tests', 'host_test', 'test_ws_tx_lock.c'),
+    # FW-18 U4 (folded into FW-19 U4) — validate-before-setter guard:
+    # green branch in Pass 1, bite-proof branch only under the Pass 14
+    # stub flag (see FW18_CONTROL_GUARD_TEST_FILES below). The #ifdef
+    # inside the file selects which body each build compiles.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test',
+                 'test_control_validate_guard.c'),
+    # FW-19.5 — capture WS-state guard: green branch in Pass 1,
+    # bite-proof branch only under the Pass 15 stub flag (see
+    # FW19_CAPTURE_WS_GUARD_TEST_FILES below). The #ifdef inside the
+    # file selects which body each build compiles.
+    os.path.join(PROJECT_DIR, 'tests', 'host_test',
+                 'test_capture_ws_guard.c'),
 ]
 
 # FW-08.3 — Pass 7 stub build includes ONLY the FW-08.3 guard
@@ -1020,6 +1102,41 @@ FW16_BITE_PROOF_TEST_NAME = (
     "[fw-16.3][guard][bite-proof]"
 )
 
+# FW-18 U4 (folded into FW-19 U4) — Pass 14 stub build includes ONLY
+# the validate-before-setter guard file. -DCONTROL_TEST_STUB_SKIP_
+# VALIDATION=1 compiles the parse/classify gate OUT of
+# control_route.c's control_frame_process so the registered handler
+# slot receives the RAW body regardless of validity (the reference
+# sscanf regression); the bite-proof then fails with the literal
+# "skip_validation". Same flag goes to BOTH the production source
+# AND the test file, mirroring Pass 13 exactly.
+FW18_CONTROL_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'host_test',
+                 'test_control_validate_guard.c'),
+]
+
+# Pass-14 keyword + bite-proof test marker: must appear in the
+# bite-proof's failure message so Pass 14 can grep for it.
+CONTROL_BITE_PROOF_KEYWORD = "skip_validation"
+
+# FW-19.5 — Pass 15 stub build includes ONLY the capture WS-state
+# guard file. -DCAPTURE_TEST_STUB_IGNORE_WS_STATE=1 (doc :1760
+# "stubbed to ignore the WS state") arms a tripwire INSIDE
+# capture_gated_iteration that fires iff an acquisition runs while
+# ws_server_viewer_active() reads false; the guard test drives one
+# open-gate tick with the viewer DISCONNECTED. Same flag goes to
+# BOTH the production source AND the test file, mirroring Pass 14.
+FW19_CAPTURE_WS_GUARD_TEST_FILES = [
+    os.path.join(PROJECT_DIR, 'tests', 'host_test',
+                 'test_capture_ws_guard.c'),
+]
+
+# Pass-15 keyword + bite-proof test marker — the VERBATIM invariant
+# message the tripwire's TEST_FAIL_MESSAGE must carry.
+CAPTURE_WS_BITE_PROOF_KEYWORD = (
+    "capture MUST NOT run while the WS viewer is disconnected."
+)
+
 # Pass-3 stub build includes ONLY the FW-03.4 bite-proof file. The
 # green-path test in that file is guarded by `#ifndef
 # BOOT_TEST_STUB_FLIP_DECISION` so it auto-excludes itself; what
@@ -1124,16 +1241,94 @@ def _pass16_bite_proof(workdir):
           f"(test failed with rc={fw16_rc}).")
 
 
+def _pass14_bite_proof(workdir):
+    """Pass 14 — FW-18 U4 validate-before-setter bite-proof (shared
+    by the full run and --stub mode). Builds with -DCONTROL_TEST_
+    STUB_SKIP_VALIDATION=1; expects EXACTLY ONE failing test naming
+    the skip-validation invariant."""
+    print()
+    print("=== Pass 14: FW-18 U4 stub build "
+          "(CONTROL_TEST_STUB_SKIP_VALIDATION, guard file) ===")
+    fw18_bin = _build('fw18_tests_stub',
+                      ['-DCONTROL_TEST_STUB_SKIP_VALIDATION=1'],
+                      FW18_CONTROL_GUARD_TEST_FILES, workdir)
+    fw18_rc, fw18_out = _run_binary(fw18_bin)
+    if fw18_rc == 0:
+        sys.exit(f"FAIL: FW-18 U4 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The stub gate didn't "
+                 f"route the malformed body into the setter slot. "
+                 f"Output:\n{fw18_out}")
+    if CONTROL_BITE_PROOF_KEYWORD not in fw18_out:
+        sys.exit(f"FAIL: FW-18 U4 stub build output does not contain "
+                 f"the literal '{CONTROL_BITE_PROOF_KEYWORD}':\n{fw18_out}")
+    if ("test_guard_skip_validation_malformed_body_must_not_reach_setter"
+            not in fw18_out):
+        sys.exit(f"FAIL: FW-18 U4 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw18_out}")
+    # Exactly one failure (the bite-proof) — a second failing
+    # assertion would mean the stub corrupts MORE than validation.
+    fail_count = sum(1 for line in fw18_out.splitlines()
+                     if line.startswith("FAIL ["))
+    if fail_count != 1:
+        sys.exit(f"FAIL: FW-18 U4 stub build should have exactly 1 "
+                 f"failure (skip_validation bite-proof); got "
+                 f"{fail_count}. Output:\n{fw18_out}")
+    print(f"OK: FW-18 U4 stub build → guard tripped on "
+          f"'{CONTROL_BITE_PROOF_KEYWORD}' invariant as expected "
+          f"(test failed with rc={fw18_rc}).")
+
+
+def _pass15_bite_proof(workdir):
+    """Pass 15 — FW-19.5 capture WS-state deep-defense bite-proof
+    (shared by the full run and --stub mode). Builds with
+    -DCAPTURE_TEST_STUB_IGNORE_WS_STATE=1; expects EXACTLY ONE
+    failing test carrying the verbatim disconnected-viewer
+    invariant."""
+    print()
+    print("=== Pass 15: FW-19.5 stub build "
+          "(CAPTURE_TEST_STUB_IGNORE_WS_STATE, guard file) ===")
+    fw19_bin = _build('fw19_tests_stub',
+                      ['-DCAPTURE_TEST_STUB_IGNORE_WS_STATE=1'],
+                      FW19_CAPTURE_WS_GUARD_TEST_FILES, workdir)
+    fw19_rc, fw19_out = _run_binary(fw19_bin)
+    if fw19_rc == 0:
+        sys.exit(f"FAIL: FW-19.5 stub build returned 0; expected "
+                 f"the bite-proof guard to trip. The tripwire didn't "
+                 f"catch the open-gate tick while the viewer was "
+                 f"disconnected. Output:\n{fw19_out}")
+    if CAPTURE_WS_BITE_PROOF_KEYWORD not in fw19_out:
+        sys.exit(f"FAIL: FW-19.5 stub build output does not contain "
+                 f"the verbatim message "
+                 f"'{CAPTURE_WS_BITE_PROOF_KEYWORD}':\n{fw19_out}")
+    if ("test_guard_capture_never_runs_while_ws_viewer_disconnected"
+            not in fw19_out):
+        sys.exit(f"FAIL: FW-19.5 stub build did not run the "
+                 f"bite-proof test. Output:\n{fw19_out}")
+    # Exactly one failure (the bite-proof) — a second failing
+    # assertion would mean the stub corrupts MORE than the WS-state
+    # gating.
+    fail_count = sum(1 for line in fw19_out.splitlines()
+                     if line.startswith("FAIL ["))
+    if fail_count != 1:
+        sys.exit(f"FAIL: FW-19.5 stub build should have exactly 1 "
+                 f"failure (disconnected-viewer bite-proof); got "
+                 f"{fail_count}. Output:\n{fw19_out}")
+    print(f"OK: FW-19.5 stub build → guard tripped on the verbatim "
+          f"invariant as expected (test failed with rc={fw19_rc}).")
+
+
 def main():
     # --stub: run ONLY the FW-16.3 bite-proof pass (Pass 13). The
     # production suite is untouched; exit code stays 0 when the
     # single expected healthy-stream failure is observed.
     if '--stub' in sys.argv[1:]:
         workdir = tempfile.mkdtemp(prefix='fw02-host-tests-stub-')
-        print("FW-02 host test runner — STUB MODE (--stub): Pass 13 only")
+        print("FW-02 host test runner — STUB MODE (--stub): Passes 13–15")
         _pass16_bite_proof(workdir)
+        _pass14_bite_proof(workdir)
+        _pass15_bite_proof(workdir)
         print()
-        print("=== stub mode OK: single expected healthy-stream bite-proof failure observed ===")
+        print("=== stub mode OK: expected bite-proof failures observed ===")
         return
 
     workdir = tempfile.mkdtemp(prefix='fw02-host-tests-')
@@ -1569,6 +1764,12 @@ def main():
 
     # ----- Pass 13: FW-16.3 healthy-stream bite-proof stub build -----
     _pass16_bite_proof(workdir)
+
+    # ----- Pass 14: FW-18 U4 validate-before-setter stub build -----
+    _pass14_bite_proof(workdir)
+
+    # ----- Pass 15: FW-19.5 capture WS-state stub build -----
+    _pass15_bite_proof(workdir)
 
     print()
     print("=== FW-02 + FW-03 + FW-05 + FW-06 + FW-07 + FW-08 + FW-10 + FW-11 + FW-13 host tests: ALL PASS (production) + bite-proofs FAIL (stubs) ===")

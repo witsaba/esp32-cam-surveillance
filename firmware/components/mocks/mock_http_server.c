@@ -56,6 +56,13 @@ static size_t               g_ws_ring_count = 0;
 static int g_ws_dead_fds[MOCK_HTTPD_WS_DEAD_CAP];
 static int g_ws_dead_count = 0;
 
+/* FW-19 U3 — forced send-failure injection: when set, async WS
+ * sends return ESP_FAIL even though the fd probe still reports
+ * the session ALIVE. This reproduces the device mid-send death
+ * race (probe passes, socket dies, write fails) that drives
+ * ws_server's viewer_clear("send failed") path (design D6). */
+static bool g_ws_fail_sends = false;
+
 static bool ws_fd_marked_dead(int fd)
 {
     for (int i = 0; i < g_ws_dead_count; ++i) {
@@ -108,6 +115,7 @@ void mock_httpd_reset(void)
     g_stop_count     = 0;
     g_ws_ring_count  = 0;
     g_ws_dead_count  = 0;
+    g_ws_fail_sends  = false;
     g_current_server = &g_sentinel_handle;
     /* FW-18 — drop primed WS frames on requests a test left open
      * (the requests themselves stay test-owned). */
@@ -306,8 +314,17 @@ esp_err_t mock_httpd_resp_sendstr(httpd_req_t *req, const char *str)
 esp_err_t mock_httpd_ws_send_frame_async(httpd_handle_t hd, int fd,
                                           httpd_ws_frame_t *pkt)
 {
-    (void)hd; (void)fd;
+    (void)hd;
     if (!pkt || !pkt->payload || pkt->len == 0) return ESP_ERR_INVALID_ARG;
+
+    /* FW-19 U3: a send targeting a session killed via
+     * mock_httpd_ws_kill_session() FAILS, mirroring the real
+     * httpd writing to a dead socket. The forced-failure flag
+     * (below) reproduces the mid-send death race instead — the
+     * fd probe still says ALIVE while the write fails, which is
+     * what makes viewer_clear("send failed") reachable on host
+     * exactly as on device (design D6). */
+    if (g_ws_fail_sends || ws_fd_marked_dead(fd)) return ESP_FAIL;
 
     if (g_ws_ring_count < MOCK_HTTPD_WS_RING_CAP) {
         mock_ws_frame_slot_t *slot = &g_ws_ring[g_ws_ring_count++];
@@ -370,6 +387,14 @@ void mock_httpd_ws_kill_session(int fd)
         g_ws_dead_count < MOCK_HTTPD_WS_DEAD_CAP) {
         g_ws_dead_fds[g_ws_dead_count++] = fd;
     }
+}
+
+/* FW-19 U3 — arm/disarm forced async-send failures. The fd probe
+ * is UNAFFECTED: sessions stay ALIVE while writes fail, matching
+ * the device mid-send death race. Cleared by mock_httpd_reset. */
+void mock_httpd_ws_fail_sends_set(bool fail)
+{
+    g_ws_fail_sends = fail;
 }
 
 void mock_httpd_last_registered_is_websocket(bool *flag)

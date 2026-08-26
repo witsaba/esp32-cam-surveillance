@@ -17,6 +17,12 @@
  *        esp_camera_fb_return called exactly once.
  *   S2 — empty queue → 503 status, JSON error body, no fb_return.
  *   S3 — IP-up listener registers BOTH /whoami and /snapshot.
+ *   S4 (FW-19, ruling 5) — freshly booted device with the stream
+ *        gate STOPPED (no viewer ever issued stream.on):
+ *        /snapshot answers 503 no_frame within the bounded wait
+ *        and NEVER touches the camera driver — the capture gate
+ *        stays closed, so there is nothing to grab (no one-shot
+ *        API by design).
  */
 
 #include <stdint.h>
@@ -194,5 +200,41 @@ TEST_CASE(
     esp_err_t whoami_rc =
         mock_httpd_invoke_registered_handler("/whoami", HTTP_GET, req);
     TEST_ASSERT_NOT_EQUAL(ESP_ERR_NOT_FOUND, whoami_rc);
+    mock_httpd_req_free(req);
+}
+
+/* ---------- S4 — FW-19: stopped boot → 503 no_frame, driver untouched ---------- */
+TEST_CASE(
+    "test_fw19_snapshot_503_no_frame_while_gate_stopped [fw-19][snapshot][scenario-S4]",
+    "[softap][snapshot]")
+{
+    reset_mocks();
+
+    /* Fresh-boot world: capture armed but gate STOPPED (FW-19
+     * default — no stream.on has ever arrived). */
+    TEST_ASSERT_EQUAL(ESP_OK, capture_task_start());
+    install_and_fire_ip_up();
+    TEST_ASSERT_FALSE(capture_running_get());
+
+    int gets_before = mock_esp_camera_fb_get_call_count();
+
+    /* The handler's 2 s bounded wait expires with the gate
+     * closed: clean 503 no_frame, not a hang and not a grab. */
+    mock_httpd_req_t *req = mock_httpd_req_new();
+    esp_err_t rc = mock_httpd_invoke_registered_handler(
+        "/snapshot", HTTP_GET, req);
+
+    TEST_ASSERT_NOT_EQUAL(ESP_OK, rc);
+    TEST_ASSERT_EQUAL_INT(503, req->captured_status);
+    TEST_ASSERT_NOT_NULL(req->captured_response_buffer);
+    TEST_ASSERT_TRUE(strstr(req->captured_response_buffer,
+                            "no_frame") != NULL);
+
+    /* Ruling 5 / R-25 invariant: zero acquisition attempts while
+     * stopped — no one-shot grab API exists by design. */
+    TEST_ASSERT_EQUAL_INT(gets_before,
+                          mock_esp_camera_fb_get_call_count());
+    TEST_ASSERT_FALSE(capture_running_get());
+
     mock_httpd_req_free(req);
 }

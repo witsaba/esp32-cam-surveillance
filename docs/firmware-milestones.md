@@ -1,7 +1,7 @@
 # ESP32-CAM Surveillance — firmware milestones and task graph
 
 > **Status**: 12 of 19 milestones complete (FW-01 closed by merge commit `1ab5705`; FW-02 closed by PR #4, merge commit `5a2b016`; FW-03 closed by PR #6, merge commit `db892b2`; FW-05 closed by PR #7, merge commit `ccd8f71`; FW-06 closed by PR #8, merge commit `0d4fe7d` — see amendment blockquote at the end of § FW-06; FW-07 closed by PR #9, merge commit `091b2a4` — see amendment blockquote at the end of § FW-07; FW-08 closed by PR #10, merge commit `9133aeb` — see amendment blockquote at the end of § FW-08; FW-10 closed by PR #11, merge commit `b05288d` — see amendment blockquote at the end of § FW-10; FW-11 closed by PR #12, merge commit `58f387e` — see amendment blockquote at the end of § FW-11; FW-13 closed by PR #13, merge commit `1d671c3` — see amendment blockquote at the end of § FW-13; **FW-05.5 closed (PR pending — worktree `feat/whoami-always-on`, 4 work-unit commits including mock fidelity fix, see amendment blockquote at the end of § FW-05.5; device-flash verify captured the `URI /whoami registered on STA interface` log line; HTTP round-trip from this Mac blocked by AP client isolation on `Liwaisi Wifi`)**; **FW-14 closed by PR #19, merge commit `224b51c`; FW-15 closed by PR #20, merge commit `e7c7603` — see amendment blockquote at the end of § FW-15 (host suite green incl. 12 FW-15 tests + 3 snapshot tests; device build green; frames verified flowing on silicon after the GPIO0/XCLK boot-order fix)**; **FW-16 implemented (PR pending — worktree `feat/fw-16-soft-recovery`, 7 work-unit commits, host 170/170 + healthy-stream bite-proof green, device startup contract verified, see amendment blockquote at the end of § FW-16)**).
-> **Next SDD to start**: FW-16 (soft recovery) or FW-18 (control dispatcher) per dependency graph.
+> **Next SDD to start**: FW-19 (firmware stream command) — shipped on branch `feat/fw-19-stream-command` (units U1–U5, host suite 212/212); device smoke pending.
 > **Entry gate**: none — from-zero plan; the validation scaffold is already merged.
 > **References**: [firmware PRD](firmware-prd.md) · [PRD commit history](https://github.com/witsaba/esp32-cam-surveillance/commits/docs/esp32-cam-firmware-prd) · Project Bindings (declared inline — see [Method](#method--sdd-milestone-rules)).
 > **Date**: 2026-08-21.
@@ -1693,7 +1693,7 @@ SDD change: `firmware-control-dispatcher` · Closes: R-21, R-22, R-26.
     | sleep | routed to FW-21.2 |
     | reboot | routed to FW-21.3 |
     | identify | routed to FW-21.4 |
-    | something_else | rejected with `{"cmd":"error","reason":"unknown","id":"something_else"}` |
+    | something_else | rejected with `{"type":"error","reason":"unknown","id":"something_else"}` |
 - **Depends on:** FW-13.1.
 
 #### FW-18.2 — control task does not block the WS event loop `[leaf]`
@@ -1706,7 +1706,7 @@ SDD change: `firmware-control-dispatcher` · Closes: R-21, R-22, R-26.
 #### FW-18.3 — unknown command returns `error` reply with the original id `[leaf]`
 
 - **Scenarios:**
-  - **Scenario: unknown cmd returns error.** Given an inbound text frame with `{"cmd":"frobnicate","id":"x1"}`, When the dispatcher processes it, Then the device sends a text frame containing `{"cmd":"error","reason":"unknown","id":"x1"}`.
+  - **Scenario: unknown cmd returns error.** Given an inbound text frame with `{"cmd":"frobnicate","id":"x1"}`, When the dispatcher processes it, Then the device sends a text frame containing `{"type":"error","reason":"unknown","id":"x1"}`.
   - **Scenario: error reply uses the original id.** Given an inbound frame with `id` `42`, When the command is rejected, Then the error reply's `id` equals `42`.
 - **Depends on:** FW-18.1.
 
@@ -1716,6 +1716,17 @@ SDD change: `firmware-control-dispatcher` · Closes: R-21, R-22, R-26.
   - **Scenario: pre-validation setter call is rejected.** Given the JSON validator stubbed to pass-through (scratch violation, modelling the reference firmware's `sscanf` regression), When a malformed JSON body arrives, Then the guard fails naming the validate-before-setter invariant (the corrupted body must not reach the runtime setter).
   - **Scenario: malformed JSON returns 4xx and no setter fires.** Given a malformed JSON body, When the dispatcher processes it, Then the device returns an error reply and no setter call is observed.
 - **Depends on:** FW-18.2.
+
+> **Amended 2026-08-26 (error-envelope correction — FW-19 U5 docs pass).** The rejection envelopes
+> originally written into FW-18.1/FW-18.3 used a legacy `cmd`-keyed error shape that never matched
+> the shipped dispatcher. As implemented (FW-18 `control_route.c`, envelope builder
+> `control_error_build`), every rejected command answers the PRD Protocol-contract frame
+> `{"type":"error","reason":"<token>","id":<original>}`, so the examples above now read
+> `{"type":"error","reason":"unknown",…}` for the string-id cases, and the numeric-id scenario keeps
+> its lossless-echo wording (`id` 42 comes back as the number 42; a body carrying no usable scalar id
+> omits the field entirely). Shipped reason-token taxonomy: `bad_json` · `unknown` ·
+> `not_implemented` · `bad_field` (wrong-typed command fields, ruling 6) · `no_viewer` (FW-19
+> pre-start state guard, ruling 7).
 
 ### FW-19 — `stream` command starts and stops the capture loop with fps clamping
 
@@ -1760,6 +1771,30 @@ SDD change: `firmware-stream-command` · Closes: R-21, R-25.
   - **Scenario: stream.on during disconnect is rejected.** Given the WS is in DISCONNECTED state and the dispatcher stubbed to ignore the WS state (scratch violation), When `{"cmd":"stream","on":true,"fps":5}` arrives, Then the guard fails naming the WS-required invariant (capture must not run while frames cannot be sent).
   - **Scenario: green path rejects the start.** Given WS DISCONNECTED, When `stream.on` arrives, Then the device returns an error reply and the capture task is not started.
 - **Depends on:** FW-19.1.
+
+> **Amended 2026-08-26 (implemented — `firmware-stream-command`, units U1–U5 on branch
+> `feat/fw-19-stream-command`).** Host suite green at 212/212 (`cd firmware && make test`; live
+> cadence verification remains a Phase-6 device-smoke item). Shipped wire contract, supplementing
+> the scenarios above:
+> - **Success ack** — every accepted `stream` command answers `{"type":"stream_ok","on":<bool>,"fps":<applied>}`,
+>   where `fps` echoes the APPLIED value, never the raw request: absent `fps` starts at
+>   `CONFIG_FIRMWARE_STREAM_FPS` (default 5); out-of-range integers clamp silently (`0` → minimum 1,
+>   anything above the ceiling → `CONFIG_FIRMWARE_STREAM_FPS_MAX` = 15). START acks before the gate
+>   opens; STOP clears the gate first, answers `{on:false,fps:<current>}`, and stays idempotent even
+>   without a viewer.
+> - **Error taxonomy** — `bad_json` · `unknown` · `not_implemented` · `bad_field` · `no_viewer`.
+>   `on` must be a bool (missing or wrong-typed ⇒ `bad_field`); a present `fps` must be an integral
+>   number (string/float/null ⇒ `bad_field`), each echoing the original id losslessly. `no_viewer`:
+>   `stream.on` without an active WS viewer is refused with
+>   `{"type":"error","reason":"no_viewer","id":<original>}` and the capture gate stays stopped;
+>   explicit `stream.off` remains allowed viewerless.
+> - **Disconnect auto-stop** — if the viewer drops mid-stream, capture halts at the next loop tick
+>   with the stop latch consumed exactly once (host-proven ≤ 1 simulated second; on-device worst
+>   case ≈ 2 periods at 1 fps per design). Capture NEVER runs while the WS viewer is disconnected
+>   (bite-proof Pass 15 message: "capture MUST NOT run while the WS viewer is disconnected.").
+> - **`/snapshot` while stopped** — answers HTTP 503 `{"error":"no_frame"}` after a bounded ~2 s
+>   wait; this is EXPECTED behaviour while the capture gate is stopped (the fresh-boot default).
+>   There is NO one-shot grab API — frames flow only while an approved viewer is streaming.
 
 ### FW-20 — `config` command reconfigures via runtime setters with strict validation
 

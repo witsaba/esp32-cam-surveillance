@@ -240,6 +240,22 @@ size_t control_frame_process(const char *frame, size_t len,
 {
     if (!frame || !out || out_len == 0) return 0;
 
+#ifdef CONTROL_TEST_STUB_SKIP_VALIDATION
+    /* Pass-14 bite-proof stub (FW-18 U4 design D8 #3972; host stub
+     * build ONLY — this macro is never defined on device): compile
+     * the parse/classify validation gate OUT so the registered
+     * handler slot receives the RAW body regardless of validity.
+     * Models the reference regression where malformed bodies reached
+     * setters unvalidated. */
+    for (int i = 0; i < CONTROL_CMD_COUNT; ++i) {
+        if (s_handlers[i]) {
+            (void)s_handlers[i](frame, len, NULL);
+            break;
+        }
+    }
+    return 0;
+#endif
+
     cJSON *doc = NULL;
     control_parsed_t p;
     control_parse(frame, len, &doc, &p);

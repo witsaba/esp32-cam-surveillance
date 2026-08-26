@@ -212,6 +212,12 @@ void     mock_httpd_last_registered_is_websocket(bool *flag);
 httpd_ws_client_info_t mock_httpd_ws_session_alive(int fd);
 void                   mock_httpd_ws_kill_session(int fd);
 
+/* FW-19 U3: force async WS sends to FAIL while the fd probe
+ * keeps reporting sessions ALIVE — reproduces the device
+ * mid-send death race so ws_server's viewer_clear("send
+ * failed") path is reachable on host. Cleared by reset. */
+void                   mock_httpd_ws_fail_sends_set(bool fail);
+
 /* ---------- FW-18 WebSocket frame recv surface ---------- */
 /* Prime one inbound WS frame onto the request's FIFO (payload is
  * copied; cap 16 frames). Frames drain oldest-first through

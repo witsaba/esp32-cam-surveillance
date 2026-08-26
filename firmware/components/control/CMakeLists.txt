@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS "control_route.c"
          "control.c"
+         "stream_cmd.c"
     INCLUDE_DIRS "include"
     # FW-18 — inbound command dispatcher. REQUIRES json: the PUBLIC
     # header control.h carries `const cJSON *` in control_parsed_t,
@@ -11,8 +12,9 @@ idf_component_register(
     # control for ingest in U3) mirrors the proven boot↔health
     # pattern; boot for the supervision-step enum + task stack/prio
     # constants, closing the boot↔control mutual edge (boot
-    # REQUIRES control public). Both edges are proven by
-    # `idf.py build`.
+    # REQUIRES control public). FW-19 adds capture for the stream
+    # handler's gate API (capture_run_start/stop/fps_get/clamp).
+    # Both edges are proven by `idf.py build`.
     REQUIRES json
-    PRIV_REQUIRES ws boot
+    PRIV_REQUIRES ws boot capture
 )

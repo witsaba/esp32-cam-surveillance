@@ -44,6 +44,7 @@
 
 #include "ws.h"
 #include "control.h" /* control_frame_submit / drop record (RX seam) */
+#include "capture.h" /* capture_auto_stop_request (FW-19 auto-stop) */
 #include "identity.h"
 #include "softap.h"
 #include "wifi.h"       /* wifi_event_subscribe (GOT_IP attach hook) */
@@ -83,11 +84,15 @@ static httpd_ws_client_info_t probe_fd_info(void)
 #endif
 
 /* Free the viewer slot + disarm the status cadence. Called from
- * the dead-send path and available to tests. */
+ * the dead-send path and available to tests. FW-19: also raises
+ * the capture auto-stop word so a mid-stream disconnect halts
+ * the gated loop within one tick (design D5) — one relaxed
+ * store, the httpd worker never blocks here. */
 static void viewer_clear(const char *reason)
 {
     int fd = s_viewer_fd;
     s_viewer_fd = -1;
+    capture_auto_stop_request();
     ws_sink_install(NULL);
     esp_err_t r = ws_status_timer_stop();
     if (r != ESP_OK && r != ESP_ERR_INVALID_ARG &&

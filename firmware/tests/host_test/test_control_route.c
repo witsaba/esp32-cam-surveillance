@@ -57,16 +57,20 @@ static size_t process(const char *body, char *out, size_t cap)
     return n;
 }
 
-/* ---------- S1: allow-list routing (six commands, FW-18 state) ---------- */
+/* ---------- S1: allow-list routing (FW-18 state, flipped at
+ * FW-19: `stream` registers a real handler — its dispatch is
+ * pinned by test_stream_cmd.c; the FIVE remaining commands stay
+ * not_implemented until FW-20/21). ---------- */
 TEST_CASE(
-    "test_route_six_commands_all_not_implemented [fw-18.1][scenario-outline]",
+    "test_route_allow_list_minus_stream_all_not_implemented "
+    "[fw-18.1][scenario-outline][fw-19-flip]",
     "[control][fw-18.1]")
 {
     route_reset();
-    static const char *cmds[CONTROL_CMD_COUNT] = {
-        "stream", "config", "reset_cam", "sleep", "reboot", "identify",
+    static const char *cmds[] = {
+        "config", "reset_cam", "sleep", "reboot", "identify",
     };
-    for (int i = 0; i < CONTROL_CMD_COUNT; ++i) {
+    for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); ++i) {
         char body[64];
         snprintf(body, sizeof(body), "{\"cmd\":\"%s\",\"id\":\"k\"}",
                  cmds[i]);

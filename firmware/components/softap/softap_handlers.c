@@ -458,6 +458,12 @@ reject:
  *   503 no_frame    — nothing produced within the bounded wait;
  *                     camera hardware is not delivering frames,
  *                     independent of any transport.
+ *
+ * FW-19 gating note: capture is default-STOPPED and only runs
+ * while a viewer streams. On a freshly booted device with no
+ * stream.on issued, the queue stays empty by design, so the
+ * 503 no_frame answer below is EXPECTED behaviour (ruling 5),
+ * not a fault — there is deliberately no one-shot grab API.
  */
 esp_err_t snapshot_get_handler_impl(httpd_req_t *req)
 {
