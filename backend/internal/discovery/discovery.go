@@ -255,6 +255,13 @@ func (s *Scanner) Scan(ctx context.Context) error {
 		s.logf("DISCOVERY_SKIPPED: no routable IPv4 network")
 		return nil
 	}
+	ranges := make([]string, 0, len(networks))
+	for _, network := range networks {
+		if network != nil {
+			ranges = append(ranges, network.String())
+		}
+	}
+	s.logf("DISCOVERY_SCAN: networks=%s", strings.Join(ranges, ","))
 
 	ips := make(chan net.IP)
 	found := make(chan Camera)
