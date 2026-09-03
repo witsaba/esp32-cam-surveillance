@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/witsaba/esp32-cam-surveillance/backend/internal/discovery"
 	"github.com/witsaba/esp32-cam-surveillance/backend/internal/natsbus"
 )
 
@@ -43,13 +44,21 @@ func main() {
 	}()
 
 	log.Printf("embedded NATS ready at %s", runtime.URL())
+	registry := discovery.NewRegistry()
+	cfg.discovery.Logf = log.Printf
+	discoveryScanner, err := discovery.NewScanner(cfg.discovery, registry)
+	if err != nil {
+		log.Fatal(err)
+	}
+	startDiscoveryJob(ctx, discoveryScanner)
 	<-ctx.Done()
 	log.Printf("shutdown signal received")
 }
 
 type config struct {
-	host string
-	port int
+	host      string
+	port      int
+	discovery discovery.Settings
 }
 
 func loadConfig() (config, error) {
@@ -67,5 +76,17 @@ func loadConfig() (config, error) {
 		port = parsed
 	}
 
-	return config{host: host, port: port}, nil
+	discoverySettings, err := discovery.SettingsFromEnv(os.Getenv)
+	if err != nil {
+		return config{}, err
+	}
+	return config{host: host, port: port, discovery: discoverySettings}, nil
+}
+
+type discoveryJob interface {
+	Run(context.Context)
+}
+
+func startDiscoveryJob(ctx context.Context, job discoveryJob) {
+	go job.Run(ctx)
 }
