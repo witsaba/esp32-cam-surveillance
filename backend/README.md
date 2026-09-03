@@ -24,6 +24,8 @@ immediately and repeats every minute. With no `DISCOVERY_CIDR`, the scanner
 derives ranges from active, non-loopback IPv4 interfaces. Successful devices
 are stored in an in-memory registry keyed by their 12-character lowercase MAC;
 repeated observations refresh the address, metadata, and last-seen timestamp.
+The server logs only successful camera discoveries (`DISCOVERY_CAMERA`); failed
+or malformed probes are silently skipped.
 
 Discovery can be tuned with `DISCOVERY_CIDR`, `DISCOVERY_INTERVAL`,
 `DISCOVERY_TIMEOUT`, `DISCOVERY_PORT`, and `DISCOVERY_WORKERS` (workers are

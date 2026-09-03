@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/witsaba/esp32-cam-surveillance/backend/internal/discovery"
@@ -45,7 +46,7 @@ func main() {
 
 	log.Printf("embedded NATS ready at %s", runtime.URL())
 	registry := discovery.NewRegistry()
-	cfg.discovery.Logf = log.Printf
+	cfg.discovery.Logf = cameraOnlyDiscoveryLogf(log.Printf)
 	discoveryScanner, err := discovery.NewScanner(cfg.discovery, registry)
 	if err != nil {
 		log.Fatal(err)
@@ -89,4 +90,12 @@ type discoveryJob interface {
 
 func startDiscoveryJob(ctx context.Context, job discoveryJob) {
 	go job.Run(ctx)
+}
+
+func cameraOnlyDiscoveryLogf(logf func(format string, args ...any)) func(format string, args ...any) {
+	return func(format string, args ...any) {
+		if strings.HasPrefix(format, "DISCOVERY_CAMERA:") {
+			logf(format, args...)
+		}
+	}
 }
