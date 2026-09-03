@@ -3,6 +3,7 @@ module github.com/witsaba/esp32-cam-surveillance/backend
 go 1.26.7
 
 require (
+	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats-server/v2 v2.14.6
 	github.com/nats-io/nats.go v1.53.1
 )

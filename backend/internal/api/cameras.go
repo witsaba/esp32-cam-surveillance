@@ -19,12 +19,23 @@ const (
 // CameraHandler serves read-only camera registry endpoints.
 type CameraHandler struct {
 	registry *discovery.Registry
+	stats    CameraStats
 	now      func() time.Time
 }
 
+// CameraStats supplies live relay counters without coupling the registry to
+// the streaming package.
+type CameraStats interface {
+	DroppedFrames(mac string) uint64
+}
+
 // NewCameraHandler creates an HTTP handler backed by the in-memory registry.
-func NewCameraHandler(registry *discovery.Registry) http.Handler {
-	return &CameraHandler{registry: registry, now: time.Now}
+func NewCameraHandler(registry *discovery.Registry, stats ...CameraStats) http.Handler {
+	var cameraStats CameraStats
+	if len(stats) > 0 {
+		cameraStats = stats[0]
+	}
+	return &CameraHandler{registry: registry, stats: cameraStats, now: time.Now}
 }
 
 // ServeHTTP serves GET /api/cameras and its status-filtered variants.
@@ -64,6 +75,7 @@ func (h *CameraHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Chip:        camera.Chip,
 				LastSeen:    camera.LastSeen,
 				Status:      status,
+				Dropped:     h.droppedFrames(camera.MAC),
 			})
 		}
 	}
@@ -80,6 +92,7 @@ type cameraResponse struct {
 	Chip        string    `json:"chip"`
 	LastSeen    time.Time `json:"last_seen_at"`
 	Status      string    `json:"status"`
+	Dropped     uint64    `json:"dropped_frames"`
 }
 
 type cameraListResponse struct {
@@ -103,6 +116,13 @@ func cameraStatus(lastSeen, now time.Time) string {
 		return statusIdle
 	}
 	return statusOnline
+}
+
+func (h *CameraHandler) droppedFrames(mac string) uint64 {
+	if h == nil || h.stats == nil {
+		return 0
+	}
+	return h.stats.DroppedFrames(mac)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
