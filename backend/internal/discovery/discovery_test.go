@@ -91,6 +91,7 @@ func TestParseWhoAmIRequiresTheCanonicalShape(t *testing.T) {
 
 func TestScanRegistersValidCamerasAndRefreshesByMAC(t *testing.T) {
 	registry := NewRegistry()
+	cameraLogged := make(chan string, 1)
 	var current int32
 	var active int32
 	var maxActive int32
@@ -114,6 +115,12 @@ func TestScanRegistersValidCamerasAndRefreshesByMAC(t *testing.T) {
 	}
 
 	scanner := newTestScanner(t, registry, []string{"192.168.1.0/30"}, 2, probe)
+	scanner.settings.Logf = func(format string, args ...any) {
+		message := fmt.Sprintf(format, args...)
+		if strings.Contains(message, "DISCOVERY_CAMERA:") {
+			cameraLogged <- message
+		}
+	}
 	scanner.now = func() time.Time { return time.Unix(100, 0) }
 	if err := scanner.Scan(context.Background()); err != nil {
 		t.Fatal(err)
@@ -136,6 +143,14 @@ func TestScanRegistersValidCamerasAndRefreshesByMAC(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&maxActive); got < 2 {
 		t.Fatalf("max concurrent probes = %d, want concurrent probes", got)
+	}
+	select {
+	case message := <-cameraLogged:
+		if !strings.Contains(message, "mac=c8f09e9d5008") {
+			t.Fatalf("camera log = %q, want MAC", message)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("successful camera observation was not logged")
 	}
 }
 

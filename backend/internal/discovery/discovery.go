@@ -311,6 +311,7 @@ func (s *Scanner) Scan(ctx context.Context) error {
 	}()
 
 	for camera := range found {
+		s.logf("DISCOVERY_CAMERA: mac=%s ip=%s", camera.MAC, camera.IP)
 		s.registry.Upsert(camera, s.now())
 	}
 	return nil
