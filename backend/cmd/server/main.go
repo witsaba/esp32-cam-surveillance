@@ -18,13 +18,16 @@ import (
 	"github.com/witsaba/esp32-cam-surveillance/backend/internal/api"
 	"github.com/witsaba/esp32-cam-surveillance/backend/internal/discovery"
 	"github.com/witsaba/esp32-cam-surveillance/backend/internal/natsbus"
+	"github.com/witsaba/esp32-cam-surveillance/backend/internal/relay"
 )
 
 const (
-	defaultNATSHost = "127.0.0.1"
-	defaultNATSPort = 4222
-	defaultHTTPHost = "127.0.0.1"
-	defaultHTTPPort = 8080
+	defaultNATSHost     = "127.0.0.1"
+	defaultNATSPort     = 4222
+	defaultHTTPHost     = "127.0.0.1"
+	defaultHTTPPort     = 8080
+	defaultCameraWSPort = 80
+	defaultStreamFPS    = 5
 )
 
 func main() {
@@ -58,10 +61,25 @@ func main() {
 		log.Fatal(err)
 	}
 	startDiscoveryJob(ctx, discoveryScanner)
+	cameraRelay := relay.New(runtime.Client(), registry, relay.Config{
+		Port: cfg.cameraWSPort,
+		Path: cfg.cameraWSPath,
+		FPS:  cfg.streamFPS,
+		Logf: log.Printf,
+	})
+	defer cameraRelay.Close()
+	hub, err := relay.NewHub(runtime.Client(), registry, cameraRelay, log.Printf, cfg.streamFPS)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer hub.Close()
+	mux := http.NewServeMux()
+	mux.Handle("/api/cameras", api.NewCameraHandler(registry, hub))
+	mux.Handle("/api/cameras/", hub)
 
 	httpServer := &http.Server{
 		Addr:    net.JoinHostPort(cfg.httpHost, strconv.Itoa(cfg.httpPort)),
-		Handler: api.NewCameraHandler(registry),
+		Handler: mux,
 	}
 	go func() {
 		log.Printf("camera API listening at http://%s", httpServer.Addr)
@@ -80,11 +98,14 @@ func main() {
 }
 
 type config struct {
-	host      string
-	port      int
-	httpHost  string
-	httpPort  int
-	discovery discovery.Settings
+	host         string
+	port         int
+	httpHost     string
+	httpPort     int
+	cameraWSPort int
+	cameraWSPath string
+	streamFPS    int
+	discovery    discovery.Settings
 }
 
 func loadConfig() (config, error) {
@@ -120,7 +141,35 @@ func loadConfig() (config, error) {
 		httpPort = parsed
 	}
 
-	return config{host: host, port: port, httpHost: httpHost, httpPort: httpPort, discovery: discoverySettings}, nil
+	cameraWSPort := defaultCameraWSPort
+	if value := os.Getenv("CAMERA_WS_PORT"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 65535 {
+			return config{}, fmt.Errorf("CAMERA_WS_PORT must be an integer between 1 and 65535: %q", value)
+		}
+		cameraWSPort = parsed
+	}
+	cameraWSPath := os.Getenv("CAMERA_WS_PATH")
+	if cameraWSPath == "" {
+		cameraWSPath = "/cams"
+	}
+	if !strings.HasPrefix(cameraWSPath, "/") {
+		cameraWSPath = "/" + cameraWSPath
+	}
+	streamFPS := defaultStreamFPS
+	if value := os.Getenv("STREAM_FPS"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 15 {
+			return config{}, fmt.Errorf("STREAM_FPS must be an integer between 1 and 15: %q", value)
+		}
+		streamFPS = parsed
+	}
+
+	return config{
+		host: host, port: port, httpHost: httpHost, httpPort: httpPort,
+		cameraWSPort: cameraWSPort, cameraWSPath: cameraWSPath, streamFPS: streamFPS,
+		discovery: discoverySettings,
+	}, nil
 }
 
 type discoveryJob interface {

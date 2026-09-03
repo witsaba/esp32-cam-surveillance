@@ -120,3 +120,33 @@ func TestCameraListErrorsUseTheAPIEnvelope(t *testing.T) {
 		})
 	}
 }
+
+func TestCameraListIncludesRelayDropCounter(t *testing.T) {
+	seenAt := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	registry := discovery.NewRegistry()
+	registry.Upsert(discovery.Camera{MAC: "c8f09e9d5008"}, seenAt)
+	handler := NewCameraHandler(registry, fakeCameraStats{mac: "c8f09e9d5008", dropped: 3}).(*CameraHandler)
+	handler.now = func() time.Time { return seenAt }
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/cameras", nil))
+	var response cameraListResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if got := response.Cameras[0].Dropped; got != 3 {
+		t.Fatalf("dropped_frames = %d, want 3", got)
+	}
+}
+
+type fakeCameraStats struct {
+	mac     string
+	dropped uint64
+}
+
+func (s fakeCameraStats) DroppedFrames(mac string) uint64 {
+	if mac != s.mac {
+		return 0
+	}
+	return s.dropped
+}
