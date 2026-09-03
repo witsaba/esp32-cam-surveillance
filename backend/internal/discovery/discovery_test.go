@@ -118,7 +118,10 @@ func TestScanRegistersValidCamerasAndRefreshesByMAC(t *testing.T) {
 	scanner.settings.Logf = func(format string, args ...any) {
 		message := fmt.Sprintf(format, args...)
 		if strings.Contains(message, "DISCOVERY_CAMERA:") {
-			cameraLogged <- message
+			select {
+			case cameraLogged <- message:
+			default:
+			}
 		}
 	}
 	scanner.now = func() time.Time { return time.Unix(100, 0) }
