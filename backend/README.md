@@ -17,6 +17,16 @@ NATS_HOST=127.0.0.1 NATS_PORT=4222 ./bin/cam-surveillance
 The process stays up until `SIGINT` or `SIGTERM`. `NATS_PORT` defaults to
 `4222`; `NATS_HOST` defaults to `127.0.0.1`.
 
+The camera registry is available at `GET /api/cameras` on the HTTP listener.
+The listener defaults to `127.0.0.1:8080` and can be changed with `HTTP_HOST`
+and `HTTP_PORT`. The endpoint reads the same in-memory registry populated by
+LAN discovery, so a successfully discovered camera appears immediately. Each
+item includes its identity, address, firmware, `last_seen_at`, and a derived
+status: `online` through two minutes after its last observation, then `idle`.
+Pass `?status=online` or `?status=idle` to filter the list. The default
+localhost bind keeps this unauthenticated metadata endpoint local; set
+`HTTP_HOST` explicitly when exposing it to a trusted LAN.
+
 On startup the backend launches a background LAN discovery sweep. It probes
 every usable host in the configured IPv4 CIDR with `GET /whoami`, using at
 most 64 concurrent probes and a 500 ms timeout. The first sweep runs
