@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json.schemastore.org/web-manifest-combined.json",
+  "name": "Cachicamas CCTV",
+  "short_name": "Cachicamas CCTV",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0b1116",
+  "description": "Local network CCTV monitoring for ESP32-CAM devices."
+}
