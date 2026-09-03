@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -13,6 +14,22 @@ import (
 	"github.com/witsaba/esp32-cam-surveillance/backend/internal/discovery"
 	"github.com/witsaba/esp32-cam-surveillance/backend/internal/natsbus"
 )
+
+func TestViewerOriginAllowsLocalFrontendOnAnotherPort(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/cameras/c8f09e9d5008/stream", nil)
+	request.Header.Set("Origin", "http://127.0.0.1:5173")
+	if !viewerOriginAllowed(request) {
+		t.Fatal("viewerOriginAllowed rejected the local frontend origin")
+	}
+}
+
+func TestViewerOriginRejectsUnrelatedHost(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/cameras/c8f09e9d5008/stream", nil)
+	request.Header.Set("Origin", "https://attacker.example")
+	if viewerOriginAllowed(request) {
+		t.Fatal("viewerOriginAllowed accepted an unrelated origin")
+	}
+}
 
 func TestHubRoutesFramesAndDropsOldestWhenViewerQueueIsFull(t *testing.T) {
 	const mac = "c8f09e9d5008"

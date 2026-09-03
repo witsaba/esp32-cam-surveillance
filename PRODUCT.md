@@ -28,10 +28,10 @@ The operator runs the Go backend on a trusted local network. Cameras are discove
 
 ## Capabilities and Constraints
 
-- The homepage is the first frontend surface; additional routes are not part of this slice.
+- The homepage is the Cameras surface; additional routes are not part of this slice.
 - The backend exposes camera identity, address, firmware, chip, last-seen time, status, and dropped-frame counters.
 - The backend relay supports multiple viewers and uses live-only core NATS subjects; it does not persist or replay frames.
-- The initial page may use clearly labeled synthetic camera states while the API/WebSocket integration is prepared for the next slice.
+- The page uses the localhost registry and viewer relay as its source of truth; it does not substitute demo cameras when the backend is unavailable.
 - Authentication, user roles, camera controls, recording, persistence, and deployment target are not yet confirmed.
 
 ## Brand Commitments
@@ -43,7 +43,7 @@ No existing frontend brand system or visual assets are present. Product naming a
 - `backend/README.md` documents the registry and relay endpoints.
 - `backend/internal/api` and `backend/internal/relay` contain the current backend contracts.
 - The user has connected an additional camera and confirmed that the backend discovers it.
-- No production camera stills, logos, or marketing claims are available; demo imagery must remain synthetic or use live stream data.
+- No production camera stills, logos, or marketing claims are available; camera imagery comes from the live relay or an explicit connection-state placeholder.
 
 ## Product Principles
 

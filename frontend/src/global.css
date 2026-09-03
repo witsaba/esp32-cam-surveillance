@@ -993,3 +993,270 @@ h2 {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Live camera wall */
+.camera-wall {
+  margin-top: 19px;
+  padding: 21px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.camera-wall .panel-heading {
+  align-items: flex-start;
+}
+
+.panel-subtitle {
+  margin: 7px 0 0;
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+.camera-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.camera-tile {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  background: #0d161c;
+}
+
+.camera-tile-header,
+.camera-tile-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.camera-tile-header {
+  min-height: 66px;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--line);
+}
+
+.camera-tile-header h3 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.camera-tile-header p {
+  margin: 5px 0 0;
+  overflow: hidden;
+  color: var(--quiet);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.camera-stream {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  min-height: 230px;
+  overflow: hidden;
+  background: #111a20;
+  isolation: isolate;
+}
+
+.camera-stream::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.4;
+  background-image:
+    linear-gradient(rgba(137, 164, 169, 0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(137, 164, 169, 0.14) 1px, transparent 1px);
+  background-size: 42px 42px;
+  content: "";
+}
+
+.camera-stream::after {
+  position: absolute;
+  inset: 11% 18% 16%;
+  z-index: -1;
+  border: 1px solid color-mix(in srgb, var(--amber) 34%, transparent);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 24px color-mix(in srgb, var(--amber) 5%, transparent),
+    0 0 0 50px color-mix(in srgb, var(--amber) 3%, transparent);
+  content: "";
+}
+
+.camera-stream-blue::after {
+  border-color: color-mix(in srgb, var(--cyan) 34%, transparent);
+}
+
+.camera-stream-violet::after {
+  border-color: color-mix(in srgb, var(--violet) 34%, transparent);
+}
+
+.camera-stream-red::after {
+  border-color: color-mix(in srgb, var(--red) 28%, transparent);
+}
+
+.camera-stream-has-frame::before,
+.camera-stream-has-frame::after {
+  opacity: 0.08;
+}
+
+.camera-stream img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.stream-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+  text-align: center;
+}
+
+.stream-placeholder strong {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.stream-crosshair {
+  position: relative;
+  display: grid;
+  width: 31px;
+  height: 31px;
+  place-items: center;
+  border: 1px solid var(--amber);
+  border-radius: 50%;
+}
+
+.stream-crosshair::before,
+.stream-crosshair::after {
+  position: absolute;
+  width: 1px;
+  height: 43px;
+  background: color-mix(in srgb, var(--amber) 62%, transparent);
+  content: "";
+}
+
+.stream-crosshair::after {
+  transform: rotate(90deg);
+}
+
+.stream-crosshair span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--amber);
+}
+
+.stream-overlay {
+  position: absolute;
+  right: 13px;
+  bottom: 12px;
+  left: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #b0bec1;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.stream-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.stream-state-live {
+  color: var(--amber);
+}
+
+.stream-state-live .status-dot {
+  background: var(--amber);
+}
+
+.stream-state-connecting {
+  color: var(--cyan);
+}
+
+.stream-state-connecting .status-dot {
+  background: var(--cyan);
+}
+
+.stream-state-error {
+  color: var(--red);
+}
+
+.stream-state-error .status-dot {
+  background: var(--red);
+}
+
+.stream-state-closed {
+  color: var(--quiet);
+}
+
+.stream-state-closed .status-dot {
+  background: var(--quiet);
+}
+
+.camera-tile-footer {
+  align-items: flex-start;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  padding: 11px 15px 13px;
+  border-top: 1px solid var(--line);
+}
+
+.camera-tile-footer span {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 8px;
+}
+
+.camera-tile-footer strong {
+  color: var(--quiet);
+  font-size: 7px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+}
+
+.inline-notice code {
+  color: var(--amber);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+}
+
+@media (max-width: 700px) {
+  .camera-wall {
+    padding: 15px;
+  }
+
+  .camera-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
