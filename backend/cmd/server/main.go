@@ -6,12 +6,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/witsaba/esp32-cam-surveillance/backend/internal/api"
 	"github.com/witsaba/esp32-cam-surveillance/backend/internal/discovery"
 	"github.com/witsaba/esp32-cam-surveillance/backend/internal/natsbus"
 )
@@ -19,6 +23,8 @@ import (
 const (
 	defaultNATSHost = "127.0.0.1"
 	defaultNATSPort = 4222
+	defaultHTTPHost = "127.0.0.1"
+	defaultHTTPPort = 8080
 )
 
 func main() {
@@ -52,13 +58,32 @@ func main() {
 		log.Fatal(err)
 	}
 	startDiscoveryJob(ctx, discoveryScanner)
+
+	httpServer := &http.Server{
+		Addr:    net.JoinHostPort(cfg.httpHost, strconv.Itoa(cfg.httpPort)),
+		Handler: api.NewCameraHandler(registry),
+	}
+	go func() {
+		log.Printf("camera API listening at http://%s", httpServer.Addr)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("camera API failed: %v", err)
+			stop()
+		}
+	}()
 	<-ctx.Done()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("camera API shutdown failed: %v", err)
+	}
 	log.Printf("shutdown signal received")
 }
 
 type config struct {
 	host      string
 	port      int
+	httpHost  string
+	httpPort  int
 	discovery discovery.Settings
 }
 
@@ -81,7 +106,21 @@ func loadConfig() (config, error) {
 	if err != nil {
 		return config{}, err
 	}
-	return config{host: host, port: port, discovery: discoverySettings}, nil
+
+	httpHost := os.Getenv("HTTP_HOST")
+	if httpHost == "" {
+		httpHost = defaultHTTPHost
+	}
+	httpPort := defaultHTTPPort
+	if value := os.Getenv("HTTP_PORT"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 65535 {
+			return config{}, fmt.Errorf("HTTP_PORT must be an integer between 1 and 65535: %q", value)
+		}
+		httpPort = parsed
+	}
+
+	return config{host: host, port: port, httpHost: httpHost, httpPort: httpPort, discovery: discoverySettings}, nil
 }
 
 type discoveryJob interface {
