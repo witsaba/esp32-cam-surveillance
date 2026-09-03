@@ -3,7 +3,9 @@ package relay
 import (
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,10 +64,10 @@ func NewHub(nc *nats.Conn, registry *discovery.Registry, relay CameraRelay, logf
 	}
 	h := &Hub{
 		nc: nc, relay: relay, registry: registry, logf: logf, fps: streamFPS,
-		viewers: make(map[string]map[*viewer]struct{}),
-		dropped: make(map[string]*atomic.Uint64),
+		upgrader: websocket.Upgrader{CheckOrigin: viewerOriginAllowed},
+		viewers:  make(map[string]map[*viewer]struct{}),
+		dropped:  make(map[string]*atomic.Uint64),
 	}
-	// Leave CheckOrigin nil so Gorilla applies its safe same-origin policy.
 	sub, err := nc.Subscribe("cams.*.frames", h.receive)
 	if err != nil {
 		return nil, err
@@ -87,6 +89,33 @@ func NewHub(nc *nats.Conn, registry *discovery.Registry, relay CameraRelay, logf
 		}
 	})
 	return h, nil
+}
+
+// viewerOriginAllowed permits a local frontend dev server on another port to
+// view the local-only API while rejecting unrelated cross-host browser origins.
+func viewerOriginAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Hostname() == "" {
+		return false
+	}
+	requestHost := r.Host
+	if host, _, splitErr := net.SplitHostPort(r.Host); splitErr == nil {
+		requestHost = host
+	}
+	return strings.EqualFold(parsed.Hostname(), requestHost) ||
+		(isLoopbackHost(parsed.Hostname()) && isLoopbackHost(requestHost))
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	return net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()
 }
 
 type configurationError struct{ message string }

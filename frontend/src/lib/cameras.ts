@@ -1,3 +1,5 @@
+export const CAMERA_API_BASE_URL = "http://localhost:8080";
+
 export type CameraStatus = "online" | "idle" | "offline";
 
 export interface Camera {
@@ -15,16 +17,26 @@ export interface Camera {
 }
 
 export interface CameraListResponse {
-  cameras: Array<
-    Partial<Camera> & {
-      mac: string;
-      last_seen_at?: string;
-      dropped_frames?: number;
-    }
-  >;
+  cameras: Array<{
+    mac: string;
+    ip?: string;
+    name?: string;
+    description?: string;
+    firmware?: string;
+    fw_version?: string;
+    chip?: string;
+    lastSeen?: string;
+    last_seen_at?: string;
+    status?: CameraStatus;
+    droppedFrames?: number;
+    dropped_frames?: number;
+  }>;
   total?: number;
 }
 
+const accents: Camera["accent"][] = ["amber", "blue", "violet", "red"];
+
+// Test fixture only. The route never falls back to this data when the API is unavailable.
 export const demoCameras: Camera[] = [
   {
     mac: "c8f09e9d5008",
@@ -32,11 +44,11 @@ export const demoCameras: Camera[] = [
     location: "North perimeter",
     ip: "192.168.1.48",
     firmware: "FW-19",
-    chip: "ESP32-S",
+    chip: "ESP32",
     lastSeen: "Just now",
     status: "online",
     droppedFrames: 0,
-    signal: "Strong",
+    signal: "LAN",
     accent: "amber",
   },
   {
@@ -45,38 +57,12 @@ export const demoCameras: Camera[] = [
     location: "South building",
     ip: "192.168.1.52",
     firmware: "FW-19",
-    chip: "ESP32-S",
+    chip: "ESP32",
     lastSeen: "Just now",
     status: "online",
     droppedFrames: 2,
-    signal: "Good",
+    signal: "LAN",
     accent: "blue",
-  },
-  {
-    mac: "a4cf127b8d31",
-    name: "Side door",
-    location: "West passage",
-    ip: "192.168.1.61",
-    firmware: "FW-18",
-    chip: "ESP32-S",
-    lastSeen: "3 min ago",
-    status: "idle",
-    droppedFrames: 0,
-    signal: "Fair",
-    accent: "violet",
-  },
-  {
-    mac: "78e36d4a102f",
-    name: "Loading bay",
-    location: "East service lane",
-    ip: "192.168.1.74",
-    firmware: "FW-16",
-    chip: "ESP32-S",
-    lastSeen: "18 min ago",
-    status: "offline",
-    droppedFrames: 0,
-    signal: "No signal",
-    accent: "red",
   },
 ];
 
@@ -93,30 +79,36 @@ export function getCameraStatusLabel(status: CameraStatus): string {
 
 export function normalizeCameras(response: CameraListResponse): Camera[] {
   return response.cameras.map((camera, index) => ({
-    ...demoCameras[index % demoCameras.length],
-    ...camera,
-    name: camera.name ?? `Camera ${index + 1}`,
-    location: camera.location ?? "Unassigned",
-    ip: camera.ip ?? "Unknown IP",
-    firmware: camera.firmware ?? "Unknown",
-    chip: camera.chip ?? "ESP32",
-    lastSeen: camera.lastSeen ?? camera.last_seen_at ?? "Recently seen",
-    status: camera.status ?? "online",
+    mac: camera.mac,
+    name: camera.name?.trim() || `Camera ${index + 1}`,
+    location: camera.description?.trim() || "Unassigned",
+    ip: camera.ip || "Unknown IP",
+    firmware: camera.firmware || camera.fw_version || "Unknown",
+    chip: camera.chip || "ESP32",
+    lastSeen: camera.lastSeen || camera.last_seen_at || "Recently seen",
+    status: camera.status || "online",
     droppedFrames: camera.droppedFrames ?? camera.dropped_frames ?? 0,
-    signal: camera.signal ?? "Unknown",
-    accent: camera.accent ?? demoCameras[index % demoCameras.length].accent,
+    signal: "LAN",
+    accent: accents[index % accents.length],
   }));
 }
 
-export async function loadCameras(apiBaseUrl?: string): Promise<{
+export function cameraStreamUrl(
+  mac: string,
+  apiBaseUrl = CAMERA_API_BASE_URL,
+): string {
+  const base = apiBaseUrl.replace(/\/$/, "");
+  const websocketBase = base.replace(/^http/, "ws");
+  return `${websocketBase}/api/cameras/${encodeURIComponent(mac)}/stream`;
+}
+
+export async function loadCameras(
+  apiBaseUrl = CAMERA_API_BASE_URL,
+): Promise<{
   cameras: Camera[];
-  source: "api" | "demo";
+  source: "api";
   error?: string;
 }> {
-  if (!apiBaseUrl) {
-    return { cameras: demoCameras, source: "demo" };
-  }
-
   try {
     const response = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/api/cameras`);
     if (!response.ok) {
@@ -127,8 +119,8 @@ export async function loadCameras(apiBaseUrl?: string): Promise<{
     return { cameras: normalizeCameras(payload), source: "api" };
   } catch (error) {
     return {
-      cameras: demoCameras,
-      source: "demo",
+      cameras: [],
+      source: "api",
       error: error instanceof Error ? error.message : "Camera API unavailable",
     };
   }

@@ -2,10 +2,11 @@ import { component$ } from "@builder.io/qwik";
 import type { DocumentHead } from "@builder.io/qwik-city";
 import { routeLoader$ } from "@builder.io/qwik-city";
 import { CctvHome } from "~/components/cctv/cctv-home";
-import { loadCameras } from "~/lib/cameras";
+import { CAMERA_API_BASE_URL, loadCameras } from "~/lib/cameras";
 
 export const useCameras = routeLoader$(async ({ env }) => {
-  return loadCameras(env.get("PUBLIC_API_BASE_URL"));
+  const apiBaseUrl = env.get("PUBLIC_API_BASE_URL") || CAMERA_API_BASE_URL;
+  return { ...(await loadCameras(apiBaseUrl)), apiBaseUrl };
 });
 
 export default component$(() => {
@@ -13,7 +14,7 @@ export default component$(() => {
   return (
     <CctvHome
       cameras={cameraData.value.cameras}
-      source={cameraData.value.source}
+      apiBaseUrl={cameraData.value.apiBaseUrl}
       apiError={cameraData.value.error}
     />
   );

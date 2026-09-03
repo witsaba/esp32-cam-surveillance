@@ -10,16 +10,16 @@ The UI uses a familiar system sans for operator-facing headings and labels. Mono
 
 ## Layout
 
-- Desktop uses a 224px utility rail and a fluid workspace.
-- The workspace opens with the `Camera overview` heading and a four-cell network summary strip.
-- The main stage pairs a dominant selected feed with a registry rail of camera rows.
-- The feed is an authored synthetic monitoring surface with crosshair, scan field, location, status, and stream metadata.
-- At 780px the rail becomes a horizontal navigation band and the stage/registry stack vertically.
-- At 480px feed actions become full-width for touch use.
+- Desktop uses a 224px utility rail with one Cameras destination and a fluid workspace.
+- The workspace opens with the `Cameras` heading and a four-cell camera summary strip.
+- The main surface is a live camera wall with one relay-backed tile per discovered camera.
+- Each tile pairs the real JPEG feed with location, status, stream state, IP, MAC, and firmware metadata.
+- At 780px the rail becomes a horizontal navigation band and the camera wall stacks into one column at 700px.
+- On small screens camera metadata wraps while the live image keeps its aspect ratio.
 
 ## Interaction and state
 
-Camera rows use native buttons, `aria-pressed`, visible focus, and resumable Qwik event handlers. The registry filter exposes a live-only view. The display control toggles a visible mode marker. The stream action exposes a status message and is disabled for offline cameras. Online, idle, offline, loading fallback, API fallback, and empty-feed states are represented in the initial shell.
+The route loads the real registry from localhost and each visible tile opens its own read-only viewer WebSocket. Binary JPEG frames become object URLs that are revoked when replaced or unmounted. Connecting, live, reconnecting, unavailable, API-error, and empty-registry states are explicit and communicated with text as well as color.
 
 ## Tokens
 
@@ -27,4 +27,4 @@ Primary tokens live in `frontend/src/global.css`. The surface uses `--ink` and `
 
 ## Future boundary
 
-The current feed is intentionally synthetic. The route loader already accepts `PUBLIC_API_BASE_URL` and normalizes the backend `/api/cameras` response; the next implementation slice can replace the feed surface with the backend WebSocket relay at `/api/cameras/<mac>/stream` without changing the page's information architecture.
+The live source defaults to `http://localhost:8080` and can be overridden with `PUBLIC_API_BASE_URL`. The browser connects to `/api/cameras/<mac>/stream`; the backend sends `stream_meta` followed by binary JPEG frames. Recording, authentication, controls, and history remain outside this surface.

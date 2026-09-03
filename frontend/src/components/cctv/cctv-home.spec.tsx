@@ -1,22 +1,46 @@
 import { createDOM } from "@builder.io/qwik/testing";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { demoCameras } from "~/lib/cameras";
 import { CctvHome } from "./cctv-home";
 
-test("renders the CCTV monitor wall with clear camera states", async () => {
-  const { screen, render, userEvent } = await createDOM();
+test("renders one live camera wall tile for every discovered camera", async () => {
+  vi.stubGlobal(
+    "WebSocket",
+    class MockWebSocket {
+      binaryType = "blob";
+      close() {
+        this.onclose?.();
+      }
+      onclose?: () => void;
+    },
+  );
+  const { screen, render } = await createDOM();
   await render(<CctvHome cameras={demoCameras} />);
 
-  expect(screen.querySelector("h1")?.textContent).toContain("Camera overview");
-  expect(screen.querySelectorAll("[data-camera-card]")).toHaveLength(4);
-  expect(screen.querySelector('[data-camera-status="online"]')?.textContent).toContain("Live");
-  expect(screen.querySelector('[data-camera-status="idle"]')?.textContent).toContain("Idle");
-  expect(screen.querySelector("main")?.getAttribute("aria-label")).toBe("CCTV camera overview");
+  expect(screen.querySelector("h1")?.textContent).toBe("Cameras");
+  expect(screen.querySelectorAll(".camera-tile")).toHaveLength(2);
+  expect(screen.querySelectorAll("[data-camera-status=online]")).toHaveLength(2);
+  expect(screen.querySelector("main")?.getAttribute("aria-label")).toBe(
+    "CCTV cameras",
+  );
 
-  await userEvent(".text-button", "click");
-  expect(screen.querySelectorAll("[data-camera-card]")).toHaveLength(2);
-  expect(screen.querySelector(".text-button")?.textContent).toContain("Live only");
+  const navigation = screen.querySelector("nav");
+  expect(navigation?.textContent).toContain("Cameras");
+  expect(navigation?.textContent).not.toContain("Monitor");
+  expect(navigation?.textContent).not.toContain("Network");
+  vi.unstubAllGlobals();
+});
 
-  await userEvent(".secondary-button", "click");
-  expect(screen.querySelector('[role="status"]')?.textContent).toContain("Stream slot ready");
+test("shows an actionable empty state when the camera API fails", async () => {
+  const { screen, render } = await createDOM();
+  await render(
+    <CctvHome cameras={[]} apiError="Camera API returned 503" />,
+  );
+
+  expect(screen.querySelector(".empty-feed")?.textContent).toContain(
+    "Camera API unavailable",
+  );
+  expect(screen.querySelector('[role="alert"]')?.textContent).toContain(
+    "localhost",
+  );
 });
