@@ -130,6 +130,9 @@ typedef struct {
 #ifndef CAMERA_GRAB_WHEN_EMPTY
 #define CAMERA_GRAB_WHEN_EMPTY 0
 #endif
+#ifndef CAMERA_GRAB_LATEST
+#define CAMERA_GRAB_LATEST 1
+#endif
 
 /* camera_fb_t — FW-11 mirror of esp32-camera's frame-buffer
  * struct (managed_components/espressif__esp32-camera/driver/

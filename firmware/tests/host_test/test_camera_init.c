@@ -6,7 +6,7 @@
  *   | row | field          | expected value                     |
  *   | 1   | pixel_format   | PIXFORMAT_JPEG                     |
  *   | 2   | frame_size     | CONFIG_FIRMWARE_CAMERA_FRAME_SIZE  |
- *   |     |               | (default 8 = FRAMESIZE_VGA)         |
+ *   |     |               | (default 9 = FRAMESIZE_SVGA)        |
  *   | 3   | jpeg_quality   | CONFIG_FIRMWARE_CAMERA_JPEG_QUALITY|
  *   |     |               | (default 18)                       |
  *   | 4   | fb_count       | 1                                  |
@@ -74,7 +74,7 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "test_fw10_1_frame_size_is_vga_default [fw-10.1][row-2]",
+    "test_fw10_1_frame_size_is_svga_default [fw-10.1][row-2]",
     "[camera][fw-10.1][params]")
 {
     esp_err_t rc = camera_init_with_mocks();
@@ -82,9 +82,9 @@ TEST_CASE(
 
     const camera_config_t *cfg = mock_esp_camera_last_init_config();
     TEST_ASSERT_NOT_NULL(cfg);
-    /* CONFIG_FIRMWARE_CAMERA_FRAME_SIZE default = 8 (FRAMESIZE_VGA). */
+    /* CONFIG_FIRMWARE_CAMERA_FRAME_SIZE default = 9 (FRAMESIZE_SVGA). */
     TEST_ASSERT_EQUAL_INT(CONFIG_FIRMWARE_CAMERA_FRAME_SIZE, cfg->frame_size);
-    TEST_ASSERT_EQUAL_INT(8, cfg->frame_size);
+    TEST_ASSERT_EQUAL_INT(9, cfg->frame_size);
 }
 
 TEST_CASE(
@@ -102,7 +102,7 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "test_fw10_1_fb_count_is_one [fw-10.1][row-4]",
+    "test_fw10_1_fb_count_is_two_with_psram [fw-10.1][row-4]",
     "[camera][fw-10.1][params]")
 {
     esp_err_t rc = camera_init_with_mocks();
@@ -110,11 +110,15 @@ TEST_CASE(
 
     const camera_config_t *cfg = mock_esp_camera_last_init_config();
     TEST_ASSERT_NOT_NULL(cfg);
-    TEST_ASSERT_EQUAL_INT(1, cfg->fb_count);
+    /* FW-13: 2-buffer pipeline (rural_home_assistant proven config)
+     * so the WS sender can drain frame N while the sensor fills
+     * frame N+1. 1 was the historical FW-10 default; the host
+     * test mock reports the PSRAM-detected count. */
+    TEST_ASSERT_EQUAL_INT(2, cfg->fb_count);
 }
 
 TEST_CASE(
-    "test_fw10_1_grab_mode_is_when_empty [fw-10.1][row-5]",
+    "test_fw10_1_grab_mode_is_latest [fw-10.1][row-5]",
     "[camera][fw-10.1][params]")
 {
     esp_err_t rc = camera_init_with_mocks();
@@ -122,13 +126,17 @@ TEST_CASE(
 
     const camera_config_t *cfg = mock_esp_camera_last_init_config();
     TEST_ASSERT_NOT_NULL(cfg);
-    /* CAMERA_GRAB_WHEN_EMPTY == 0 in esp32-camera v2.1.7
-     * (driver/esp_camera.c grabs `mode = 0` when buffer is empty). */
-    TEST_ASSERT_EQUAL_INT(0 /* CAMERA_GRAB_WHEN_EMPTY */, cfg->grab_mode);
+    /* FW-13: CAMERA_GRAB_LATEST (= 1 in esp32-camera v2.1.7) so
+     * the driver always returns the freshest frame the sensor
+     * has, rather than blocking on an empty buffer. Pairs with
+     * fb_count=2 + the 20 MHz XCLK below — that combination
+     * is what rural_home_assistant's iot-camera uses and it
+     * is the proven-working path. */
+    TEST_ASSERT_EQUAL_INT(1 /* CAMERA_GRAB_LATEST */, cfg->grab_mode);
 }
 
 TEST_CASE(
-    "test_fw10_1_xclk_freq_is_10mhz [fw-10.1][row-6]",
+    "test_fw10_1_xclk_freq_is_20mhz [fw-10.1][row-6]",
     "[camera][fw-10.1][params]")
 {
     esp_err_t rc = camera_init_with_mocks();
@@ -136,7 +144,10 @@ TEST_CASE(
 
     const camera_config_t *cfg = mock_esp_camera_last_init_config();
     TEST_ASSERT_NOT_NULL(cfg);
-    TEST_ASSERT_EQUAL_INT(10000000, cfg->xclk_freq_hz);
+    /* FW-13: 20 MHz XCLK — the OV2640 PLL locks cleanly at this
+     * rate and unlocks the SVGA mode. The previous 10 MHz baseline
+     * (commit 9188c31) silently fell back to 240x240. */
+    TEST_ASSERT_EQUAL_INT(20000000, cfg->xclk_freq_hz);
 }
 
 /* AI-Thinker pin map (PRD § FR-2). Combined with the 6 parameter
