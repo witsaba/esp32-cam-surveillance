@@ -364,3 +364,106 @@ TEST_CASE(
     /* Only the pre-close hello; no status frames leaked out. */
     TEST_ASSERT_EQUAL_INT(1, mock_httpd_ws_send_call_count());
 }
+
+/* ---------- S7: STA disconnect → fresh GOT_IP re-registers /cams ----------
+ *
+ * Production bug: a single Wi-Fi blip is enough to wedge /cams.
+ * softap_sta_listener recreates its httpd on every reconnect and
+ * re-registers /whoami + /snapshot on the new instance. ws_server
+ * only subscribed to WIFI_EVT_STA_GOT_IP and guarded re-entry
+ * with `if (s_registered) return;`, so the new httpd was born
+ * without /cams and every WS upgrade returned 404 until a full
+ * power cycle reset s_registered = false. The fix subscribes
+ * WIFI_EVT_STA_DISCONNECTED and clears the flag (plus s_httpd,
+ * s_viewer_fd, sink) so the next GOT_IP re-registers cleanly.
+ *
+ * This test exercises the full DISCONNECTED → GOT_IP cycle and
+ * proves /cams is registered on the SECOND httpd instance, and
+ * that a handshake against it works end-to-end. */
+TEST_CASE(
+    "test_ws_server_sta_disconnect_re_registers_cams [ws-server][sta-reconnect][scenario-S7]",
+    "[ws-server][sta-reconnect]")
+{
+    reset_state();
+    server_up();
+
+    /* S1 baseline: 3 registrations on the first httpd — /whoami,
+     * /snapshot, /cams. */
+    TEST_ASSERT_EQUAL_INT(3,
+        mock_httpd_register_uri_handler_call_count());
+
+    /* Fire the disconnect. softap_sta_listener subscribed FIRST,
+     * so it runs FIRST: stops its httpd. ws_server's disconnect
+     * handler runs AFTER and clears s_registered / s_httpd /
+     * s_viewer_fd / sink. */
+    (void)mock_esp_event_fire_handler(WIFI_EVENT,
+                                      WIFI_EVENT_STA_DISCONNECTED,
+                                      NULL);
+
+    /* softap's handler stopped the httpd exactly once. */
+    TEST_ASSERT_EQUAL_INT(1, mock_httpd_stop_call_count());
+
+    /* Fire a fresh IP-up. softap creates a new httpd and
+     * re-registers /whoami + /snapshot. ws_server's GOT_IP
+     * handler now passes the (cleared) s_registered guard and
+     * re-registers /cams on the new handle. */
+    TEST_ASSERT_EQUAL(ESP_OK,
+        mock_esp_event_fire_handler(IP_EVENT,
+                                    IP_EVENT_STA_GOT_IP,
+                                    NULL));
+
+    /* +3 registrations: whoami + snapshot (softap) + cams (ws_server).
+     * Before the fix this assertion was 5 (cams missing on the
+     * second httpd). */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(6,
+        mock_httpd_register_uri_handler_call_count(),
+        "after DISCONNECTED→GOT_IP, /cams must re-register on the "
+        "fresh httpd instance");
+
+    /* The MOST RECENT registration is /cams — not just any URI. */
+    const char *uri = NULL;
+    int method = -1;
+    mock_httpd_last_registered_uri(&uri, &method);
+    TEST_ASSERT_NOT_NULL(uri);
+    TEST_ASSERT_EQUAL_STRING(CONFIG_FIRMWARE_WS_PATH, uri);
+    TEST_ASSERT_EQUAL_INT(HTTP_GET, method);
+    bool is_ws = false;
+    mock_httpd_last_registered_is_websocket(&is_ws);
+    TEST_ASSERT_TRUE(is_ws);
+
+    /* End-to-end: a fresh handshake against the re-registered
+     * endpoint completes and emits the hello frame. */
+    int sends_before = mock_httpd_ws_send_call_count();
+    TEST_ASSERT_EQUAL(ESP_OK, handshake(13));
+    TEST_ASSERT_TRUE(ws_server_viewer_active());
+    TEST_ASSERT_EQUAL_INT(sends_before + 1,
+        mock_httpd_ws_send_call_count());
+}
+
+/* ---------- S8: STA disconnect WITHOUT a prior GOT_IP is a no-op ----------
+ *
+ * The disconnect handler must be safe even if GOT_IP never fired
+ * (e.g., the device never came up). Clearing already-NULL state
+ * is a no-op and must not crash or spuriously fire registrations. */
+TEST_CASE(
+    "test_ws_server_sta_disconnect_without_ip_up_is_noop [ws-server][sta-reconnect][scenario-S8]",
+    "[ws-server][sta-reconnect]")
+{
+    reset_state();
+    TEST_ASSERT_EQUAL(ESP_OK, softap_sta_listener_install());
+    TEST_ASSERT_EQUAL(ESP_OK, ws_server_install());
+
+    int regs_before = mock_httpd_register_uri_handler_call_count();
+    int stops_before = mock_httpd_stop_call_count();
+
+    (void)mock_esp_event_fire_handler(WIFI_EVENT,
+                                      WIFI_EVENT_STA_DISCONNECTED,
+                                      NULL);
+
+    /* No registrations, no stops — the device never had a live
+     * httpd in this test. */
+    TEST_ASSERT_EQUAL_INT(regs_before,
+        mock_httpd_register_uri_handler_call_count());
+    TEST_ASSERT_EQUAL_INT(stops_before,
+        mock_httpd_stop_call_count());
+}

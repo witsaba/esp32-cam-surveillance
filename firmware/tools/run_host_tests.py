@@ -638,6 +638,14 @@ ALL_TESTS = [
     "test_fw16_viewer_close_frees_slot [fw-16][server][scenario-S4]",
     "test_fw16_status_cadence_3_frames_in_90s [fw-16][status-cadence][scenario-S5]",
     "test_fw16_no_status_after_viewer_close [fw-16][status-cadence][scenario-S6]",
+    # FW-16 — STA-disconnect re-register regression (R-FW16-stuck-cams).
+    # S7 proves /cams is registered on the FRESH httpd instance that
+    # softap_sta_listener recreates after a Wi-Fi reconnect (the
+    # historical `if (s_registered) return;` guard short-circuited
+    # the second GOT_IP because s_registered was a permanent static).
+    # S8 proves a DISCONNECTED-without-prior-IP-up is a clean no-op.
+    "test_ws_server_sta_disconnect_re_registers_cams [ws-server][sta-reconnect][scenario-S7]",
+    "test_ws_server_sta_disconnect_without_ip_up_is_noop [ws-server][sta-reconnect][scenario-S8]",
     # FW-15.1 — bounded-timeout receive (REQ-ST-006). 3 scenarios:
     # empty-queue ≈T timeout, queued-item exact-pointer receive,
     # cross-thread producer wakes a waiting consumer early.

@@ -10,7 +10,15 @@
 #include <stdbool.h>
 #include <string.h>
 
-#define MOCK_ESP_EVENT_MAX_CAPTURES 8
+/* Capacity for the simulated esp_event subscription table. Each
+ * host-test subscriber (wifi, health, softap_sta_listener,
+ * ws_server, ws_event_handler legacy client, plus their reconnect
+ * stubs) registers a row; the production binary has 8 distinct
+ * (base, id) pairs in scope simultaneously. Sized to absorb the
+ * ws_server disconnect re-register fix that adds one extra
+ * (WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED) capture on top of the
+ * historical 8, leaving headroom for any future guard stubs. */
+#define MOCK_ESP_EVENT_MAX_CAPTURES 16
 
 typedef struct {
     esp_event_base_t             base;
