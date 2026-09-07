@@ -182,7 +182,7 @@ def _common_cflags(extra_defines):
         # no sdkconfig.h so we set the FW-02 defaults that match
         # firmware/sdkconfig.defaults:28-29 + Kconfig.projbuild:6,14.
         '-DCONFIG_FIRMWARE_CAMERA_JPEG_QUALITY=18',
-        '-DCONFIG_FIRMWARE_CAMERA_FRAME_SIZE=5',
+        '-DCONFIG_FIRMWARE_CAMERA_FRAME_SIZE=8',
         # FW-10 follow-up (commit 9188c31) — camera.c:181 references
         # the IDF-side `CAMERA_FB_IN_PSRAM` constant directly (not
         # via a CONFIG_* Kconfig symbol). The host mock declares

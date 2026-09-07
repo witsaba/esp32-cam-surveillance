@@ -112,7 +112,8 @@ esp_err_t camera_settings_reset_defaults(camera_settings_t *out)
 /* ---------- fake source ops ---------- */
 
 /* Compiled-in defaults match the FW-02 sdkconfig.defaults
- * (jpeg_quality=18, frame_size=5/FRAMESIZE_QVGA). All other
+ * (jpeg_quality=18, frame_size=8/FRAMESIZE_VGA, hmirror=1, vflip=1
+ * for the AI-Thinker module's upside-down mounting). All other
  * fields are 0 (the OV2640 midpoint for unsigned calibration
  * registers). */
 static const camera_settings_t k_default_settings = {
@@ -136,8 +137,8 @@ static const camera_settings_t k_default_settings = {
     .wpc          = 1,
     .raw_gma      = 1,
     .lenc         = 1,
-    .hmirror      = 0,
-    .vflip        = 0,
+    .hmirror      = 1,  /* AI-Thinker module ships upside-down; flip both axes */
+    .vflip        = 1,
     .dcw          = 1,
     .colorbar     = 0,
     .framesize    = CONFIG_FIRMWARE_CAMERA_FRAME_SIZE,

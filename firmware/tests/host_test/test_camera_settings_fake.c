@@ -164,7 +164,7 @@ TEST_CASE(
      * g_wrapped_primed is read by wrapped_load() at
      * camera_init() time. */
     static const camera_settings_t k_primed = {
-        .framesize = 5,       /* FRAMESIZE_QVGA (Kconfig) */
+        .framesize = 8,       /* FRAMESIZE_VGA (Kconfig) */
         .quality   = 12,      /* stored override */
         .schema_version = 1,  /* matches CAMERA_SETTINGS_SCHEMA_VERSION */
     };
@@ -191,7 +191,7 @@ TEST_CASE(
     "[camera][fw-10.5][settings-fake][no-reinit]")
 {
     static const camera_settings_t k_primed = {
-        .framesize = 5,
+        .framesize = 8,
         .quality   = 12,
         .schema_version = 1,
     };

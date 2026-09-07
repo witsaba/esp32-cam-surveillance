@@ -6,7 +6,7 @@
  *   | row | field          | expected value                     |
  *   | 1   | pixel_format   | PIXFORMAT_JPEG                     |
  *   | 2   | frame_size     | CONFIG_FIRMWARE_CAMERA_FRAME_SIZE  |
- *   |     |               | (default 5 = FRAMESIZE_QVGA)       |
+ *   |     |               | (default 8 = FRAMESIZE_VGA)         |
  *   | 3   | jpeg_quality   | CONFIG_FIRMWARE_CAMERA_JPEG_QUALITY|
  *   |     |               | (default 18)                       |
  *   | 4   | fb_count       | 1                                  |
@@ -74,7 +74,7 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "test_fw10_1_frame_size_is_qvga_default [fw-10.1][row-2]",
+    "test_fw10_1_frame_size_is_vga_default [fw-10.1][row-2]",
     "[camera][fw-10.1][params]")
 {
     esp_err_t rc = camera_init_with_mocks();
@@ -82,9 +82,9 @@ TEST_CASE(
 
     const camera_config_t *cfg = mock_esp_camera_last_init_config();
     TEST_ASSERT_NOT_NULL(cfg);
-    /* CONFIG_FIRMWARE_CAMERA_FRAME_SIZE default = 5 (FRAMESIZE_QVGA). */
+    /* CONFIG_FIRMWARE_CAMERA_FRAME_SIZE default = 8 (FRAMESIZE_VGA). */
     TEST_ASSERT_EQUAL_INT(CONFIG_FIRMWARE_CAMERA_FRAME_SIZE, cfg->frame_size);
-    TEST_ASSERT_EQUAL_INT(5, cfg->frame_size);
+    TEST_ASSERT_EQUAL_INT(8, cfg->frame_size);
 }
 
 TEST_CASE(
