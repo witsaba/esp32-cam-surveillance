@@ -90,6 +90,18 @@
  * non-NULL + the runtime stub flag is set. */
 static sensor_t *s_sensor = NULL;
 
+/* FW-13: tracker for the most recent framesize we asked the
+ * sensor for. Real esp32-camera `sensor_t` does not expose the
+ * current framesize as a public field — the OV2640 driver keeps
+ * it inside its own state. We track our own requested value here
+ * (updated by every set_framesize path) so the post-init probe
+ * can log a warning if the sensor silently fell back to a smaller
+ * mode. The mismatch detection is best-effort: it confirms the
+ * SETTER succeeded, not that the SENSOR reached the requested
+ * mode. A definitive check would need to read the actual frame
+ * width/height from a sample fb_get() — out of scope for now. */
+static int s_last_requested_framesize = -1;
+
 /* camera_init() invocations counter — FW-10.3 invariant
  * (`g_init_count <= 1`). The stub build (CAMERA_TEST_STUB_REINIT
  * =1) trips a guard when the counter exceeds 1, mirror of the
@@ -242,6 +254,7 @@ esp_err_t camera_init(const config_t *cfg)
         camera_settings_t defaults = {0};
         (void)src->reset_defaults(&defaults);
         (void)src->apply(s_sensor, &defaults);
+        s_last_requested_framesize = defaults.framesize;
 
         /* Then check for the stored override. Mismatch or no
          * stored blob → defaults remain the only apply. */
@@ -250,6 +263,7 @@ esp_err_t camera_init(const config_t *cfg)
         if (lr == ESP_OK &&
             stored.schema_version == src->schema_version()) {
             (void)src->apply(s_sensor, &stored);
+            s_last_requested_framesize = stored.framesize;
         } else if (lr == ESP_OK) {
             ESP_LOGW(TAG,
                      "stored schema mismatch (blob=%lu src=%lu) — "
@@ -259,6 +273,35 @@ esp_err_t camera_init(const config_t *cfg)
         }
         /* lr == ESP_ERR_NOT_FOUND → no stored blob; defaults
          * applied above are the only setters reached. */
+    }
+
+    /* FW-13: post-init framesize probe. The OV2640 silently
+     * steps down to FRAMESIZE_240X240 (the safe-mode fallback)
+     * if it cannot negotiate the requested size at the configured
+     * XCLK/PSRAM-speed combo. Real esp32-camera does not expose
+     * a public getter for the actual framesize, so we compare
+     * against the LAST framesize WE asked for via set_framesize()
+     * (s_last_requested_framesize, updated by every setter
+     * path). A mismatch here means a setter was bypassed (e.g.
+     * reset_defaults without an apply) or someone bypassed the
+     * sensor driver. The actual hardware-vs-request check is left
+     * to the runtime fb_get() width/height check in the stream
+     * task (out of scope for camera_init). */
+    if (s_sensor && s_last_requested_framesize >= 0) {
+        int requested = CONFIG_FIRMWARE_CAMERA_FRAME_SIZE;
+        int applied   = s_last_requested_framesize;
+        if (applied != requested) {
+            ESP_LOGE(TAG,
+                     "FRAMESIZE MISMATCH (Kconfig=%d, last setter=%d) — "
+                     "either an apply() was bypassed or the sensor "
+                     "driver fell back. Image quality may be DEGRADED. "
+                     "Lower CONFIG_FIRMWARE_CAMERA_FRAME_SIZE or "
+                     "CAMERA_XCLK_FREQ_HZ to 16 MHz and retry.",
+                     requested, applied);
+        } else {
+            ESP_LOGD(TAG, "framesize=%d applied (matches Kconfig)",
+                     applied);
+        }
     }
 
     return ESP_OK;
