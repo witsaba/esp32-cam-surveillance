@@ -371,10 +371,50 @@ static void ws_server_on_got_ip(void *arg,
                   "STA httpd", CONFIG_FIRMWARE_WS_PATH);
 }
 
+/* WIFI_EVT_STA_DISCONNECTED — clear the registration flag so the
+ * next GOT_IP re-registers /cams on the FRESH httpd that the
+ * softap_sta_listener recreates on reconnect.
+ *
+ * Without this, the one-shot `if (s_registered) return;` guard in
+ * ws_server_on_got_ip() short-circuits every reconnection and
+ * the new httpd serves /cams as 404. Without a power cycle, a
+ * single Wi-Fi blip is enough to wedge the device until the user
+ * notices "Connecting" never resolves on the frontend tile. The
+ * firmware half of the bug is fixed HERE; the backend relay then
+ * sees a successful 101 upgrade and exits its 2 s → 30 s bad-
+ * handshake backoff loop on the next retry.
+ *
+ * Order with softap_sta_listener's DISCONNECTED handler matters:
+ * the listener subscribes FIRST, so it runs FIRST and has already
+ * called httpd_stop() by the time we get here. That makes
+ * clearing s_httpd safe (it was the old, now-dead handle). The
+ * captured single-viewer fd and the sink both become meaningless
+ * against a dead httpd and must also be cleared — the next GOT_IP
+ * re-registers the endpoint and the next handshake re-captures
+ * a fresh fd. */
+static void ws_server_on_sta_disconnected(void *arg,
+                                           const char *event_base,
+                                           int32_t event_id,
+                                           void *event_data)
+{
+    (void)arg;
+    (void)event_base;
+    (void)event_id;
+    (void)event_data;
+
+    s_registered = false;
+    s_httpd      = NULL;
+    s_viewer_fd  = -1;
+    ws_sink_install(NULL);  /* drop the dead-handle sink */
+}
+
 esp_err_t ws_server_install(void)
 {
-    return wifi_event_subscribe(WIFI_EVT_STA_GOT_IP,
-                                ws_server_on_got_ip, NULL);
+    esp_err_t r = wifi_event_subscribe(WIFI_EVT_STA_GOT_IP,
+                                       ws_server_on_got_ip, NULL);
+    if (r != ESP_OK) return r;
+    return wifi_event_subscribe(WIFI_EVT_STA_DISCONNECTED,
+                                ws_server_on_sta_disconnected, NULL);
 }
 
 void ws_server_reset_for_test(void)

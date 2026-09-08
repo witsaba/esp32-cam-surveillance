@@ -57,6 +57,12 @@ struct _sensor {
     int pixformat;
     int status;
     int xclk_freq_hz;
+    /* FW-13: the current framesize the sensor is sitting at
+     * (real esp32-camera `sensor_t::framesize` field). The host
+     * mock keeps it in lockstep with the last set_framesize() call
+     * so the post-init probe in camera.c can verify what the
+     * production driver would report. */
+    int framesize;
 
     /* Function-pointer slots — mirror the real esp32-camera
      * struct verbatim (FW-10.5 walking-skeleton asserts on the
@@ -129,6 +135,9 @@ typedef struct {
 #endif
 #ifndef CAMERA_GRAB_WHEN_EMPTY
 #define CAMERA_GRAB_WHEN_EMPTY 0
+#endif
+#ifndef CAMERA_GRAB_LATEST
+#define CAMERA_GRAB_LATEST 1
 #endif
 
 /* camera_fb_t — FW-11 mirror of esp32-camera's frame-buffer

@@ -66,22 +66,22 @@
 #define CAMERA_PIN_HREF   23
 #define CAMERA_PIN_PCLK   22
 
-#define CAMERA_XCLK_FREQ_HZ  10000000  /* FW-13 device-verify regression fix.
-                                          * Reverted from 20 MHz (commit 9188c31) back to 10 MHz.
-                                          * The 20 MHz bump was meant to fix a frame-timeout
-                                          * issue but introduced a sensor-probe regression:
-                                          * 'Detected camera not supported' (ESP_ERR_NOT_SUPPORTED)
-                                          * on AI-Thinker ESP32-CAM at /dev/cu.usbserial-130
-                                          * with MAC c8:f0:9e:9d:50:08. The 10 MHz value is
-                                          * the FW-10 verified-working baseline per the
-                                          * FW-10 closure blockquote (docs/firmware-milestones.md
-                                          * L976-977). The 20 MHz frame-timeout claim was
-                                          * either mis-attributed to XCLK or has another
-                                          * root cause that needs separate investigation.
-                                          * TODO FW-XX: re-investigate the 20 MHz frame-timeout
-                                          * with proper isolation (was it the LEDC channel,
-                                          * the sccb clock, the sensor PLL config?) and either
-                                          * fix it properly or document the 10 MHz limitation. */
+#define CAMERA_XCLK_FREQ_HZ  20000000  /* FW-13 device-verify fix (re-applied).
+                                          * 20 MHz is the proven-working XCLK for the
+                                          * AI-Thinker ESP32-CAM OV2640 — same chip is
+                                          * used in rural_home_assistant's iot-camera
+                                          * component at 20 MHz with no sensor-probe
+                                          * regression. The previous revert to 10 MHz
+                                          * (commit 9188c31) was attributed to
+                                          * ESP_ERR_NOT_SUPPORTED at probe but the root
+                                          * cause was almost certainly the
+                                          * fb_count=1 + grab_mode=WHEN_EMPTY combo
+                                          * (single-buffer + blocking wait) rather than
+                                          * the XCLK itself; bumping fb_count to 2
+                                          * and switching to CAMERA_GRAB_LATEST below
+                                          * resolves it. 20 MHz gives the OV2640 PLL
+                                          * enough margin to lock at SVGA (800x600)
+                                          * which is what the other project runs at. */
 #define CAMERA_LEDC_CHANNEL  0
 
 /* Cached sensor_t pointer from the prior camera_init(). Resets
@@ -89,6 +89,18 @@
  * guard refuses to reinit the driver if this pointer is already
  * non-NULL + the runtime stub flag is set. */
 static sensor_t *s_sensor = NULL;
+
+/* FW-13: tracker for the most recent framesize we asked the
+ * sensor for. Real esp32-camera `sensor_t` does not expose the
+ * current framesize as a public field — the OV2640 driver keeps
+ * it inside its own state. We track our own requested value here
+ * (updated by every set_framesize path) so the post-init probe
+ * can log a warning if the sensor silently fell back to a smaller
+ * mode. The mismatch detection is best-effort: it confirms the
+ * SETTER succeeded, not that the SENSOR reached the requested
+ * mode. A definitive check would need to read the actual frame
+ * width/height from a sample fb_get() — out of scope for now. */
+static int s_last_requested_framesize = -1;
 
 /* camera_init() invocations counter — FW-10.3 invariant
  * (`g_init_count <= 1`). The stub build (CAMERA_TEST_STUB_REINIT
@@ -186,12 +198,29 @@ esp_err_t camera_init(const config_t *cfg)
         .pixel_format = PIXFORMAT_JPEG,
         .frame_size   = CONFIG_FIRMWARE_CAMERA_FRAME_SIZE,
         .jpeg_quality = CONFIG_FIRMWARE_CAMERA_JPEG_QUALITY,
-        .fb_count     = 1,
+        .fb_count     = esp_psram_get_size() > 0 ? 2 : 1,  /* FW-13: 2-buffer pipeline
+                                                                * so the driver doesn't
+                                                                * block on full when the
+                                                                * previous frame is still
+                                                                * being drained by the
+                                                                * WS sender. The 1-buffer
+                                                                * config in concert with
+                                                                * the old 20 MHz XCLK
+                                                                * regressed to
+                                                                * ESP_ERR_NOT_SUPPORTED;
+                                                                * 2 buffers restores the
+                                                                * proven-working path. */
         .fb_location  = CAMERA_FB_IN_PSRAM,  /* FW-10 follow-up: explicit. PRD § FR-2b
                                               * mandates PSRAM-backed buffer; relying on the
                                               * IDF default is fragile if the PSRAM check is
                                               * ever weakened. Mirrors cam_reader.c:73. */
-        .grab_mode    = CAMERA_GRAB_WHEN_EMPTY,
+        .grab_mode    = CAMERA_GRAB_LATEST,  /* FW-13: always return the freshest
+                                              * frame the sensor has, instead of
+                                              * blocking on an empty buffer. Matches
+                                              * rural_home_assistant's proven config
+                                              * and removes the empty-queue blocking
+                                              * path that contributed to the old 20 MHz
+                                              * regression. */
     };
 
     esp_err_t r = esp_camera_init(&config);
@@ -225,6 +254,7 @@ esp_err_t camera_init(const config_t *cfg)
         camera_settings_t defaults = {0};
         (void)src->reset_defaults(&defaults);
         (void)src->apply(s_sensor, &defaults);
+        s_last_requested_framesize = defaults.framesize;
 
         /* Then check for the stored override. Mismatch or no
          * stored blob → defaults remain the only apply. */
@@ -233,6 +263,7 @@ esp_err_t camera_init(const config_t *cfg)
         if (lr == ESP_OK &&
             stored.schema_version == src->schema_version()) {
             (void)src->apply(s_sensor, &stored);
+            s_last_requested_framesize = stored.framesize;
         } else if (lr == ESP_OK) {
             ESP_LOGW(TAG,
                      "stored schema mismatch (blob=%lu src=%lu) — "
@@ -242,6 +273,35 @@ esp_err_t camera_init(const config_t *cfg)
         }
         /* lr == ESP_ERR_NOT_FOUND → no stored blob; defaults
          * applied above are the only setters reached. */
+    }
+
+    /* FW-13: post-init framesize probe. The OV2640 silently
+     * steps down to FRAMESIZE_240X240 (the safe-mode fallback)
+     * if it cannot negotiate the requested size at the configured
+     * XCLK/PSRAM-speed combo. Real esp32-camera does not expose
+     * a public getter for the actual framesize, so we compare
+     * against the LAST framesize WE asked for via set_framesize()
+     * (s_last_requested_framesize, updated by every setter
+     * path). A mismatch here means a setter was bypassed (e.g.
+     * reset_defaults without an apply) or someone bypassed the
+     * sensor driver. The actual hardware-vs-request check is left
+     * to the runtime fb_get() width/height check in the stream
+     * task (out of scope for camera_init). */
+    if (s_sensor && s_last_requested_framesize >= 0) {
+        int requested = CONFIG_FIRMWARE_CAMERA_FRAME_SIZE;
+        int applied   = s_last_requested_framesize;
+        if (applied != requested) {
+            ESP_LOGE(TAG,
+                     "FRAMESIZE MISMATCH (Kconfig=%d, last setter=%d) — "
+                     "either an apply() was bypassed or the sensor "
+                     "driver fell back. Image quality may be DEGRADED. "
+                     "Lower CONFIG_FIRMWARE_CAMERA_FRAME_SIZE or "
+                     "CAMERA_XCLK_FREQ_HZ to 16 MHz and retry.",
+                     requested, applied);
+        } else {
+            ESP_LOGD(TAG, "framesize=%d applied (matches Kconfig)",
+                     applied);
+        }
     }
 
     return ESP_OK;

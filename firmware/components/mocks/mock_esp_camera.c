@@ -114,8 +114,17 @@ static int mock_set_quality(sensor_t *s, int q)
 
 static int mock_set_framesize(sensor_t *s, int f)
 {
-    (void)s;
+    /* FW-13: mirror the production driver's "this is what
+     * set_framesize did" semantics — the sensor records the
+     * requested size in its framesize field so the post-init probe
+     * sees the same value the real driver would have. The host
+     * mock here assumes the requested framesize ALWAYS lands,
+     * which is the production success path; a stub test that
+     * wants to simulate a sensor downgrade can poke s->framesize
+     * directly after set_framesize returns. */
     record_set_int(g_set_framesize_args, &g_set_framesize_head, f);
+    if (s) s->framesize = f;
+    (void)s;
     return 0;
 }
 

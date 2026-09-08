@@ -41,7 +41,7 @@ typedef struct _sensor sensor_t;
  * changes. The boot-time flow logs + ignores any blob with a
  * different schema_version. */
 #ifndef CAMERA_SETTINGS_SCHEMA_VERSION
-#define CAMERA_SETTINGS_SCHEMA_VERSION 1
+#define CAMERA_SETTINGS_SCHEMA_VERSION 2
 #endif
 
 /* The boot-time settings blob (28 OV2640 fields + schema_version).
